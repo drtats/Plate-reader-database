@@ -23,6 +23,7 @@ from plate_reader.application.contracts import (
     LifecycleStatus,
     PlateId,
     RevisionId,
+    Role,
     SearchRuns,
     UpdatePlateMetadata,
     UpdateWellLayout,
@@ -31,8 +32,10 @@ from plate_reader.application.contracts import (
 from plate_reader.application.demo import synthetic_growth_csv
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services import (
+    BuildGrowthBackgroundGroupsService,
     ComputeGrowthBackgroundService,
     ExportGrowthRunService,
+    GrowthBackgroundGroupSource,
     GrowthRunView,
     ImportGrowthRunService,
     LoadGrowthRunService,
@@ -469,9 +472,11 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
     metadata = view.snapshot.metadata
     st.header(f"{metadata['name']} — {metadata['plate_name']}")
     current_revision = current_background_revision(view.snapshot)
-    analysis_state = (
-        f"background revision {current_revision}" if current_revision is not None else "raw only"
-    )
+    analysis_state = "raw only"
+    if view.background_is_stale:
+        analysis_state = f"background revision {current_revision} is stale"
+    elif current_revision is not None:
+        analysis_state = f"background revision {current_revision}"
     st.caption(f"Plate ID: {plate_id} · Analysis state: {analysis_state}")
     if message := st.session_state.pop("commit_message", None):
         st.success(message)
@@ -479,7 +484,7 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
         ("Overview & QC", "Metadata", "Layout", "Plotting", "Revisions", "Export", "Provenance")
     )
     with tabs[0]:
-        render_overview(view)
+        render_overview(context, plate_id, view)
     with tabs[1]:
         render_metadata_form(context, plate_id, metadata)
     with tabs[2]:
@@ -494,15 +499,86 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
         render_records(view.provenance, empty_message="No provenance events are recorded.")
 
 
-def render_overview(view: GrowthRunView) -> None:
+def render_overview(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
     snapshot = view.snapshot
     raw_hash = _raw_hash(snapshot.raw_observations)
     left, middle, right = st.columns(3)
     left.metric("Wells", len(snapshot.wells))
     middle.metric("Measurements", len(snapshot.raw_observations))
     right.metric("Background rows", len(view.backgrounds))
+    if message := st.session_state.pop("growth_background_message", None):
+        st.success(str(message))
+    for warning in st.session_state.pop("growth_background_warnings", ()):
+        st.warning(str(warning))
+    if context.actor.role in {Role.EDITOR, Role.ADMIN}:
+        with st.expander(
+            "Background assignment and recompute",
+            expanded=current_background_revision(snapshot) is None or view.background_is_stale,
+        ):
+            labels = {
+                GrowthBackgroundGroupSource.MEDIUM: "Media",
+                GrowthBackgroundGroupSource.STRAIN: "Strain",
+                GrowthBackgroundGroupSource.GROUP: "Group",
+                GrowthBackgroundGroupSource.TREATMENT: "Treatment",
+            }
+            source = st.selectbox(
+                "Copy values into Background group",
+                tuple(GrowthBackgroundGroupSource),
+                format_func=lambda value: labels[value],
+                key=f"growth-background-source-{plate_id}",
+            )
+            copy_column, recompute_column = st.columns(2)
+            if copy_column.button(
+                "Copy and save background groups",
+                key=f"growth-background-copy-{plate_id}",
+            ):
+                try:
+                    changes = BuildGrowthBackgroundGroupsService().execute(snapshot.wells, source)
+                    UpdateGrowthLayoutService(context.repository).execute(
+                        UpdateWellLayout(
+                            context.actor,
+                            plate_id,
+                            str(snapshot.metadata["updated_at"]),
+                            changes,
+                        )
+                    )
+                    _clear_growth_plot()
+                    st.session_state.growth_background_message = (
+                        f"Background groups copied from {labels[source]}. Recompute QC now."
+                    )
+                    st.rerun()
+                except Exception as error:
+                    render_exception(error)
+            if recompute_column.button(
+                "Recompute backgrounds and QC",
+                type="primary",
+                key=f"growth-background-recompute-{plate_id}",
+            ):
+                try:
+                    result = ComputeGrowthBackgroundService(context.repository).execute(
+                        ComputeGrowthBackgroundRevision(
+                            context.actor,
+                            plate_id,
+                            GROWTH_BACKGROUND_VERSION,
+                        )
+                    )
+                    _clear_growth_plot()
+                    st.session_state.growth_background_message = (
+                        f"Background revision saved with {result.background_count} rows."
+                    )
+                    st.session_state.growth_background_warnings = tuple(
+                        issue.message for issue in result.issues
+                    )
+                    st.rerun()
+                except Exception as error:
+                    render_exception(error)
     if current_background_revision(snapshot) is None:
         st.info("No background revision exists. Plots show immutable raw values.")
+    elif view.background_is_stale:
+        st.warning(
+            "The well layout changed after the latest background revision. Stale background "
+            "rows are not used for plots; recompute backgrounds and QC."
+        )
     elif not view.backgrounds:
         st.warning("The current revision contains no background rows; check blank assignments.")
     else:

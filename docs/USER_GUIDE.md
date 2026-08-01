@@ -28,6 +28,12 @@ timepoint statistics. Open **96-well curve overview** and render it when the ful
 8x12 small-multiple view is needed; it is lazy and cached so routine reruns do not
 rebuild all 96 curves.
 
+Editors and administrators can open **Background assignment and recompute** to
+copy Media, Strain, Group, or Treatment across all background-group assignments,
+then calculate a new immutable revision. If blank assignments or groups change,
+the prior revision is marked stale and is not used for corrected plots until it
+is recomputed.
+
 Both import and saved-run layout editors include **Reusable plate templates**.
 Any signed-in user can apply a Growth template to the staged 96-well layout;
 administrators can save, overwrite, and delete templates. Applying one never

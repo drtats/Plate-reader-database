@@ -22,15 +22,17 @@ opened or changed during this verification.
 | Missing background | Silently treated as zero in some paths | Remains raw and visibly warns; it is never labeled corrected | Intentional correctness change |
 | Export | Per-run SQLite and historical folder variants | Manifested, checksummed, standard-SQLite portable run | Compatible and independently verifiable |
 
-Known Phase 4 differences retained for later work:
+Parity work completed after the original Phase 4 report:
 
-- the workspace edits one well explicitly rather than presenting an Arrow-backed
-  96-row grid; the grid path was removed after it produced a native `pyarrow`
-  crash during Streamlit testing;
-- reusable layout templates and bulk condition paste belong to the MIC/shared UI
-  phase;
-- publication-specific static PDF styling remains an explicit later export
-  feature; Plotly's built-in PNG action is available now.
+- import and saved-run workspaces now share the same synchronized 8x12 and
+  96-row editor with stable Arrow dtypes;
+- reusable templates, fill suggestions, custom columns, and bulk fills are shared
+  by Growth and MIC;
+- the lazy 96-well overview, detailed background QC, bulk background-group copy,
+  and stale-revision detection are restored.
+
+Publication-specific static PDF styling remains an explicit later export
+feature; Plotly's built-in high-resolution PNG action is available now.
 
 ## Visual record
 

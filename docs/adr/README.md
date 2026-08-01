@@ -25,3 +25,4 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0013](0013-unify-growth-metadata-and-layout-editors.md): unified Growth editors
 - [ADR-0014](0014-activate-template-and-saved-option-backend.md): supporting data backend/UI
 - [ADR-0015](0015-restore-growth-overview-and-qc.md): lazy Growth overview and QC
+- [ADR-0016](0016-detect-stale-growth-backgrounds.md): stale Growth background detection

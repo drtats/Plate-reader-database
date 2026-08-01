@@ -115,6 +115,7 @@ class GrowthRunView:
     snapshot: PlateSnapshot
     backgrounds: tuple[dict[str, object], ...]
     provenance: tuple[dict[str, object], ...]
+    background_is_stale: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,10 +378,29 @@ class LoadGrowthRunService:
         require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
         snapshot = _growth_snapshot(self.repository, plate_id)
         selected_revision = revision_id or _current_background_revision(snapshot)
-        backgrounds = (
-            self.repository.growth_backgrounds(selected_revision) if selected_revision else ()
+        revision = next(
+            (
+                row
+                for row in snapshot.revisions
+                if str(row["revision_id"]) == str(selected_revision)
+            ),
+            None,
         )
-        return GrowthRunView(snapshot, backgrounds, self.repository.provenance_for_plate(plate_id))
+        background_is_stale = bool(
+            revision is not None
+            and str(revision["input_sha256"]) != _background_input_hash(snapshot)
+        )
+        backgrounds = (
+            self.repository.growth_backgrounds(selected_revision)
+            if selected_revision and not background_is_stale
+            else ()
+        )
+        return GrowthRunView(
+            snapshot,
+            backgrounds,
+            self.repository.provenance_for_plate(plate_id),
+            background_is_stale,
+        )
 
     def cache_token(self, actor: Actor, plate_id: PlateId) -> str:
         require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})

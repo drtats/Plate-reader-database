@@ -127,6 +127,50 @@ def test_measurement_type_merges_with_stored_plate_custom_metadata(
     assert updated.metadata["plate_custom_json"] == '{"lid":true,"measurement_type":"OD600"}'
 
 
+def test_layout_changes_withhold_stale_backgrounds_until_recomputed(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = import_run(repository)
+    initial = repository.load_plate(plate_id)
+    assert initial is not None
+    assigned = UpdateGrowthLayoutService(repository).execute(
+        UpdateWellLayout(
+            ACTOR,
+            plate_id,
+            str(initial.metadata["updated_at"]),
+            (
+                WellLayoutChange(position="A1", is_blank=True, background_group="plate"),
+                WellLayoutChange(position="A2", is_blank=True, background_group="plate"),
+            ),
+        )
+    )
+    ComputeGrowthBackgroundService(repository).execute(
+        ComputeGrowthBackgroundRevision(ACTOR, plate_id, GROWTH_BACKGROUND_VERSION)
+    )
+    fresh = LoadGrowthRunService(repository).execute(ACTOR, plate_id)
+    assert fresh.background_is_stale is False
+    assert fresh.backgrounds
+
+    UpdateGrowthLayoutService(repository).execute(
+        UpdateWellLayout(
+            ACTOR,
+            plate_id,
+            str(assigned.metadata["updated_at"]),
+            (WellLayoutChange(position="A1", background_group="M9"),),
+        )
+    )
+    stale = LoadGrowthRunService(repository).execute(ACTOR, plate_id)
+    assert stale.background_is_stale is True
+    assert stale.backgrounds == ()
+
+    ComputeGrowthBackgroundService(repository).execute(
+        ComputeGrowthBackgroundRevision(ACTOR, plate_id, GROWTH_BACKGROUND_VERSION)
+    )
+    recomputed = LoadGrowthRunService(repository).execute(ACTOR, plate_id)
+    assert recomputed.background_is_stale is False
+    assert recomputed.backgrounds
+
+
 def test_metadata_layout_background_search_load_and_export(
     repository: SqlPlateReaderRepository, tmp_path: Path
 ) -> None:
