@@ -190,6 +190,7 @@ def test_growth_import_preserves_rich_legacy_metadata_and_well_details(
             tags=("biofilm", "kinetics"),
             operator_name="Researcher A",
             instrument="Epoch 2",
+            channel="OD620",
             temperature=37.0,
             temperature_unit="C",
             measurement_type="OD600",
@@ -213,7 +214,7 @@ def test_growth_import_preserves_rich_legacy_metadata_and_well_details(
 
     metadata = repository.connection.execute(
         "SELECT e.project, e.operator_name, e.notes, e.custom_json, p.instrument, "
-        "p.temperature, p.temperature_unit, p.manual_subtraction, p.custom_json "
+        "p.channel, p.temperature, p.temperature_unit, p.manual_subtraction, p.custom_json "
         "FROM experiments e JOIN plates p ON p.experiment_id = e.experiment_id "
         "WHERE p.plate_id = ?",
         (result.plate_id,),
@@ -221,8 +222,8 @@ def test_growth_import_preserves_rich_legacy_metadata_and_well_details(
     assert metadata is not None
     assert metadata[:3] == ("Project Alpha", "Researcher A", "rich metadata")
     assert '"batch":"B1"' in metadata[3]
-    assert metadata[4:8] == ("Epoch 2", 37.0, "C", 0.012)
-    assert '"measurement_type":"OD600"' in metadata[8]
+    assert metadata[4:9] == ("Epoch 2", "OD620", 37.0, "C", 0.012)
+    assert '"measurement_type":"OD600"' in metadata[9]
     tags = repository.connection.execute("SELECT tag FROM experiment_tags ORDER BY tag").fetchall()
     assert tags == [("biofilm",), ("kinetics",)]
     well = repository.connection.execute(

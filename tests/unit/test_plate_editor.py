@@ -7,6 +7,7 @@ from plate_reader.ui.plate_editor import (
     fill_layout,
     growth_layout_changes,
     growth_layout_frame,
+    growth_layout_frame_from_wells,
     mic_layout_changes,
     mic_layout_frame,
     plate_matrix,
@@ -99,6 +100,55 @@ def test_growth_layout_conversion_preserves_every_legacy_field_and_custom_column
     assert change.concentration == 2.5
     assert change.concentration_unit == "ug/mL"
     assert change.custom_fields == {"Oxygen": "anaerobic", "t0_added_min": 4.0}
+
+
+def test_persisted_growth_wells_rehydrate_every_editor_field() -> None:
+    frame = growth_layout_frame_from_wells(
+        (
+            {
+                "position": "A1",
+                "raw_label": "raw-a1",
+                "display_name": "sample-a1",
+                "is_blank": 1,
+                "background_group": "m9",
+                "plot_selected": 1,
+                "grouping_label": "group-a",
+                "medium": "M9",
+                "strain": "strain-a",
+                "inoculum_size": 0.02,
+                "inoculum_unit": "OD600",
+                "replicate": 3,
+                "notes": "note-a",
+                "treatment": "drug-a",
+                "concentration": 2.5,
+                "concentration_unit": "ug/mL",
+                "custom_json": '{"Oxygen":"low","t0_added_min":4.0}',
+            },
+        )
+    )
+
+    assert frame.shape == (96, 18)
+    assert frame.loc[0].to_dict() == {
+        "Well": "A1",
+        "Raw label": "raw-a1",
+        "Display name": "sample-a1",
+        "Blank": True,
+        "Background group": "m9",
+        "Plot": True,
+        "Group": "group-a",
+        "Media": "M9",
+        "Strain": "strain-a",
+        "Inoculum size": 0.02,
+        "Inoculum unit": "OD600",
+        "Replicate": 3,
+        "Notes": "note-a",
+        "Treatment": "drug-a",
+        "Concentration": 2.5,
+        "Concentration unit": "ug/mL",
+        "T0 added (min)": 4.0,
+        "Oxygen": "low",
+    }
+    assert frame.loc[95, "Well"] == "H12"
 
 
 def test_mic_layout_conversion_keeps_raw_od_and_arbitrary_label_grids() -> None:

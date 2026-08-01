@@ -178,7 +178,7 @@ class ImportGrowthRunService:
                     "plate_name": command.plate_name,
                     "plate_format": 96,
                     "instrument": details.instrument,
-                    "channel": normalized.measurements[0].channel,
+                    "channel": details.channel or normalized.measurements[0].channel,
                     "temperature": details.temperature,
                     "temperature_unit": details.temperature_unit,
                     "manual_subtraction": details.manual_subtraction,

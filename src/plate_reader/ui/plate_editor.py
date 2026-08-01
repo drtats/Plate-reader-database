@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -81,6 +82,54 @@ def growth_layout_frame(labels: Mapping[str, str] | None = None) -> pd.DataFrame
             }
         )
     return pd.DataFrame(rows, columns=GROWTH_COLUMNS)
+
+
+def growth_layout_frame_from_wells(wells: Sequence[dict[str, object]]) -> pd.DataFrame:
+    """Rehydrate the canonical editor frame from persisted repository rows."""
+
+    by_position = {str(well["position"]): well for well in wells}
+    custom_by_position = {
+        position: _json_object(well.get("custom_json")) for position, well in by_position.items()
+    }
+    custom_names = sorted(
+        {
+            name
+            for custom in custom_by_position.values()
+            for name in custom
+            if name != "t0_added_min"
+        }
+    )
+    defaults = growth_layout_frame().set_index(WELL)
+    rows: list[dict[str, object]] = []
+    for position in PLATE_96.positions():
+        well = by_position.get(position.label)
+        if well is None:
+            row = defaults.loc[position.label].to_dict()
+            row[WELL] = position.label
+        else:
+            custom = custom_by_position[position.label]
+            row = {
+                WELL: position.label,
+                "Raw label": well.get("raw_label") or "",
+                "Display name": well.get("display_name") or "",
+                "Blank": bool(well.get("is_blank")),
+                "Background group": well.get("background_group") or "plate",
+                "Plot": bool(well.get("plot_selected")),
+                "Group": well.get("grouping_label") or "",
+                "Media": well.get("medium") or "",
+                "Strain": well.get("strain") or "",
+                "Inoculum size": well.get("inoculum_size"),
+                "Inoculum unit": well.get("inoculum_unit") or "",
+                "Replicate": well.get("replicate") or 1,
+                "Notes": well.get("notes") or "",
+                "Treatment": well.get("treatment") or "",
+                "Concentration": well.get("concentration"),
+                "Concentration unit": well.get("concentration_unit") or "",
+                "T0 added (min)": custom.get("t0_added_min"),
+            }
+            row.update({name: custom.get(name, "") for name in custom_names})
+        rows.append(row)
+    return pd.DataFrame(rows, columns=(*GROWTH_COLUMNS, *custom_names))
 
 
 def mic_layout_frame(wells: Sequence[MicWell]) -> pd.DataFrame:
@@ -238,7 +287,8 @@ def render_plate_editor(
 
     st.caption(
         "The 96-well plate and full table edit the same staged layout. Apply changes in either "
-        "view to synchronize the other view. Nothing reaches the database until Step 5."
+        "view to synchronize the other view. Nothing reaches the database until the page's "
+        "final save or commit action."
     )
     if _is_streamlit_test():
         plate_tab, table_tab = st.tabs(("96-well plate", "Full well table"))
@@ -278,7 +328,7 @@ def render_plate_editor(
     with table_tab:
         with st.form(f"{state_key}_table_form_{revision}"):
             edited_table = st.data_editor(
-                frame,
+                _editor_safe_frame(frame),
                 height=600,
                 width="stretch",
                 hide_index=True,
@@ -400,12 +450,37 @@ def _column_config(  # pragma: no cover - Streamlit widget composition
     return {key: value for key, value in config.items() if key in frame}
 
 
+def _editor_safe_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Give Arrow-backed widgets one stable dtype per column."""
+
+    safe = frame.copy(deep=True)
+    for column in safe.columns:
+        if column in BOOLEAN_COLUMNS:
+            safe[column] = safe[column].astype("boolean")
+        elif column == "Replicate":
+            safe[column] = pd.to_numeric(safe[column], errors="coerce").astype("Int64")
+        elif column in NUMERIC_COLUMNS:
+            safe[column] = pd.to_numeric(safe[column], errors="coerce").astype("Float64")
+        else:
+            safe[column] = safe[column].fillna("").astype("string")
+    return safe
+
+
 def _custom_values(row: Mapping[str, object], columns: Sequence[str]) -> dict[str, object]:
     return {
         column: value
         for column in columns
         if (value := row[column]) is not None and not _is_missing(value) and str(value) != ""
     }
+
+
+def _json_object(value: object) -> dict[str, object]:
+    if value is None or value == "":
+        return {}
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, dict):
+        raise ValueError("Well custom metadata must be a JSON object")
+    return {str(key): item for key, item in parsed.items()}
 
 
 def _optional_text(value: object) -> str | None:

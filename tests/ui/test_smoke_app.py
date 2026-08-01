@@ -86,8 +86,46 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     assert counts_before == (13_920, 1, 1)
 
     input_named(app, "Experiment name").set_value("UI edited experiment")
+    input_named(app, "Project").set_value("UI project")
+    input_named(app, "Tags (comma separated)").set_value("growth, ui")
+    input_named(app, "User").set_value("UI researcher")
+    input_named(app, "Instrument").set_value("UI reader")
+    input_named(app, "Temperature unit").set_value("C")
+    input_named(app, "Measurement type").set_value("OD600")
+    input_named(app, "Channel").set_value("od600")
+    next(item for item in app.text_area if item.label == "Run notes").set_value(
+        "rich metadata retained"
+    )
+    next(item for item in app.number_input if item.label == "Temperature").set_value(35.5)
+    next(
+        item for item in app.number_input if item.label == "Global subtraction (legacy override)"
+    ).set_value(0.012)
     click(app, "Save metadata")
     assert app.header[0].value == "UI edited experiment — Plate 1"
+    with sqlite3.connect(database_path) as database:
+        rich_metadata = database.execute(
+            "SELECT e.project, e.operator_name, p.instrument, p.temperature, "
+            "p.manual_subtraction, p.channel, p.custom_json FROM experiments e "
+            "JOIN plates p ON p.experiment_id = e.experiment_id"
+        ).fetchone()
+        tags = database.execute(
+            "SELECT group_concat(tag, ',') FROM "
+            "(SELECT tag FROM experiment_tags ORDER BY tag COLLATE NOCASE)"
+        ).fetchone()
+    assert rich_metadata == (
+        "UI project",
+        "UI researcher",
+        "UI reader",
+        35.5,
+        0.012,
+        "od600",
+        '{"measurement_type":"OD600"}',
+    )
+    assert tags == ("growth,ui",)
+    assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
+    click(app, "Save full layout")
+    with sqlite3.connect(database_path) as database:
+        assert database.execute("SELECT count(*) FROM growth_measurements").fetchone() == (13_920,)
     assert next(item for item in app.number_input if item.label == "X maximum").value == 1_400.0
     assert next(item for item in app.number_input if item.label == "Y minimum").value == 0.001
     assert next(item for item in app.number_input if item.label == "Y maximum").value == 1.5
@@ -119,7 +157,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
             "(SELECT count(*) FROM schema_migrations), "
             "(SELECT count(*) FROM plates)"
         ).fetchone()
-    assert counts_after == (27_840, 7, 1, 2)
+    assert counts_after == (27_840, 9, 1, 2)
 
 
 def test_mic_ui_import_review_edit_visualize_and_export(

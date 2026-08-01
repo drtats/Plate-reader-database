@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import uuid
 from datetime import date
@@ -51,6 +52,7 @@ from plate_reader.ui.context import AppContext
 from plate_reader.ui.plate_editor import (
     growth_layout_changes,
     growth_layout_frame,
+    growth_layout_frame_from_wells,
     render_plate_editor,
 )
 from plate_reader.ui.plotting import (
@@ -213,13 +215,14 @@ def wizard_metadata(_context: AppContext) -> None:
             format="%.4f",
             help="Constant subtraction retained from Growth v4 metadata.",
         )
-        units = st.columns(2)
+        units = st.columns(3)
         temperature_unit = units[0].text_input(
             "Temperature unit", value=str(saved.get("temperature_unit", "C"))
         )
         measurement_type = units[1].text_input(
             "Measurement type", value=str(saved.get("measurement_type", "OD600"))
         )
+        channel = units[2].text_input("Channel", value=str(saved.get("channel", "od600")))
         notes = st.text_area("Run notes", value=str(saved.get("notes", "")))
         submitted = st.form_submit_button("Save metadata and continue")
     if submitted:
@@ -239,6 +242,7 @@ def wizard_metadata(_context: AppContext) -> None:
                     if instrument_choice == "Custom"
                     else instrument_choice
                 ),
+                "channel": channel.strip() or None,
                 "temperature": float(temperature),
                 "temperature_unit": temperature_unit.strip() or None,
                 "measurement_type": measurement_type.strip() or None,
@@ -301,6 +305,7 @@ def wizard_commit(context: AppContext) -> None:
                     tags=cast(tuple[str, ...], metadata["tags"]),
                     operator_name=cast(str | None, metadata["operator_name"]),
                     instrument=cast(str | None, metadata["instrument"]),
+                    channel=cast(str | None, metadata["channel"]),
                     temperature=float(metadata["temperature"]),
                     temperature_unit=cast(str | None, metadata["temperature_unit"]),
                     measurement_type=cast(str | None, metadata["measurement_type"]),
@@ -398,11 +403,42 @@ def render_metadata_form(
 ) -> None:
     st.warning("Changes below are unsaved until Save metadata is pressed.")
     with st.form("workspace-metadata"):
-        experiment_name = st.text_input("Experiment name", value=str(metadata["name"]))
-        plate_name = st.text_input("Plate name", value=str(metadata["plate_name"]))
-        project = st.text_input("Project", value=str(metadata["project"] or ""))
-        instrument = st.text_input("Instrument", value=str(metadata["instrument"] or ""))
-        notes = st.text_area("Notes", value=str(metadata["notes"] or ""))
+        identity_left, identity_right = st.columns(2)
+        experiment_name = identity_left.text_input("Experiment name", value=str(metadata["name"]))
+        plate_name = identity_right.text_input("Plate name", value=str(metadata["plate_name"]))
+        project = identity_left.text_input("Project", value=str(metadata["project"] or ""))
+        tags = identity_right.text_input(
+            "Tags (comma separated)", value=", ".join(cast(tuple[str, ...], metadata["tags"]))
+        )
+        details = st.columns(4)
+        experiment_date = details[0].date_input(
+            "Date", value=date.fromisoformat(str(metadata["experiment_date"]))
+        )
+        operator_name = details[1].text_input("User", value=str(metadata["operator_name"] or ""))
+        instrument = details[2].text_input("Instrument", value=str(metadata["instrument"] or ""))
+        temperature = details[3].number_input(
+            "Temperature",
+            value=float(
+                str(metadata["temperature"] if metadata["temperature"] is not None else 37.0)
+            ),
+            step=0.1,
+        )
+        subtraction = st.number_input(
+            "Global subtraction (legacy override)",
+            value=float(str(metadata["manual_subtraction"] or 0.0)),
+            step=0.001,
+            format="%.4f",
+        )
+        measurement_type = str(
+            _json_mapping(metadata.get("plate_custom_json", {})).get("measurement_type") or ""
+        )
+        units = st.columns(3)
+        temperature_unit = units[0].text_input(
+            "Temperature unit", value=str(metadata["temperature_unit"] or "C")
+        )
+        measurement_type_value = units[1].text_input("Measurement type", value=measurement_type)
+        channel = units[2].text_input("Channel", value=str(metadata["channel"] or ""))
+        notes = st.text_area("Run notes", value=str(metadata["notes"] or ""))
         lifecycle = st.selectbox(
             "Lifecycle",
             tuple(LifecycleStatus),
@@ -419,11 +455,20 @@ def render_metadata_form(
                     experiment_name=experiment_name,
                     plate_name=plate_name,
                     project=project or None,
+                    experiment_date=experiment_date,
+                    tags=tuple(tag.strip() for tag in tags.split(",") if tag.strip()),
+                    operator_name=operator_name.strip() or None,
                     instrument=instrument or None,
+                    channel=channel.strip() or None,
+                    temperature=float(temperature),
+                    temperature_unit=temperature_unit.strip() or None,
+                    measurement_type=measurement_type_value.strip() or None,
+                    manual_subtraction=float(subtraction),
                     notes=notes or None,
                     lifecycle_status=lifecycle,
                 )
             )
+            _clear_growth_plot()
             st.success("Metadata saved.")
             st.rerun()
         except Exception as error:
@@ -431,45 +476,31 @@ def render_metadata_form(
 
 
 def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
-    st.warning("Well changes are unsaved until Save well is pressed.")
-    positions = tuple(str(well["position"]) for well in view.snapshot.wells)
-    selected_position = st.selectbox("Well", positions, key=f"layout-position-{plate_id}")
-    selected = next(
-        well for well in view.snapshot.wells if str(well["position"]) == selected_position
+    st.warning("Well changes are staged until Save full layout is pressed.")
+    state_key = f"workspace_growth_layout_{plate_id}"
+    source_key = f"{state_key}_source_updated_at"
+    source_updated_at = str(view.snapshot.metadata["updated_at"])
+    if st.session_state.get(source_key) != source_updated_at:
+        st.session_state[state_key] = growth_layout_frame_from_wells(view.snapshot.wells)
+        st.session_state[f"{state_key}_revision"] = 0
+        st.session_state[source_key] = source_updated_at
+    frame = render_plate_editor(
+        growth_layout_frame_from_wells(view.snapshot.wells),
+        state_key=state_key,
+        assay="growth",
     )
-    with st.form(f"workspace-layout-{plate_id}-{selected_position}"):
-        display_name = st.text_input("Display name", value=str(selected["display_name"] or ""))
-        is_blank = st.checkbox("Blank", value=bool(selected["is_blank"]))
-        background_group = st.text_input(
-            "Background group", value=str(selected["background_group"] or "plate")
-        )
-        strain = st.text_input("Strain", value=str(selected["strain"] or ""))
-        medium = st.text_input("Medium", value=str(selected["medium"] or ""))
-        replicate = st.number_input(
-            "Replicate", min_value=1, value=_database_int(selected["replicate"] or 1), step=1
-        )
-        submitted = st.form_submit_button("Save well", type="primary")
-    if submitted:
+    if st.button("Save full layout", type="primary"):
         try:
             UpdateGrowthLayoutService(context.repository).execute(
                 UpdateWellLayout(
                     context.actor,
                     plate_id,
-                    str(view.snapshot.metadata["updated_at"]),
-                    (
-                        WellLayoutChange(
-                            position=selected_position,
-                            display_name=display_name or None,
-                            is_blank=is_blank,
-                            background_group=background_group,
-                            strain=strain or None,
-                            medium=medium or None,
-                            replicate=replicate,
-                        ),
-                    ),
+                    source_updated_at,
+                    growth_layout_changes(frame),
                 )
             )
-            st.success("Well saved without rewriting measurements.")
+            _clear_growth_plot()
+            st.success("Full layout saved without rewriting measurements.")
             st.rerun()
         except Exception as error:
             render_exception(error)
@@ -716,11 +747,12 @@ def _clear_growth_plot() -> None:
         st.session_state.pop(key, None)
 
 
+def _json_mapping(value: object) -> dict[str, object]:
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected a JSON metadata object")
+    return {str(key): item for key, item in parsed.items()}
+
+
 def _noop(*_args: object, **_kwargs: object) -> None:
     return None
-
-
-def _database_int(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("Expected an integer database value")
-    return value

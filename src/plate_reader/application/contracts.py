@@ -64,6 +64,7 @@ class GrowthRunMetadata:
     tags: tuple[str, ...] = ()
     operator_name: str | None = None
     instrument: str | None = None
+    channel: str | None = None
     temperature: float | None = None
     temperature_unit: str | None = None
     measurement_type: str | None = None
