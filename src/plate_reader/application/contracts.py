@@ -283,6 +283,37 @@ class ImportPortableRun:
     dry_run: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class SavePlateTemplate:
+    actor: Actor
+    template_name: str
+    assay_type: AssayType
+    layout: tuple[dict[str, object], ...]
+    template_id: str | None = None
+    expected_updated_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeletePlateTemplate:
+    actor: Actor
+    template_id: str
+    expected_updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class SaveOption:
+    actor: Actor
+    option_type: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteOption:
+    actor: Actor
+    option_type: str
+    value: str
+
+
 ALGORITHM_VERSIONS = {
     "growth_normalization": "growth-normalize/1.0.0",
     "growth_background": "growth-background/1.0.0",

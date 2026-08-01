@@ -376,6 +376,112 @@ class SqlPlateReaderRepository:
             ((experiment_id, tag) for tag in normalized),
         )
 
+    def list_plate_templates(
+        self, assay_type: AssayType | None = None
+    ) -> tuple[dict[str, object], ...]:
+        sql = (
+            "SELECT template_id, template_name, assay_type, layout_json, created_by, "
+            "created_at, updated_at FROM plate_templates"
+        )
+        parameters: tuple[object, ...] = ()
+        if assay_type is not None:
+            sql += " WHERE assay_type = ?"
+            parameters = (assay_type,)
+        sql += " ORDER BY template_name COLLATE NOCASE, template_id"
+        return _all_dicts(self.connection.execute(sql, parameters))
+
+    def save_plate_template(self, values: dict[str, object]) -> str:
+        template_id = _optional_str(values, "template_id") or _new_id()
+        name = _required_str(values, "template_name")
+        assay_type = AssayType(_required_str(values, "assay_type"))
+        layout_json = _json_text(values.get("layout", ()))
+        created_by = _required_str(values, "created_by")
+        expected_updated_at = _optional_str(values, "expected_updated_at")
+        conflict = self.connection.execute(
+            "SELECT template_id FROM plate_templates "
+            "WHERE template_name = ? COLLATE NOCASE AND template_id <> ?",
+            (name, template_id),
+        ).fetchone()
+        if conflict is not None:
+            raise InvalidRepositoryValueError(f"Template name already exists: {name}")
+        existing = self.connection.execute(
+            "SELECT updated_at FROM plate_templates WHERE template_id = ?", (template_id,)
+        ).fetchone()
+        timestamp = _now()
+        if existing is None:
+            if expected_updated_at is not None:
+                raise RecordNotFoundError(f"Template not found: {template_id}")
+            self.connection.execute(
+                "INSERT INTO plate_templates "
+                "(template_id, template_name, assay_type, layout_json, created_by, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (template_id, name, assay_type, layout_json, created_by, timestamp, timestamp),
+            )
+            return template_id
+        if expected_updated_at is None or str(existing[0]) != expected_updated_at:
+            raise ConcurrencyConflictError(f"Template changed since {expected_updated_at}")
+        cursor = self.connection.execute(
+            "UPDATE plate_templates SET template_name = ?, assay_type = ?, layout_json = ?, "
+            "updated_at = ? WHERE template_id = ? AND updated_at = ?",
+            (name, assay_type, layout_json, timestamp, template_id, expected_updated_at),
+        )
+        if cursor.rowcount != 1:
+            raise ConcurrencyConflictError(f"Template changed since {expected_updated_at}")
+        return template_id
+
+    def delete_plate_template(self, template_id: str, expected_updated_at: str) -> None:
+        cursor = self.connection.execute(
+            "DELETE FROM plate_templates WHERE template_id = ? AND updated_at = ?",
+            (template_id, expected_updated_at),
+        )
+        if cursor.rowcount == 1:
+            return
+        if (
+            self.connection.execute(
+                "SELECT 1 FROM plate_templates WHERE template_id = ?", (template_id,)
+            ).fetchone()
+            is None
+        ):
+            raise RecordNotFoundError(f"Template not found: {template_id}")
+        raise ConcurrencyConflictError(f"Template changed since {expected_updated_at}")
+
+    def list_saved_options(self, option_type: str | None = None) -> tuple[dict[str, object], ...]:
+        sql = "SELECT option_type, value, created_by, created_at FROM saved_options"
+        parameters: tuple[object, ...] = ()
+        if option_type is not None:
+            sql += " WHERE option_type = ? COLLATE NOCASE"
+            parameters = (option_type,)
+        sql += " ORDER BY option_type COLLATE NOCASE, value COLLATE NOCASE"
+        return _all_dicts(self.connection.execute(sql, parameters))
+
+    def save_saved_option(self, values: dict[str, object]) -> bool:
+        option_type = _required_str(values, "option_type")
+        value = _required_str(values, "value")
+        if (
+            self.connection.execute(
+                "SELECT 1 FROM saved_options WHERE option_type = ? COLLATE NOCASE "
+                "AND value = ? COLLATE NOCASE",
+                (option_type, value),
+            ).fetchone()
+            is not None
+        ):
+            return False
+        self.connection.execute(
+            "INSERT INTO saved_options(option_type, value, created_by, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (option_type, value, _required_str(values, "created_by"), _now()),
+        )
+        return True
+
+    def delete_saved_option(self, option_type: str, value: str) -> None:
+        cursor = self.connection.execute(
+            "DELETE FROM saved_options WHERE option_type = ? COLLATE NOCASE "
+            "AND value = ? COLLATE NOCASE",
+            (_str_value(option_type), _str_value(value)),
+        )
+        if cursor.rowcount != 1:
+            raise RecordNotFoundError(f"Saved option not found: {option_type}/{value}")
+
     def update_well_layout(self, plate_id: PlateId, changes: Sequence[dict[str, object]]) -> None:
         well_allowed = {
             "raw_label",

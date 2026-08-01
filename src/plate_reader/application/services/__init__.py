@@ -56,12 +56,24 @@ from plate_reader.application.services.portable_workflow import (
     PreviewPortableRunService,
 )
 from plate_reader.application.services.source_limits import SourceTooLargeError
+from plate_reader.application.services.supporting_data import (
+    DeleteOptionService,
+    DeletePlateTemplateService,
+    ListPlateTemplatesService,
+    ListSavedOptionsService,
+    PlateTemplate,
+    SavedOption,
+    SaveOptionService,
+    SavePlateTemplateService,
+)
 
 __all__ = [
     "AuthenticationError",
     "BackgroundRevisionResult",
     "ComputeGrowthBackgroundService",
     "ComputeMicRevisionService",
+    "DeleteOptionService",
+    "DeletePlateTemplateService",
     "ExportGrowthRunService",
     "ExportMicPlateService",
     "GrowthImportResult",
@@ -73,6 +85,8 @@ __all__ = [
     "ImportGrowthRunService",
     "ImportMicPlateService",
     "ImportPortableRunService",
+    "ListPlateTemplatesService",
+    "ListSavedOptionsService",
     "LoadGrowthRunService",
     "LoadMicPlateService",
     "MicImportResult",
@@ -80,6 +94,7 @@ __all__ = [
     "MicPreview",
     "MicRevisionResult",
     "OidcClaims",
+    "PlateTemplate",
     "PortableArtifact",
     "PrepareGrowthPlotDataService",
     "PreviewGrowthRunService",
@@ -87,6 +102,9 @@ __all__ = [
     "PreviewPortableRunService",
     "ResolveAuthenticatedActorService",
     "RestoreMicPlateService",
+    "SaveOptionService",
+    "SavePlateTemplateService",
+    "SavedOption",
     "SearchGrowthRunsService",
     "SearchMicPlatesService",
     "SearchMicResultsService",
