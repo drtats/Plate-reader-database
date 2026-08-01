@@ -8,4 +8,5 @@ render_plate_editor(
     mic_layout_frame(parse_mic_plate_csv(synthetic_mic_csv())),
     state_key="component_layout",
     assay="mic",
+    suggestions={"Strain": ("Saved strain",)},
 )

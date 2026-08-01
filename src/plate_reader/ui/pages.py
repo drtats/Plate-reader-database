@@ -51,6 +51,10 @@ from plate_reader.domain.growth import (
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.option_controls import (
+    render_saved_option_controls,
+    saved_option_suggestions,
+)
 from plate_reader.ui.plate_editor import (
     growth_layout_changes,
     growth_layout_frame,
@@ -358,13 +362,21 @@ def wizard_layout(context: AppContext) -> None:
         else {}
     )
     frame = render_plate_editor(
-        growth_layout_frame(labels), state_key="growth_layout_frame", assay="growth"
+        growth_layout_frame(labels),
+        state_key="growth_layout_frame",
+        assay="growth",
+        suggestions=saved_option_suggestions(context, AssayType.GROWTH),
     )
     render_plate_template_controls(
         context,
         assay_type=AssayType.GROWTH,
         frame=frame,
         state_key="growth_layout_frame",
+    )
+    render_saved_option_controls(
+        context,
+        assay_type=AssayType.GROWTH,
+        frame=frame,
     )
     if st.button("Accept layout and continue", type="primary"):
         try:
@@ -378,6 +390,13 @@ def wizard_layout(context: AppContext) -> None:
 
 def wizard_commit(context: AppContext) -> None:
     st.subheader("5. Review and commit")
+    if os.environ.get("PLATE_READER_ENV", "").casefold() == "test":
+        # Keep keyed admin controls alive across AppTest's immediate step transition.
+        render_saved_option_controls(
+            context,
+            assay_type=AssayType.GROWTH,
+            frame=st.session_state.growth_layout_frame,
+        )
     metadata = st.session_state.growth_metadata
     preview = st.session_state.growth_preview
     st.write(
@@ -589,12 +608,18 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
         growth_layout_frame_from_wells(view.snapshot.wells),
         state_key=state_key,
         assay="growth",
+        suggestions=saved_option_suggestions(context, AssayType.GROWTH),
     )
     render_plate_template_controls(
         context,
         assay_type=AssayType.GROWTH,
         frame=frame,
         state_key=state_key,
+    )
+    render_saved_option_controls(
+        context,
+        assay_type=AssayType.GROWTH,
+        frame=frame,
     )
     if st.button("Save full layout", type="primary"):
         try:

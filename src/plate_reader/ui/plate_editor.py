@@ -408,6 +408,7 @@ def render_plate_editor(
     state_key: str,
     assay: str,
     immutable_columns: Sequence[str] = (),
+    suggestions: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:  # pragma: no cover - Streamlit widget composition
     """Render the legacy dual-view editor and return its canonical session frame."""
 
@@ -432,7 +433,14 @@ def render_plate_editor(
         return frame
     _render_custom_columns(frame, state_key, revision_key)
     frame = normalize_layout_frame(st.session_state[state_key])
-    _render_fill_helpers(frame, state_key, revision_key, assay, immutable_columns)
+    _render_fill_helpers(
+        frame,
+        state_key,
+        revision_key,
+        assay,
+        immutable_columns,
+        suggestions or {},
+    )
     frame = normalize_layout_frame(st.session_state[state_key])
 
     plate_tab, table_tab = st.tabs(("96-well plate", "Full well table"))
@@ -528,6 +536,7 @@ def _render_fill_helpers(
     revision_key: str,
     assay: str,
     immutable_columns: Sequence[str],
+    suggestions: Mapping[str, Sequence[str]],
 ) -> None:  # pragma: no cover - Streamlit widget composition
     with st.expander("Fill helpers", expanded=True):
         protected = {*PROTECTED_COLUMNS, *immutable_columns}
@@ -546,7 +555,7 @@ def _render_fill_helpers(
             target = st.selectbox(
                 "Target column", tuple(range(1, 13)), key=f"{state_key}_fill_column"
             )
-        value = _fill_value_widget(target_column, state_key, assay)
+        value = _fill_value_widget(target_column, state_key, assay, suggestions)
         if st.button("Apply fill", key=f"{state_key}_fill_apply"):
             _replace_frame(
                 state_key,
@@ -556,7 +565,10 @@ def _render_fill_helpers(
 
 
 def _fill_value_widget(  # pragma: no cover - Streamlit widget composition
-    column: str, state_key: str, assay: str
+    column: str,
+    state_key: str,
+    assay: str,
+    suggestions: Mapping[str, Sequence[str]],
 ) -> object:
     key = f"{state_key}_fill_value_{column}"
     if column in BOOLEAN_COLUMNS:
@@ -566,6 +578,17 @@ def _fill_value_widget(  # pragma: no cover - Streamlit widget composition
     if column in NUMERIC_COLUMNS:
         return st.number_input("Fill value", value=0.0, key=key)
     default = "LB" if column == "Media" and assay == "growth" else ""
+    saved = tuple(dict.fromkeys(suggestions.get(column, ())))
+    if saved:
+        options = tuple(dict.fromkeys(((default,) if default else ()) + saved))
+        return st.selectbox(
+            "Fill value",
+            options,
+            index=0 if default else None,
+            accept_new_options=True,
+            placeholder="Choose a saved value or type a new one",
+            key=key,
+        )
     return st.text_input("Fill value", value=default, key=key)
 
 

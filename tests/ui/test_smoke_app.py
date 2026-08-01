@@ -36,6 +36,9 @@ def test_real_dual_view_plate_editor_component_renders(
     assert [tab.label for tab in app.tabs] == ["96-well plate", "Full well table"]
     assert any(button.label == "Apply 96-well plate changes" for button in app.button)
     assert any(button.label == "Apply full table changes" for button in app.button)
+    next(item for item in app.selectbox if item.label == "Fill parameter").set_value("Strain").run()
+    fill_value = next(item for item in app.selectbox if item.label == "Fill value")
+    assert "Saved strain" in fill_value.options
 
 
 def test_cloud_mode_stops_at_login_before_loading_credentials(
@@ -321,6 +324,15 @@ def test_admin_mic_lock_and_soft_delete_ui(monkeypatch: pytest.MonkeyPatch, tmp_
     ).run()
     click(app, "Apply selected template")
     assert any("Applied template: Admin MIC template" in item.value for item in app.success)
+    next(item for item in app.selectbox if item.label == "Suggestion value").set_value(
+        "strain_normal"
+    )
+    click(app, "Save fill suggestion")
+    with sqlite3.connect(database_path) as database:
+        assert database.execute("SELECT option_type, value FROM saved_options").fetchone() == (
+            "strain",
+            "strain_normal",
+        )
     click(app, "Accept MIC layout and continue")
     click(app, "Commit MIC plate")
 

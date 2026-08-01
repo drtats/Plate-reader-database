@@ -34,6 +34,8 @@ from plate_reader.infrastructure.database.repository import (
     ConcurrencyConflictError,
     InvalidRepositoryValueError,
 )
+from plate_reader.ui.context import AppContext
+from plate_reader.ui.option_controls import saved_option_suggestions
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "migrations"
@@ -125,6 +127,9 @@ def test_saved_options_are_controlled_deduplicated_and_audited(
     assert saved.value == "M9"
     assert duplicate.value == "M9"
     assert ListSavedOptionsService(repository).execute(VIEWER, "medium") == (saved,)
+    viewer_context = AppContext(repository, VIEWER)
+    assert saved_option_suggestions(viewer_context, AssayType.GROWTH)["Media"] == ("M9",)
+    assert saved_option_suggestions(viewer_context, AssayType.MIC)["Media"] == ("M9",)
     with pytest.raises(PermissionError):
         SaveOptionService(repository).execute(SaveOption(EDITOR, "medium", "LB"))
 

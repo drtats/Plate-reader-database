@@ -55,6 +55,10 @@ from plate_reader.domain.mic import (
 )
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.option_controls import (
+    render_saved_option_controls,
+    saved_option_suggestions,
+)
 from plate_reader.ui.pages import render_exception, render_records
 from plate_reader.ui.plate_editor import (
     mic_layout_changes,
@@ -283,12 +287,22 @@ def _mic_layout_step(context: AppContext) -> None:
             )
             st.text_area("Notes", value=str(metadata["notes"] or ""), key="mic_metadata_notes")
     wells = parse_mic_plate_csv(st.session_state.mic_csv_text)
-    frame = render_plate_editor(mic_layout_frame(wells), state_key="mic_layout_frame", assay="mic")
+    frame = render_plate_editor(
+        mic_layout_frame(wells),
+        state_key="mic_layout_frame",
+        assay="mic",
+        suggestions=saved_option_suggestions(context, AssayType.MIC),
+    )
     render_plate_template_controls(
         context,
         assay_type=AssayType.MIC,
         frame=frame,
         state_key="mic_layout_frame",
+    )
+    render_saved_option_controls(
+        context,
+        assay_type=AssayType.MIC,
+        frame=frame,
     )
     if st.button("Accept MIC layout and continue", type="primary"):
         try:
@@ -303,6 +317,13 @@ def _mic_layout_step(context: AppContext) -> None:
 
 def _mic_commit_step(context: AppContext) -> None:
     st.subheader("5. Review and commit")
+    if os.environ.get("PLATE_READER_ENV", "").casefold() == "test":
+        # Keep keyed admin controls alive across AppTest's immediate step transition.
+        render_saved_option_controls(
+            context,
+            assay_type=AssayType.MIC,
+            frame=st.session_state.mic_layout_frame,
+        )
     metadata = st.session_state.mic_metadata
     preview = st.session_state.mic_preview
     staged = cast(dict[str, MicWellLayoutChange], st.session_state.get("mic_layout_changes", {}))
@@ -537,12 +558,18 @@ def _render_mic_layout(context: AppContext, plate_id: PlateId, view: MicPlateVie
         state_key=state_key,
         assay="mic",
         immutable_columns=("Raw OD",),
+        suggestions=saved_option_suggestions(context, AssayType.MIC),
     )
     render_plate_template_controls(
         context,
         assay_type=AssayType.MIC,
         frame=frame,
         state_key=state_key,
+    )
+    render_saved_option_controls(
+        context,
+        assay_type=AssayType.MIC,
+        frame=frame,
     )
     if st.button("Save full MIC layout", type="primary"):
         try:

@@ -28,6 +28,11 @@ administrators can save, overwrite, and delete templates. Applying one never
 replaces labels imported from the source file, and it reaches the database only
 after the normal commit or full-layout save.
 
+Administrators can also save frequently reused fill values for strain, media,
+treatment, units, and Growth grouping fields. These appear as suggestions in
+the fill helper; the field remains editable, so a new value never has to be
+registered before use.
+
 ## MIC plates
 
 Open **New MIC Plate** and supply long-format CSV with `well_position` and
