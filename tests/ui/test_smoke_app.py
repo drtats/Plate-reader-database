@@ -143,6 +143,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
         assert database.execute("SELECT sum(plot_selected) FROM wells").fetchone() == (8,)
     click(app, "Render selected curves")
     assert len(app.get("plotly_chart")) >= 2
+    assert app.session_state["growth_plot_pdf"].content.startswith(b"%PDF-1.4")
     click(app, "Prepare portable export")
     artifact = app.session_state["portable_artifact"]
     assert artifact.content.startswith(b"SQLite format 3")

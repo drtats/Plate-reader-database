@@ -31,8 +31,9 @@ Parity work completed after the original Phase 4 report:
 - the lazy 96-well overview, detailed background QC, bulk background-group copy,
   and stale-revision detection are restored.
 
-Publication-specific static PDF styling remains an explicit later export
-feature; Plotly's built-in high-resolution PNG action is available now.
+Selected curves now provide Plotly's built-in high-resolution PNG action plus a
+dependency-free vector PDF download generated from the same prepared DTO and
+plot limits.
 
 ## Visual record
 

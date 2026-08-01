@@ -11,6 +11,11 @@ from plate_reader.application.services.growth_layout import (
     BuildGrowthBackgroundGroupsService,
     GrowthBackgroundGroupSource,
 )
+from plate_reader.application.services.growth_plot_export import (
+    GrowthPdfArtifact,
+    GrowthPdfOptions,
+    export_growth_plot_pdf,
+)
 from plate_reader.application.services.growth_plotting import (
     GrowthPlotData,
     GrowthPlotPoint,
@@ -94,6 +99,8 @@ __all__ = [
     "GrowthBackgroundQcGroup",
     "GrowthBackgroundQcReport",
     "GrowthImportResult",
+    "GrowthPdfArtifact",
+    "GrowthPdfOptions",
     "GrowthPlotData",
     "GrowthPlotPoint",
     "GrowthPreview",
@@ -140,4 +147,5 @@ __all__ = [
     "UpdateGrowthMetadataService",
     "UpdateMicLayoutService",
     "UpdateMicMetadataService",
+    "export_growth_plot_pdf",
 ]

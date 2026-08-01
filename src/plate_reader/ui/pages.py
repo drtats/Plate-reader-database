@@ -36,6 +36,8 @@ from plate_reader.application.services import (
     ComputeGrowthBackgroundService,
     ExportGrowthRunService,
     GrowthBackgroundGroupSource,
+    GrowthPdfArtifact,
+    GrowthPdfOptions,
     GrowthRunView,
     ImportGrowthRunService,
     LoadGrowthRunService,
@@ -46,6 +48,7 @@ from plate_reader.application.services import (
     SummarizeGrowthBackgroundQcService,
     UpdateGrowthLayoutService,
     UpdateGrowthMetadataService,
+    export_growth_plot_pdf,
 )
 from plate_reader.domain.growth import (
     GROWTH_BACKGROUND_VERSION,
@@ -862,6 +865,17 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         st.session_state.growth_plot_issues = plot_data.issues
         st.session_state.growth_plot_title = options.title
         st.session_state.growth_plot_plate_id = str(view.snapshot.plate_id)
+        st.session_state.growth_plot_pdf = export_growth_plot_pdf(
+            plot_data,
+            GrowthPdfOptions(
+                title=options.title,
+                x_max=options.x_max,
+                y_min=options.y_min,
+                y_max=options.y_max,
+                symlog=options.symlog,
+            ),
+            options.title or f"growth-plot-{plate_id}",
+        )
     for issue in st.session_state.get("growth_plot_issues", ()):
         st.warning(issue.message)
     if (figure := st.session_state.get("growth_plot")) is not None and st.session_state.get(
@@ -875,6 +889,14 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             ),
         )
         st.caption("Use the camera button in the plot toolbar to download a high-resolution PNG.")
+        if pdf_value := st.session_state.get("growth_plot_pdf"):
+            pdf = cast(GrowthPdfArtifact, pdf_value)
+            st.download_button(
+                "Download plot as PDF",
+                data=pdf.content,
+                file_name=pdf.filename,
+                mime="application/pdf",
+            )
 
 
 def render_revisions(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
@@ -1025,6 +1047,7 @@ def _clear_growth_plot() -> None:
         "growth_plot_issues",
         "growth_plot_plate_id",
         "growth_plot_title",
+        "growth_plot_pdf",
         "growth_plate_overview",
         "growth_plate_overview_issues",
         "growth_plate_overview_plate_id",
