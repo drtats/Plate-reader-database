@@ -327,6 +327,9 @@ def _apply_layout_changes(
     return tuple(
         replace(
             well,
+            value_raw=(
+                change.value_raw if change and change.value_raw is not None else well.value_raw
+            ),
             is_blank=change.is_blank if change and change.is_blank is not None else well.is_blank,
             strain=(
                 change.strain.strip() or None

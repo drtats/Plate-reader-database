@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+from plate_reader.application.demo import synthetic_mic_csv
+from plate_reader.domain.mic import parse_mic_plate_csv
+from plate_reader.ui.plate_editor import (
+    apply_plate_matrix,
+    fill_layout,
+    growth_layout_changes,
+    growth_layout_frame,
+    mic_layout_changes,
+    mic_layout_frame,
+    plate_matrix,
+)
+
+
+def test_growth_grid_and_table_share_physical_plate_order() -> None:
+    frame = growth_layout_frame({"A1": "first", "H12": "last"})
+    assert frame.shape == (96, 17)
+    assert frame.iloc[0]["Well"] == "A1"
+    assert frame.iloc[-1]["Well"] == "H12"
+
+    grid = plate_matrix(frame, "Strain")
+    grid.loc["A", "1"] = "strain-a"
+    grid.loc["H", "12"] = "strain-h"
+    synchronized = apply_plate_matrix(frame, "Strain", grid)
+
+    assert synchronized.loc[0, "Strain"] == "strain-a"
+    assert synchronized.loc[95, "Strain"] == "strain-h"
+
+
+def test_fill_helpers_target_full_plate_row_and_column() -> None:
+    frame = growth_layout_frame()
+    frame = fill_layout(frame, "Media", "M9", "Full plate")
+    frame = fill_layout(frame, "Strain", "row-b", "Row", "B")
+    frame = fill_layout(frame, "Blank", True, "Column", 12)
+
+    assert set(frame["Media"]) == {"M9"}
+    assert set(frame.loc[frame["Well"].str.startswith("B"), "Strain"]) == {"row-b"}
+    assert frame.loc[frame["Well"].str.endswith("12"), "Blank"].all()
+    assert int(frame["Blank"].sum()) == 8
+
+
+def test_growth_layout_conversion_preserves_every_legacy_field_and_custom_columns() -> None:
+    frame = growth_layout_frame({"A1": "raw-a1"})
+    frame["Oxygen"] = ""
+    frame.loc[
+        0,
+        [
+            "Display name",
+            "Blank",
+            "Background group",
+            "Plot",
+            "Group",
+            "Media",
+            "Strain",
+            "Inoculum size",
+            "Inoculum unit",
+            "Replicate",
+            "Notes",
+            "Treatment",
+            "Concentration",
+            "Concentration unit",
+            "T0 added (min)",
+            "Oxygen",
+        ],
+    ] = [
+        "sample a1",
+        True,
+        "m9",
+        True,
+        "group-a",
+        "M9",
+        "strain-a",
+        0.02,
+        "OD600",
+        3,
+        "note-a",
+        "drug-a",
+        2.5,
+        "ug/mL",
+        4.0,
+        "anaerobic",
+    ]
+
+    change = growth_layout_changes(frame)[0]
+    assert change.position == "A1"
+    assert change.display_name == "sample a1"
+    assert change.is_blank is True
+    assert change.background_group == "m9"
+    assert change.plot_selected is True
+    assert change.grouping_label == "group-a"
+    assert change.medium == "M9"
+    assert change.strain == "strain-a"
+    assert change.inoculum_size == 0.02
+    assert change.inoculum_unit == "OD600"
+    assert change.replicate == 3
+    assert change.notes == "note-a"
+    assert change.treatment == "drug-a"
+    assert change.concentration == 2.5
+    assert change.concentration_unit == "ug/mL"
+    assert change.custom_fields == {"Oxygen": "anaerobic", "t0_added_min": 4.0}
+
+
+def test_mic_layout_conversion_keeps_raw_od_and_arbitrary_label_grids() -> None:
+    frame = mic_layout_frame(parse_mic_plate_csv(synthetic_mic_csv()))
+    frame["Oxygen"] = ""
+    frame.loc[0, "Raw OD"] = 0.333
+    frame.loc[0, "Oxygen"] = "low"
+    frame.loc[0, "Display name"] = "A1 edited"
+
+    change = mic_layout_changes(frame)[0]
+    assert change.position == "A1"
+    assert change.value_raw == 0.333
+    assert change.display_name == "A1 edited"
+    assert change.custom_labels == {"Oxygen": "low"}

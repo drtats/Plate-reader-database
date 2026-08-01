@@ -11,6 +11,7 @@ from plate_reader.application.contracts import (
     Actor,
     ImportMicPlate,
     MicExperimentMetadata,
+    MicWellLayoutChange,
     Role,
     UserId,
 )
@@ -197,6 +198,32 @@ def test_forced_mic_import_failure_rolls_back_every_table(
         "import_sources": 0,
         "provenance_events": 0,
     }
+
+
+def test_mic_import_preserves_editable_raw_od_and_custom_grid_values(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    result = ImportMicPlateService(repository, id_factory=id_sequence()).execute(
+        import_command(),
+        MIC_CSV,
+        layout_changes=(
+            MicWellLayoutChange(
+                position="A1",
+                value_raw=0.333,
+                display_name="edited A1",
+                notes="well note",
+                custom_labels={"Oxygen": "low"},
+            ),
+        ),
+    )
+
+    row = repository.connection.execute(
+        "SELECT mr.value_raw, w.display_name, w.notes, w.custom_json "
+        "FROM wells w JOIN mic_readings mr ON mr.well_id = w.well_id "
+        "WHERE w.plate_id = ? AND w.position = 'A1'",
+        (result.plate_id,),
+    ).fetchone()
+    assert row == (0.333, "edited A1", "well note", '{"Oxygen":"low"}')
 
 
 def test_mic_import_validates_authorization_hash_version_and_full_plate(

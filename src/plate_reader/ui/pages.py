@@ -15,6 +15,7 @@ from plate_reader import __version__
 from plate_reader.application.contracts import (
     ComputeGrowthBackgroundRevision,
     ExportPortableRun,
+    GrowthRunMetadata,
     ImportGrowthRun,
     LifecycleStatus,
     PlateId,
@@ -38,11 +39,19 @@ from plate_reader.application.services import (
     UpdateGrowthLayoutService,
     UpdateGrowthMetadataService,
 )
-from plate_reader.domain.common.plate import PLATE_96
-from plate_reader.domain.growth import GROWTH_BACKGROUND_VERSION, GROWTH_NORMALIZATION_VERSION
+from plate_reader.domain.growth import (
+    GROWTH_BACKGROUND_VERSION,
+    GROWTH_NORMALIZATION_VERSION,
+    parse_label_layout,
+)
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.plate_editor import (
+    growth_layout_changes,
+    growth_layout_frame,
+    render_plate_editor,
+)
 from plate_reader.ui.plotting import endpoint_heatmap, growth_curve_figure
 
 LOGGER = logging.getLogger(__name__)
@@ -152,10 +161,60 @@ def wizard_metadata(_context: AppContext) -> None:
     left.metric("Wells", preview.well_count)
     middle.metric("Timepoints", preview.timepoint_count)
     right.metric("Measurements", preview.measurement_count)
+    saved = cast(dict[str, object], st.session_state.get("growth_metadata", {}))
+    st.caption(f"Source: {st.session_state.growth_source_name} · SHA-256: {preview.source_sha256}")
     with st.form("growth-metadata"):
-        experiment_name = st.text_input("Experiment name")
-        plate_name = st.text_input("Plate name", value="Plate 1")
-        experiment_date = st.date_input("Experiment date", value=date.today())
+        identity_left, identity_right = st.columns(2)
+        experiment_name = identity_left.text_input(
+            "Experiment name", value=str(saved.get("experiment_name", ""))
+        )
+        plate_name = identity_right.text_input(
+            "Plate name", value=str(saved.get("plate_name", "Plate 1"))
+        )
+        project = identity_left.text_input("Project", value=str(saved.get("project", "")))
+        tags = identity_right.text_input(
+            "Tags (comma separated)", value=str(saved.get("tags_text", ""))
+        )
+        details = st.columns(4)
+        experiment_date = details[0].date_input(
+            "Date", value=cast(date, saved.get("experiment_date", date.today()))
+        )
+        operator_name = details[1].text_input("User", value=str(saved.get("operator_name", "")))
+        instrument_options = ("PlateReader1", "Epoch 2", "Synergy H1", "Custom")
+        saved_instrument = str(saved.get("instrument", "PlateReader1"))
+        instrument_choice = details[2].selectbox(
+            "Instrument",
+            instrument_options,
+            index=(
+                instrument_options.index(saved_instrument)
+                if saved_instrument in instrument_options
+                else instrument_options.index("Custom")
+            ),
+        )
+        temperature = details[3].number_input(
+            "Temperature", value=float(str(saved.get("temperature", 37.0))), step=0.1
+        )
+        custom_instrument = ""
+        if instrument_choice == "Custom":
+            custom_instrument = st.text_input(
+                "Custom instrument name",
+                value=saved_instrument if saved_instrument not in instrument_options else "",
+            )
+        subtraction = st.number_input(
+            "Global subtraction (legacy override)",
+            value=float(str(saved.get("manual_subtraction", 0.0))),
+            step=0.001,
+            format="%.4f",
+            help="Constant subtraction retained from Growth v4 metadata.",
+        )
+        units = st.columns(2)
+        temperature_unit = units[0].text_input(
+            "Temperature unit", value=str(saved.get("temperature_unit", "C"))
+        )
+        measurement_type = units[1].text_input(
+            "Measurement type", value=str(saved.get("measurement_type", "OD600"))
+        )
+        notes = st.text_area("Run notes", value=str(saved.get("notes", "")))
         submitted = st.form_submit_button("Save metadata and continue")
     if submitted:
         if not experiment_name.strip() or not plate_name.strip():
@@ -165,6 +224,20 @@ def wizard_metadata(_context: AppContext) -> None:
                 "experiment_name": experiment_name.strip(),
                 "plate_name": plate_name.strip(),
                 "experiment_date": experiment_date,
+                "project": project.strip() or None,
+                "tags_text": tags,
+                "tags": tuple(tag.strip() for tag in tags.split(",") if tag.strip()),
+                "operator_name": operator_name.strip() or None,
+                "instrument": (
+                    custom_instrument.strip() or "Custom"
+                    if instrument_choice == "Custom"
+                    else instrument_choice
+                ),
+                "temperature": float(temperature),
+                "temperature_unit": temperature_unit.strip() or None,
+                "measurement_type": measurement_type.strip() or None,
+                "manual_subtraction": float(subtraction),
+                "notes": notes.strip() or None,
             }
             _next_step()
     if st.button("Back", key="metadata-back"):
@@ -173,27 +246,21 @@ def wizard_metadata(_context: AppContext) -> None:
 
 def wizard_layout(_context: AppContext) -> None:
     st.subheader("4. Review the 96-well layout")
-    st.warning("Layout edits are not stored until the final Commit action.")
-    blank_wells = st.multiselect(
-        "Blank wells",
-        tuple(position.label for position in PLATE_96.positions()),
-        help="Blank wells supply the background for their assigned group.",
+    label_text = st.session_state.get("growth_label_csv_text") or None
+    labels = (
+        {label.position.label: label.label for label in parse_label_layout(label_text)}
+        if label_text
+        else {}
     )
-    background_group = st.text_input("Background group", value="plate")
+    frame = render_plate_editor(
+        growth_layout_frame(labels), state_key="growth_layout_frame", assay="growth"
+    )
     if st.button("Accept layout and continue", type="primary"):
-        if not background_group.strip():
-            st.error("Background group cannot be empty.")
-        else:
-            selected_blanks = set(blank_wells)
-            st.session_state.growth_layout_changes = tuple(
-                WellLayoutChange(
-                    position=position.label,
-                    is_blank=position.label in selected_blanks,
-                    background_group=background_group.strip(),
-                )
-                for position in PLATE_96.positions()
-            )
+        try:
+            st.session_state.growth_layout_changes = growth_layout_changes(frame)
             _next_step()
+        except Exception as error:
+            render_exception(error)
     if st.button("Back", key="layout-back"):
         _previous_step()
 
@@ -223,6 +290,17 @@ def wizard_commit(context: AppContext) -> None:
                     t0_offset_minutes=st.session_state.growth_offset,
                 ),
                 st.session_state.growth_csv_text,
+                metadata=GrowthRunMetadata(
+                    project=cast(str | None, metadata["project"]),
+                    tags=cast(tuple[str, ...], metadata["tags"]),
+                    operator_name=cast(str | None, metadata["operator_name"]),
+                    instrument=cast(str | None, metadata["instrument"]),
+                    temperature=float(metadata["temperature"]),
+                    temperature_unit=cast(str | None, metadata["temperature_unit"]),
+                    measurement_type=cast(str | None, metadata["measurement_type"]),
+                    manual_subtraction=float(metadata["manual_subtraction"]),
+                    notes=cast(str | None, metadata["notes"]),
+                ),
                 label_csv_text=(st.session_state.get("growth_label_csv_text") or None),
                 layout_changes=st.session_state.growth_layout_changes,
             )

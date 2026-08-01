@@ -12,6 +12,7 @@ from typing import Protocol
 from plate_reader.application.contracts import (
     AssayType,
     ExperimentId,
+    GrowthRunMetadata,
     ImportGrowthRun,
     PlateId,
     Role,
@@ -97,6 +98,7 @@ class ImportGrowthRunService:
         command: ImportGrowthRun,
         csv_text: str,
         *,
+        metadata: GrowthRunMetadata | None = None,
         label_csv_text: str | None = None,
         layout_changes: Sequence[WellLayoutChange] = (),
     ) -> GrowthImportResult:
@@ -144,6 +146,7 @@ class ImportGrowthRunService:
             else {}
         )
         layout = self._validated_layout(layout_changes)
+        details = metadata or GrowthRunMetadata()
         experiment_id = ExperimentId(self.id_factory())
         plate_id = PlateId(self.id_factory())
         well_ids = {position: self.id_factory() for position in PLATE_96.positions()}
@@ -153,8 +156,17 @@ class ImportGrowthRunService:
                 {
                     "experiment_id": experiment_id,
                     "name": command.experiment_name,
+                    "project": details.project,
                     "experiment_date": command.experiment_date.isoformat(),
-                    "operator_name": command.actor.email,
+                    "operator_name": details.operator_name or command.actor.email,
+                    "notes": details.notes,
+                    "tags": details.tags,
+                    "custom_json": {
+                        **details.experiment_custom_json,
+                        "source_name": command.source_name,
+                        "source_sha256": actual_hash,
+                        "parser_version": command.parser_version,
+                    },
                     "created_by": actor_id,
                 }
             )
@@ -165,7 +177,15 @@ class ImportGrowthRunService:
                     "assay_type": AssayType.GROWTH,
                     "plate_name": command.plate_name,
                     "plate_format": 96,
+                    "instrument": details.instrument,
                     "channel": normalized.measurements[0].channel,
+                    "temperature": details.temperature,
+                    "temperature_unit": details.temperature_unit,
+                    "manual_subtraction": details.manual_subtraction,
+                    "custom_json": {
+                        **details.plate_custom_json,
+                        "measurement_type": details.measurement_type,
+                    },
                     "created_by": actor_id,
                 }
             )
@@ -191,6 +211,15 @@ class ImportGrowthRunService:
                             if position in layout
                             else "plate"
                         ),
+                        "plot_selected": (
+                            layout[position].plot_selected
+                            if position in layout and layout[position].plot_selected is not None
+                            else False
+                        ),
+                        "notes": layout[position].notes if position in layout else None,
+                        "custom_json": (
+                            layout[position].custom_fields or {} if position in layout else {}
+                        ),
                     }
                     for position in PLATE_96.positions()
                 ],
@@ -209,6 +238,15 @@ class ImportGrowthRunService:
                             layout[position].concentration_unit if position in layout else None
                         ),
                         "replicate": layout[position].replicate or 1 if position in layout else 1,
+                        "inoculum_size": (
+                            layout[position].inoculum_size if position in layout else None
+                        ),
+                        "inoculum_unit": (
+                            layout[position].inoculum_unit if position in layout else None
+                        ),
+                        "grouping_label": (
+                            layout[position].grouping_label if position in layout else None
+                        ),
                     }
                     for position in PLATE_96.positions()
                 ]

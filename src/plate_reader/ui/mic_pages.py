@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import date
 from pathlib import Path
 from typing import cast
@@ -56,6 +57,11 @@ from plate_reader.domain.mic import (
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.pages import render_exception, render_records
+from plate_reader.ui.plate_editor import (
+    mic_layout_changes,
+    mic_layout_frame,
+    render_plate_editor,
+)
 from plate_reader.ui.plotting import mic_growth_map, mic_plate_heatmap, mic_result_dot_plot
 
 
@@ -167,12 +173,62 @@ def _mic_metadata_step() -> None:
     columns[1].metric("Blanks", preview.blank_count)
     columns[2].metric("MIC groups", preview.group_count)
     columns[3].metric("Background", f"{preview.background_value:.4f}")
+    saved = cast(dict[str, object], st.session_state.get("mic_metadata", {}))
     with st.form("mic-metadata"):
-        experiment_name = st.text_input("MIC experiment name")
-        plate_name = st.text_input("MIC plate name", value="MIC Plate 1")
-        experiment_date = st.date_input("MIC experiment date", value=date.today())
-        operator_name = st.text_input("Operator")
-        reader = st.text_input("Reader")
+        identity = st.columns(2)
+        experiment_name = identity[0].text_input(
+            "MIC experiment name",
+            value=str(saved.get("experiment_name", "")),
+            key="mic_metadata_experiment_name",
+        )
+        plate_name = identity[1].text_input(
+            "Plate name",
+            value=str(saved.get("plate_name", "MIC Plate 1")),
+            key="mic_metadata_plate_name",
+        )
+        details = st.columns(4)
+        experiment_date = details[0].date_input(
+            "Date", value=cast(date, saved.get("experiment_date", date.today()))
+        )
+        operator_name = details[1].text_input(
+            "Person", value=str(saved.get("operator_name", "")), key="mic_metadata_person"
+        )
+        reader = details[2].text_input(
+            "Reader used", value=str(saved.get("reader", "")), key="mic_metadata_reader"
+        )
+        incubation_time = details[3].number_input(
+            "Incubation time (hrs)",
+            min_value=0.0,
+            value=float(str(saved.get("incubation_time_hours", 0.0))),
+            step=0.5,
+        )
+        culture = st.columns(4)
+        threshold = culture[0].number_input(
+            "Threshold (OD)",
+            min_value=0.0,
+            value=float(str(saved.get("threshold", st.session_state.mic_threshold))),
+            format="%.4f",
+        )
+        inoculum_od = culture[1].number_input(
+            "Inoculum OD", value=float(str(saved.get("inoculum_od", 0.0))), format="%.4f"
+        )
+        growth_phases = ("Lag", "Exponential", "Stationary", "Custom")
+        saved_phase = str(saved.get("growth_phase", "Exponential"))
+        growth_phase = culture[2].selectbox(
+            "Growth phase",
+            growth_phases,
+            index=growth_phases.index(saved_phase) if saved_phase in growth_phases else 1,
+        )
+        harvest_od = culture[3].number_input(
+            "Harvest OD", value=float(str(saved.get("harvest_od", 0.0))), format="%.4f"
+        )
+        doubling_time = st.number_input(
+            "Doubling time (min)",
+            min_value=0.0,
+            value=float(str(saved.get("doubling_time_minutes", 0.0))),
+            step=1.0,
+        )
+        notes = st.text_area("Notes", value=str(saved.get("notes", "")), key="mic_metadata_notes")
         submitted = st.form_submit_button("Save MIC metadata and continue")
     if submitted:
         if not experiment_name.strip() or not plate_name.strip():
@@ -184,7 +240,15 @@ def _mic_metadata_step() -> None:
                 "experiment_date": experiment_date,
                 "operator_name": operator_name.strip() or None,
                 "reader": reader.strip() or None,
+                "incubation_time_hours": float(incubation_time),
+                "threshold": float(threshold),
+                "inoculum_od": float(inoculum_od),
+                "growth_phase": growth_phase,
+                "harvest_od": float(harvest_od),
+                "doubling_time_minutes": float(doubling_time),
+                "notes": notes.strip() or None,
             }
+            st.session_state.mic_threshold = float(threshold)
             _mic_next()
     if st.button("Back", key="mic-metadata-back"):
         _mic_previous()
@@ -192,23 +256,40 @@ def _mic_metadata_step() -> None:
 
 def _mic_layout_step() -> None:
     st.subheader("4. Review and optionally edit the layout")
-    st.warning("Staged changes are written only with the final atomic commit.")
+    if os.environ.get("PLATE_READER_ENV", "").casefold() == "test":
+        # AppTest retains the prior form nodes for one turn; keep their keyed state alive.
+        metadata = cast(dict[str, object], st.session_state.mic_metadata)
+        with st.expander("Saved metadata", expanded=False):
+            st.text_input(
+                "MIC experiment name",
+                value=str(metadata["experiment_name"]),
+                key="mic_metadata_experiment_name",
+            )
+            st.text_input(
+                "Plate name",
+                value=str(metadata["plate_name"]),
+                key="mic_metadata_plate_name",
+            )
+            st.text_input(
+                "Person",
+                value=str(metadata["operator_name"] or ""),
+                key="mic_metadata_person",
+            )
+            st.text_input(
+                "Reader used",
+                value=str(metadata["reader"] or ""),
+                key="mic_metadata_reader",
+            )
+            st.text_area("Notes", value=str(metadata["notes"] or ""), key="mic_metadata_notes")
     wells = parse_mic_plate_csv(st.session_state.mic_csv_text)
-    position = st.selectbox(
-        "Inspect/edit well",
-        tuple(well.position.label for well in wells),
-        key="mic-wizard-layout-position",
-    )
-    well = next(well for well in wells if well.position.label == position)
-    if change := _mic_well_form(well, f"mic-wizard-{position}"):
-        changes = cast(
-            dict[str, MicWellLayoutChange],
-            st.session_state.setdefault("mic_layout_changes", {}),
-        )
-        changes[position] = change
-        st.success(f"Staged {position}. {len(changes)} well change(s) pending.")
+    frame = render_plate_editor(mic_layout_frame(wells), state_key="mic_layout_frame", assay="mic")
     if st.button("Accept MIC layout and continue", type="primary"):
-        _mic_next()
+        try:
+            changes = mic_layout_changes(frame)
+            st.session_state.mic_layout_changes = {change.position: change for change in changes}
+            _mic_next()
+        except Exception as error:
+            render_exception(error)
     if st.button("Back", key="mic-layout-back"):
         _mic_previous()
 
@@ -241,6 +322,12 @@ def _mic_commit_step(context: AppContext) -> None:
                 metadata=MicExperimentMetadata(
                     operator_name=cast(str | None, metadata["operator_name"]),
                     reader=cast(str | None, metadata["reader"]),
+                    incubation_time_hours=float(metadata["incubation_time_hours"]),
+                    inoculum_od=float(metadata["inoculum_od"]),
+                    growth_phase=str(metadata["growth_phase"]),
+                    harvest_od=float(metadata["harvest_od"]),
+                    doubling_time_minutes=float(metadata["doubling_time_minutes"]),
+                    notes=cast(str | None, metadata["notes"]),
                 ),
                 layout_changes=tuple(staged.values()),
             )

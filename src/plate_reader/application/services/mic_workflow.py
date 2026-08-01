@@ -245,6 +245,8 @@ class UpdateMicLayoutService:
     def execute(self, command: UpdateMicLayout) -> MicPlateView:
         actor_id = require_role(self.repository, command.actor, {Role.EDITOR, Role.ADMIN})
         snapshot = _mic_snapshot(self.repository, command.plate_id)
+        if any(change.value_raw is not None for change in command.changes):
+            raise ValueError("Raw MIC OD may be staged only before the initial import commit")
         changes = [_layout_values(change) for change in command.changes]
         if not changes:
             raise ValueError("At least one MIC well change is required")

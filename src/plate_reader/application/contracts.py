@@ -57,6 +57,23 @@ class ImportGrowthRun:
 
 
 @dataclass(frozen=True, slots=True)
+class GrowthRunMetadata:
+    """Rich run metadata retained by the legacy Growth v4 workflow."""
+
+    project: str | None = None
+    tags: tuple[str, ...] = ()
+    operator_name: str | None = None
+    instrument: str | None = None
+    temperature: float | None = None
+    temperature_unit: str | None = None
+    measurement_type: str | None = None
+    manual_subtraction: float = 0.0
+    notes: str | None = None
+    experiment_custom_json: dict[str, object] = field(default_factory=dict)
+    plate_custom_json: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class ImportMicPlate:
     actor: Actor
     source_name: str
@@ -85,6 +102,7 @@ class MicExperimentMetadata:
 @dataclass(frozen=True, slots=True)
 class MicWellLayoutChange:
     position: str
+    value_raw: float | None = None
     display_name: str | None = None
     is_blank: bool | None = None
     strain: str | None = None
@@ -187,6 +205,12 @@ class WellLayoutChange:
     concentration: float | None = None
     concentration_unit: str | None = None
     replicate: int | None = None
+    plot_selected: bool | None = None
+    notes: str | None = None
+    grouping_label: str | None = None
+    inoculum_size: float | None = None
+    inoculum_unit: str | None = None
+    custom_fields: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

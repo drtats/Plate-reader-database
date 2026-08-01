@@ -24,6 +24,19 @@ def test_smoke_app_renders_in_fake_cloud_mode(
     assert "Fake cloud mode is active" in app.info[0].value
 
 
+def test_real_dual_view_plate_editor_component_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PLATE_READER_ENV", "development")
+
+    app = AppTest.from_file("tests/ui/plate_editor_app.py", default_timeout=30).run()
+
+    assert not app.exception
+    assert [tab.label for tab in app.tabs] == ["96-well plate", "Full well table"]
+    assert any(button.label == "Apply 96-well plate changes" for button in app.button)
+    assert any(button.label == "Apply full table changes" for button in app.button)
+
+
 def test_cloud_mode_stops_at_login_before_loading_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -119,6 +132,7 @@ def test_mic_ui_import_review_edit_visualize_and_export(
     input_named(app, "MIC experiment name").set_value("UI MIC experiment")
     click(app, "Save MIC metadata and continue")
     assert app.subheader[0].value == "4. Review and optionally edit the layout"
+    app.run()  # Drop stale rich-form widgets retained by Streamlit AppTest.
     click(app, "Accept MIC layout and continue")
     assert app.subheader[0].value == "5. Review and commit"
     click(app, "Commit MIC plate")
@@ -198,6 +212,7 @@ def test_admin_mic_lock_and_soft_delete_ui(monkeypatch: pytest.MonkeyPatch, tmp_
     click(app, "Validate MIC plate")
     input_named(app, "MIC experiment name").set_value("Admin MIC")
     click(app, "Save MIC metadata and continue")
+    app.run()  # Drop stale rich-form widgets retained by Streamlit AppTest.
     click(app, "Accept MIC layout and continue")
     click(app, "Commit MIC plate")
 

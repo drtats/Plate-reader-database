@@ -9,6 +9,7 @@ import pytest
 
 from plate_reader.application.contracts import (
     Actor,
+    GrowthRunMetadata,
     ImportGrowthRun,
     Role,
     UserId,
@@ -176,6 +177,67 @@ def test_growth_import_commits_layout_and_conditions_atomically(
         (result.plate_id,),
     ).fetchone()
     assert row == ("blank A1", 1, "media", "M9", 2)
+
+
+def test_growth_import_preserves_rich_legacy_metadata_and_well_details(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    result = ImportGrowthRunService(repository, id_factory=id_sequence()).execute(
+        import_command(),
+        GROWTH_CSV,
+        metadata=GrowthRunMetadata(
+            project="Project Alpha",
+            tags=("biofilm", "kinetics"),
+            operator_name="Researcher A",
+            instrument="Epoch 2",
+            temperature=37.0,
+            temperature_unit="C",
+            measurement_type="OD600",
+            manual_subtraction=0.012,
+            notes="rich metadata",
+            experiment_custom_json={"batch": "B1"},
+            plate_custom_json={"lid": True},
+        ),
+        layout_changes=(
+            WellLayoutChange(
+                position="A1",
+                plot_selected=True,
+                notes="well note",
+                grouping_label="group one",
+                inoculum_size=0.02,
+                inoculum_unit="OD600",
+                custom_fields={"oxygen": "low", "t0_added_min": 5.0},
+            ),
+        ),
+    )
+
+    metadata = repository.connection.execute(
+        "SELECT e.project, e.operator_name, e.notes, e.custom_json, p.instrument, "
+        "p.temperature, p.temperature_unit, p.manual_subtraction, p.custom_json "
+        "FROM experiments e JOIN plates p ON p.experiment_id = e.experiment_id "
+        "WHERE p.plate_id = ?",
+        (result.plate_id,),
+    ).fetchone()
+    assert metadata is not None
+    assert metadata[:3] == ("Project Alpha", "Researcher A", "rich metadata")
+    assert '"batch":"B1"' in metadata[3]
+    assert metadata[4:8] == ("Epoch 2", 37.0, "C", 0.012)
+    assert '"measurement_type":"OD600"' in metadata[8]
+    tags = repository.connection.execute("SELECT tag FROM experiment_tags ORDER BY tag").fetchall()
+    assert tags == [("biofilm",), ("kinetics",)]
+    well = repository.connection.execute(
+        "SELECT w.plot_selected, w.notes, w.custom_json, wc.grouping_label, "
+        "wc.inoculum_size, wc.inoculum_unit FROM wells w "
+        "JOIN well_conditions wc ON wc.well_id = w.well_id WHERE w.position = 'A1'"
+    ).fetchone()
+    assert well == (
+        1,
+        "well note",
+        '{"oxygen":"low","t0_added_min":5.0}',
+        "group one",
+        0.02,
+        "OD600",
+    )
 
 
 def test_duplicate_layout_change_is_rejected_before_writes(
