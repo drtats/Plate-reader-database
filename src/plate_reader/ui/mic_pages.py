@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 from datetime import date
 from pathlib import Path
@@ -16,6 +15,7 @@ from plate_reader.application.contracts import (
     ComputeMicRevision,
     ExportPortableRun,
     ImportMicPlate,
+    LifecycleStatus,
     MicExperimentMetadata,
     MicWellLayoutChange,
     PlateId,
@@ -47,11 +47,9 @@ from plate_reader.application.services import (
     UpdateMicLayoutService,
     UpdateMicMetadataService,
 )
-from plate_reader.domain.common.plate import PLATE_96, WellPosition
 from plate_reader.domain.mic import (
     MIC_ENDPOINT_VERSION,
     MIC_PLATE_PARSER_VERSION,
-    MicWell,
     parse_mic_plate_csv,
 )
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
@@ -60,6 +58,7 @@ from plate_reader.ui.pages import render_exception, render_records
 from plate_reader.ui.plate_editor import (
     mic_layout_changes,
     mic_layout_frame,
+    mic_layout_frame_from_snapshot,
     render_plate_editor,
 )
 from plate_reader.ui.plotting import mic_growth_map, mic_plate_heatmap, mic_result_dot_plot
@@ -419,14 +418,67 @@ def _render_mic_metadata(context: AppContext, plate_id: PlateId, view: MicPlateV
     metadata = view.snapshot.metadata
     st.warning("Changes are unsaved until Save MIC metadata is pressed.")
     with st.form(f"mic-metadata-{plate_id}"):
-        experiment_name = st.text_input("MIC experiment name", value=str(metadata["name"]))
-        plate_name = st.text_input("MIC plate name", value=str(metadata["plate_name"]))
-        project = st.text_input("MIC project", value=str(metadata["project"] or ""))
-        threshold = st.number_input(
+        identity = st.columns(2)
+        experiment_name = identity[0].text_input("MIC experiment name", value=str(metadata["name"]))
+        plate_name = identity[1].text_input("MIC plate name", value=str(metadata["plate_name"]))
+        project = identity[0].text_input("MIC project", value=str(metadata["project"] or ""))
+        tags = identity[1].text_input(
+            "MIC tags (comma separated)",
+            value=", ".join(cast(tuple[str, ...], metadata["tags"])),
+        )
+        details = st.columns(4)
+        experiment_date = details[0].date_input(
+            "MIC date", value=date.fromisoformat(str(metadata["experiment_date"]))
+        )
+        operator_name = details[1].text_input(
+            "MIC person", value=str(metadata["operator_name"] or "")
+        )
+        reader = details[2].text_input("MIC reader", value=str(metadata["reader"] or ""))
+        incubation_time = details[3].number_input(
+            "MIC incubation time (hrs)",
+            min_value=0.0,
+            value=_optional_database_float(metadata["incubation_time_hours"]),
+            step=0.5,
+        )
+        culture = st.columns(4)
+        threshold = culture[0].number_input(
             "MIC threshold",
             min_value=0.0,
             value=_database_float(metadata["threshold"]),
             format="%.4f",
+        )
+        inoculum_od = culture[1].number_input(
+            "MIC inoculum OD",
+            value=_optional_database_float(metadata["inoculum_od"]),
+            format="%.4f",
+        )
+        growth_phases = ("Lag", "Exponential", "Stationary", "Custom")
+        saved_phase = str(metadata["growth_phase"] or "Exponential")
+        growth_phase = culture[2].selectbox(
+            "MIC growth phase",
+            growth_phases,
+            index=growth_phases.index(saved_phase) if saved_phase in growth_phases else 3,
+        )
+        harvest_od = culture[3].number_input(
+            "MIC harvest OD",
+            value=_optional_database_float(metadata["harvest_od"]),
+            format="%.4f",
+        )
+        final_details = st.columns(2)
+        doubling_time = final_details[0].number_input(
+            "MIC doubling time (min)",
+            min_value=0.0,
+            value=_optional_database_float(metadata["doubling_time_minutes"]),
+            step=1.0,
+        )
+        instrument = final_details[1].text_input(
+            "MIC instrument", value=str(metadata["instrument"] or "")
+        )
+        notes = st.text_area("MIC experiment notes", value=str(metadata["notes"] or ""))
+        lifecycle = st.selectbox(
+            "MIC lifecycle",
+            tuple(LifecycleStatus),
+            index=tuple(LifecycleStatus).index(LifecycleStatus(str(metadata["lifecycle_status"]))),
         )
         submitted = st.form_submit_button("Save MIC metadata", type="primary")
     if submitted:
@@ -439,7 +491,19 @@ def _render_mic_metadata(context: AppContext, plate_id: PlateId, view: MicPlateV
                     experiment_name=experiment_name,
                     plate_name=plate_name,
                     project=project or None,
+                    experiment_date=experiment_date,
+                    tags=tuple(tag.strip() for tag in tags.split(",") if tag.strip()),
+                    operator_name=operator_name.strip() or None,
+                    reader=reader.strip() or None,
+                    incubation_time_hours=float(incubation_time),
+                    inoculum_od=float(inoculum_od),
+                    growth_phase=growth_phase,
+                    harvest_od=float(harvest_od),
+                    doubling_time_minutes=float(doubling_time),
+                    instrument=instrument.strip() or None,
+                    notes=notes.strip() or None,
                     threshold=threshold,
+                    lifecycle_status=lifecycle,
                 )
             )
             _clear_mic_cached_artifacts()
@@ -450,77 +514,37 @@ def _render_mic_metadata(context: AppContext, plate_id: PlateId, view: MicPlateV
 
 
 def _render_mic_layout(context: AppContext, plate_id: PlateId, view: MicPlateView) -> None:
-    position = st.selectbox(
-        "MIC well",
-        tuple(str(well["position"]) for well in view.snapshot.wells),
-        key=f"mic-layout-position-{plate_id}",
+    st.warning("MIC well changes are staged until Save full MIC layout is pressed.")
+    state_key = f"workspace_mic_layout_{plate_id}"
+    source_key = f"{state_key}_source_updated_at"
+    source_updated_at = str(view.snapshot.metadata["updated_at"])
+    if st.session_state.get(source_key) != source_updated_at:
+        st.session_state[state_key] = mic_layout_frame_from_snapshot(
+            view.snapshot.wells, view.snapshot.raw_observations
+        )
+        st.session_state[f"{state_key}_revision"] = 0
+        st.session_state[source_key] = source_updated_at
+    frame = render_plate_editor(
+        mic_layout_frame_from_snapshot(view.snapshot.wells, view.snapshot.raw_observations),
+        state_key=state_key,
+        assay="mic",
+        immutable_columns=("Raw OD",),
     )
-    row = next(well for well in view.snapshot.wells if str(well["position"]) == position)
-    well = _well_from_view(row, view.snapshot.raw_observations)
-    if change := _mic_well_form(well, f"mic-workspace-{plate_id}-{position}", row=row):
+    if st.button("Save full MIC layout", type="primary"):
         try:
             UpdateMicLayoutService(context.repository).execute(
                 UpdateMicLayout(
                     context.actor,
                     plate_id,
-                    str(view.snapshot.metadata["updated_at"]),
-                    (change,),
+                    source_updated_at,
+                    mic_layout_changes(frame, include_raw=False),
                 )
             )
             _clear_mic_cached_artifacts()
-            st.success("MIC well saved and a new analysis revision created.")
+            st.success("Full MIC layout saved and a new analysis revision created.")
             st.rerun()
         except Exception as error:
             render_exception(error)
-
-
-def _mic_well_form(
-    well: MicWell,
-    key_prefix: str,
-    *,
-    row: dict[str, object] | None = None,
-) -> MicWellLayoutChange | None:
-    with st.form(f"{key_prefix}-form"):
-        display_name = st.text_input(
-            "Display name", value="" if row is None else str(row.get("display_name") or "")
-        )
-        is_blank = st.checkbox("Blank well", value=well.is_blank)
-        strain = st.text_input("Strain", value=well.strain or "")
-        treatment = st.text_input("Treatment", value=well.treatment or "")
-        concentration = st.number_input(
-            "Concentration", min_value=0.0, value=well.concentration or 0.0
-        )
-        unit = st.text_input("Concentration unit", value=well.concentration_unit)
-        medium = st.text_input("Medium", value=well.medium or "")
-        replicate = st.number_input("Replicate", min_value=1, value=well.replicate, step=1)
-        notes = st.text_area("Well notes", value=well.notes or "")
-        labels_text = st.text_area(
-            "Custom labels (JSON object)",
-            value=json.dumps(dict(well.custom_labels), sort_keys=True),
-        )
-        submitted = st.form_submit_button(
-            "Save staged MIC well" if row is None else "Save MIC well"
-        )
-    if not submitted:
-        return None
-    labels = json.loads(labels_text or "{}")
-    if not isinstance(labels, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) for key, value in labels.items()
-    ):
-        raise ValueError("Custom labels must be a JSON object of string values")
-    return MicWellLayoutChange(
-        position=well.position.label,
-        display_name=display_name,
-        is_blank=is_blank,
-        strain=strain,
-        treatment=treatment,
-        concentration=concentration,
-        concentration_unit=unit,
-        medium=medium,
-        replicate=int(replicate),
-        notes=notes,
-        custom_labels=labels,
-    )
 
 
 def _render_mic_results(results: tuple[dict[str, object], ...]) -> None:
@@ -676,29 +700,6 @@ def render_mic_results_search(context: AppContext) -> None:
         st.rerun()
 
 
-def _well_from_view(row: dict[str, object], readings: tuple[dict[str, object], ...]) -> MicWell:
-    raw = next(item for item in readings if item["well_id"] == row["well_id"])
-    custom_value = row.get("custom_json") or "{}"
-    custom = json.loads(str(custom_value)) if isinstance(custom_value, str) else custom_value
-    if not isinstance(custom, dict):
-        custom = {}
-    return MicWell(
-        WellPosition.parse(str(row["position"]), PLATE_96),
-        _database_float(raw["value_raw"]),
-        is_blank=bool(row["is_blank"]),
-        strain=cast(str | None, row.get("strain")),
-        treatment=cast(str | None, row.get("treatment")),
-        concentration=(
-            None if row.get("concentration") is None else _database_float(row["concentration"])
-        ),
-        concentration_unit=str(row.get("concentration_unit") or "ug/mL"),
-        medium=cast(str | None, row.get("medium")),
-        replicate=_database_int(row.get("replicate") or 1),
-        notes=cast(str | None, row.get("notes")),
-        custom_labels=tuple(sorted((str(key), str(value)) for key, value in custom.items())),
-    )
-
-
 def _load_mic_view(context: AppContext, plate_id: PlateId) -> MicPlateView:
     service = LoadMicPlateService(context.repository)
     token = service.cache_token(context.actor, plate_id)
@@ -770,7 +771,5 @@ def _database_float(value: object) -> float:
     return float(value)
 
 
-def _database_int(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("Expected an integer database value")
-    return value
+def _optional_database_float(value: object) -> float:
+    return 0.0 if value is None else _database_float(value)

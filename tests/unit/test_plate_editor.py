@@ -10,6 +10,7 @@ from plate_reader.ui.plate_editor import (
     growth_layout_frame_from_wells,
     mic_layout_changes,
     mic_layout_frame,
+    mic_layout_frame_from_snapshot,
     plate_matrix,
 )
 
@@ -162,4 +163,39 @@ def test_mic_layout_conversion_keeps_raw_od_and_arbitrary_label_grids() -> None:
     assert change.position == "A1"
     assert change.value_raw == 0.333
     assert change.display_name == "A1 edited"
+    assert change.custom_labels == {"Oxygen": "low"}
+
+
+def test_persisted_mic_layout_rehydrates_and_omits_immutable_raw_updates() -> None:
+    source = mic_layout_frame(parse_mic_plate_csv(synthetic_mic_csv()))
+    wells = tuple(
+        {
+            "well_id": f"well-{row['Well']}",
+            "position": row["Well"],
+            "display_name": "sample A1" if row["Well"] == "A1" else "",
+            "is_blank": row["Blank"],
+            "strain": row["Strain"],
+            "treatment": row["Antibiotic / treatment"],
+            "concentration": row["Concentration"],
+            "concentration_unit": row["Concentration unit"],
+            "medium": row["Media"],
+            "replicate": row["Replicate"],
+            "notes": "saved note" if row["Well"] == "A1" else "",
+            "custom_json": '{"Oxygen":"low"}' if row["Well"] == "A1" else "{}",
+        }
+        for row in source.to_dict(orient="records")
+    )
+    readings = tuple(
+        {"well_id": f"well-{row['Well']}", "value_raw": row["Raw OD"]}
+        for row in source.to_dict(orient="records")
+    )
+
+    frame = mic_layout_frame_from_snapshot(wells, readings)
+    change = mic_layout_changes(frame, include_raw=False)[0]
+
+    assert frame.shape == (96, 12)
+    assert frame.loc[0, "Display name"] == "sample A1"
+    assert frame.loc[0, "Oxygen"] == "low"
+    assert change.value_raw is None
+    assert change.notes == "saved note"
     assert change.custom_labels == {"Oxygen": "low"}

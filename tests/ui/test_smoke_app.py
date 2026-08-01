@@ -192,16 +192,62 @@ def test_mic_ui_import_review_edit_visualize_and_export(
             "(SELECT count(*) FROM analysis_revisions), "
             "(SELECT count(*) FROM provenance_events)"
         ).fetchone()
+        raw_before = database.execute(
+            "SELECT well_id, value_raw FROM mic_readings ORDER BY well_id"
+        ).fetchall()
     assert counts_before == (96, 4, 1, 1)
 
-    click(app, "Save MIC well")
+    assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
+    click(app, "Save full MIC layout")
+    with sqlite3.connect(database_path) as database:
+        assert database.execute("SELECT count(*) FROM mic_readings").fetchone() == (96,)
+        assert (
+            database.execute(
+                "SELECT well_id, value_raw FROM mic_readings ORDER BY well_id"
+            ).fetchall()
+            == raw_before
+        )
     click(app, "Compute MIC revision")
     next(item for item in app.checkbox if item.label == "MIC manually checked").set_value(True)
     click(app, "Save MIC review state")
     input_named(app, "MIC experiment name").set_value("UI MIC edited")
+    input_named(app, "MIC project").set_value("MIC UI project")
+    input_named(app, "MIC tags (comma separated)").set_value("mic, ui")
+    input_named(app, "MIC person").set_value("MIC researcher")
+    input_named(app, "MIC reader").set_value("Synergy H1")
+    input_named(app, "MIC instrument").set_value("Synergy H1")
+    next(item for item in app.number_input if item.label == "MIC incubation time (hrs)").set_value(
+        20.0
+    )
+    next(item for item in app.number_input if item.label == "MIC inoculum OD").set_value(0.01)
+    next(item for item in app.number_input if item.label == "MIC harvest OD").set_value(0.5)
+    next(item for item in app.number_input if item.label == "MIC doubling time (min)").set_value(
+        32.0
+    )
     next(item for item in app.number_input if item.label == "MIC threshold").set_value(0.12)
     click(app, "Save MIC metadata")
     assert app.header[0].value == "UI MIC edited — MIC Plate 1"
+    with sqlite3.connect(database_path) as database:
+        metadata = database.execute(
+            "SELECT e.project, e.operator_name, e.reader, e.incubation_time_hours, "
+            "e.inoculum_od, e.harvest_od, e.doubling_time_minutes, p.instrument "
+            "FROM experiments e JOIN plates p ON p.experiment_id = e.experiment_id"
+        ).fetchone()
+        tags = database.execute(
+            "SELECT group_concat(tag, ',') FROM "
+            "(SELECT tag FROM experiment_tags ORDER BY tag COLLATE NOCASE)"
+        ).fetchone()
+    assert metadata == (
+        "MIC UI project",
+        "MIC researcher",
+        "Synergy H1",
+        20.0,
+        0.01,
+        0.5,
+        32.0,
+        "Synergy H1",
+    )
+    assert tags == ("mic,ui",)
     click(app, "Prepare MIC portable export")
     assert app.session_state["mic_portable_artifact"].content.startswith(b"SQLite format 3")
 

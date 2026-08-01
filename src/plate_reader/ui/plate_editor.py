@@ -157,6 +157,39 @@ def mic_layout_frame(wells: Sequence[MicWell]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=(*MIC_COLUMNS, *custom_names))
 
 
+def mic_layout_frame_from_snapshot(
+    wells: Sequence[dict[str, object]], raw_observations: Sequence[dict[str, object]]
+) -> pd.DataFrame:
+    """Rehydrate persisted MIC layout while keeping committed raw OD visible."""
+
+    by_position = {str(well["position"]): well for well in wells}
+    raw_by_well = {str(row["well_id"]): row["value_raw"] for row in raw_observations}
+    custom_by_position = {
+        position: _json_object(well.get("custom_json")) for position, well in by_position.items()
+    }
+    custom_names = sorted({name for custom in custom_by_position.values() for name in custom})
+    rows: list[dict[str, object]] = []
+    for position in PLATE_96.positions():
+        well = by_position[position.label]
+        custom = custom_by_position[position.label]
+        row: dict[str, object] = {
+            WELL: position.label,
+            "Raw OD": raw_by_well[str(well["well_id"])],
+            "Display name": well.get("display_name") or "",
+            "Blank": bool(well.get("is_blank")),
+            "Strain": well.get("strain") or "",
+            "Antibiotic / treatment": well.get("treatment") or "",
+            "Concentration": well.get("concentration"),
+            "Concentration unit": well.get("concentration_unit") or "",
+            "Media": well.get("medium") or "",
+            "Replicate": well.get("replicate") or 1,
+            "Notes": well.get("notes") or "",
+        }
+        row.update({name: custom.get(name, "") for name in custom_names})
+        rows.append(row)
+    return pd.DataFrame(rows, columns=(*MIC_COLUMNS, *custom_names))
+
+
 def plate_matrix(frame: pd.DataFrame, column: str) -> pd.DataFrame:
     ordered = normalize_layout_frame(frame)
     values = ordered[column].tolist()
@@ -231,7 +264,9 @@ def growth_layout_changes(frame: pd.DataFrame) -> tuple[WellLayoutChange, ...]:
     return tuple(result)
 
 
-def mic_layout_changes(frame: pd.DataFrame) -> tuple[MicWellLayoutChange, ...]:
+def mic_layout_changes(
+    frame: pd.DataFrame, *, include_raw: bool = True
+) -> tuple[MicWellLayoutChange, ...]:
     normalized = normalize_layout_frame(frame)
     custom_columns = [column for column in normalized.columns if column not in MIC_COLUMNS]
     result = []
@@ -239,7 +274,7 @@ def mic_layout_changes(frame: pd.DataFrame) -> tuple[MicWellLayoutChange, ...]:
         result.append(
             MicWellLayoutChange(
                 position=str(row[WELL]),
-                value_raw=_optional_float(row["Raw OD"]),
+                value_raw=_optional_float(row["Raw OD"]) if include_raw else None,
                 display_name=_optional_text(row["Display name"]),
                 is_blank=_boolean(row["Blank"]),
                 strain=_optional_text(row["Strain"]),
@@ -275,6 +310,7 @@ def render_plate_editor(
     *,
     state_key: str,
     assay: str,
+    immutable_columns: Sequence[str] = (),
 ) -> pd.DataFrame:  # pragma: no cover - Streamlit widget composition
     """Render the legacy dual-view editor and return its canonical session frame."""
 
@@ -299,12 +335,13 @@ def render_plate_editor(
         return frame
     _render_custom_columns(frame, state_key, revision_key)
     frame = normalize_layout_frame(st.session_state[state_key])
-    _render_fill_helpers(frame, state_key, revision_key, assay)
+    _render_fill_helpers(frame, state_key, revision_key, assay, immutable_columns)
     frame = normalize_layout_frame(st.session_state[state_key])
 
     plate_tab, table_tab = st.tabs(("96-well plate", "Full well table"))
     with plate_tab:
-        editable = [column for column in frame.columns if column not in PROTECTED_COLUMNS]
+        protected = {*PROTECTED_COLUMNS, *immutable_columns}
+        editable = [column for column in frame.columns if column not in protected]
         parameter = st.selectbox(
             "Plate parameter",
             editable,
@@ -332,7 +369,11 @@ def render_plate_editor(
                 height=600,
                 width="stretch",
                 hide_index=True,
-                disabled=[WELL, *(["Raw label"] if "Raw label" in frame else [])],
+                disabled=[
+                    WELL,
+                    *(["Raw label"] if "Raw label" in frame else []),
+                    *immutable_columns,
+                ],
                 column_config=_column_config(frame),
                 key=f"{state_key}_table_{revision}",
             )
@@ -385,10 +426,15 @@ def _render_custom_columns(  # pragma: no cover - Streamlit widget composition
 
 
 def _render_fill_helpers(
-    frame: pd.DataFrame, state_key: str, revision_key: str, assay: str
+    frame: pd.DataFrame,
+    state_key: str,
+    revision_key: str,
+    assay: str,
+    immutable_columns: Sequence[str],
 ) -> None:  # pragma: no cover - Streamlit widget composition
     with st.expander("Fill helpers", expanded=True):
-        editable = [column for column in frame.columns if column not in PROTECTED_COLUMNS]
+        protected = {*PROTECTED_COLUMNS, *immutable_columns}
+        editable = [column for column in frame.columns if column not in protected]
         target_column = st.selectbox("Fill parameter", editable, key=f"{state_key}_fill_parameter")
         scope = st.radio(
             "Fill area",
