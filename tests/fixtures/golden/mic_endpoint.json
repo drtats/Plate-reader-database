@@ -1,0 +1,192 @@
+{
+  "background_value": 0.05,
+  "results": [
+    {
+      "antibiotic": "compound_x",
+      "calculation_status": "success",
+      "concentration_values": [
+        0.5,
+        1.0,
+        2.0,
+        4.0
+      ],
+      "group_id": "strain_all_growth_compound_x_Synthetic medium_1",
+      "highest_tested_conc": 4.0,
+      "lowest_tested_conc": 0.5,
+      "media": "Synthetic medium",
+      "mic_operator": ">",
+      "mic_unit": "ug/mL",
+      "mic_value": 4.0,
+      "num_points": 4,
+      "replicate": 1,
+      "strain": "strain_all_growth",
+      "threshold_used": 0.0,
+      "warning": null
+    },
+    {
+      "antibiotic": "compound_x",
+      "calculation_status": "success",
+      "concentration_values": [
+        0.5,
+        1.0,
+        2.0,
+        4.0
+      ],
+      "group_id": "strain_all_no_growth_compound_x_Synthetic medium_1",
+      "highest_tested_conc": 4.0,
+      "lowest_tested_conc": 0.5,
+      "media": "Synthetic medium",
+      "mic_operator": "<=",
+      "mic_unit": "ug/mL",
+      "mic_value": 0.5,
+      "num_points": 4,
+      "replicate": 1,
+      "strain": "strain_all_no_growth",
+      "threshold_used": 0.0,
+      "warning": null
+    },
+    {
+      "antibiotic": "compound_x",
+      "calculation_status": "success",
+      "concentration_values": [
+        0.5,
+        1.0,
+        2.0,
+        4.0
+      ],
+      "group_id": "strain_bounce_compound_x_Synthetic medium_1",
+      "highest_tested_conc": 4.0,
+      "lowest_tested_conc": 0.5,
+      "media": "Synthetic medium",
+      "mic_operator": "=",
+      "mic_unit": "ug/mL",
+      "mic_value": 1.0,
+      "num_points": 4,
+      "replicate": 1,
+      "strain": "strain_bounce",
+      "threshold_used": 0.0,
+      "warning": "Growth bounce detected at 2.0 after no-growth at 1.0"
+    },
+    {
+      "antibiotic": "compound_x",
+      "calculation_status": "success",
+      "concentration_values": [
+        0.5,
+        1.0,
+        2.0,
+        4.0
+      ],
+      "group_id": "strain_normal_compound_x_Synthetic medium_1",
+      "highest_tested_conc": 4.0,
+      "lowest_tested_conc": 0.5,
+      "media": "Synthetic medium",
+      "mic_operator": "=",
+      "mic_unit": "ug/mL",
+      "mic_value": 2.0,
+      "num_points": 4,
+      "replicate": 1,
+      "strain": "strain_normal",
+      "threshold_used": 0.0,
+      "warning": null
+    }
+  ],
+  "threshold": 0.1,
+  "well_calls": [
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "A1"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.15,
+      "od_raw": 0.2,
+      "well_position": "A2"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.05,
+      "od_raw": 0.1,
+      "well_position": "A3"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "A4"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "B1"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "B2"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "B3"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "B4"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "C1"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "C2"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "C3"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "C4"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "D1"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "D2"
+    },
+    {
+      "growth_call": true,
+      "od_bg_subtracted": 0.2,
+      "od_raw": 0.25,
+      "well_position": "D3"
+    },
+    {
+      "growth_call": false,
+      "od_bg_subtracted": 0.03,
+      "od_raw": 0.08,
+      "well_position": "D4"
+    }
+  ]
+}

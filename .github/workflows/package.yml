@@ -1,0 +1,54 @@
+name: Standalone packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact: PlateReaderDatabase-macos-arm64
+          - os: windows-latest
+            artifact: PlateReaderDatabase-windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install locked packaging environment
+        run: uv sync --all-groups --frozen
+
+      - name: Run domain, repository, and portable compatibility suites
+        run: uv run pytest tests/unit/domain tests/contract tests/integration/test_portable_export.py tests/integration/test_portable_import.py --no-cov
+
+      - name: Build standalone package
+        run: uv run python scripts/build_standalone.py
+
+      - name: Smoke packaged launcher
+        run: uv run python scripts/smoke_standalone.py
+
+      - name: Upload package and build report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/PlateReaderDatabase/
+            dist/PlateReaderDatabase.app/
+            dist/standalone-build-report.json
+          if-no-files-found: error

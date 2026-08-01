@@ -1,0 +1,2306 @@
+[
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.05,
+    "well": "A1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "A10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "A11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "A12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.051,
+    "well": "A2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "A3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "A4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "A5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "A6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "A7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "A8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "A9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.001,
+    "well": "B1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "B10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "B11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "B12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.099,
+    "well": "B2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "B3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "B4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "B5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "B6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "B7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "B8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "B9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.06,
+    "well": "C1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "C10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "C11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "C12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.062,
+    "well": "C2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "C3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "C4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "C5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "C6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "C7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "C8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "C9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.06,
+    "well": "D1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "D10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "D11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "D12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.062,
+    "well": "D2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "D3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "D4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "D5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "D6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "D7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "D8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "D9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.06,
+    "well": "E1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "E10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "E11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "E12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.062,
+    "well": "E2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "E3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "E4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "E5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "E6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "E7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "E8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "E9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.06,
+    "well": "F1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "F10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "F11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "F12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.062,
+    "well": "F2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "F3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "F4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "F5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "F6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "F7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "F8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "F9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.06,
+    "well": "G1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "G10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "G11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "G12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.062,
+    "well": "G2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "G3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "G4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "G5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "G6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "G7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "G8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "G9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.06,
+    "well": "H1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.078,
+    "well": "H10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.08,
+    "well": "H11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.082,
+    "well": "H12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.062,
+    "well": "H2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.064,
+    "well": "H3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.066,
+    "well": "H4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.068,
+    "well": "H5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.07,
+    "well": "H6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.072,
+    "well": "H7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.074,
+    "well": "H8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 0.0,
+    "value_raw": 0.076,
+    "well": "H9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.051,
+    "well": "A1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "A10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "A11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "A12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.052,
+    "well": "A2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "A3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "A4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "A5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "A6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "A7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "A8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "A9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.002,
+    "well": "B1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "B10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "B11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "B12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "B2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "B3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "B4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "B5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "B6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "B7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "B8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "B9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "C1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "C10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "C11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "C12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.102,
+    "well": "C2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "C3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "C4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "C5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "C6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "C7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "C8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "C9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "D1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "D10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "D11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "D12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.102,
+    "well": "D2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "D3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "D4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "D5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "D6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "D7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "D8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "D9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "E1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "E10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "E11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "E12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.102,
+    "well": "E2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "E3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "E4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "E5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "E6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "E7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "E8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "E9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "F1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "F10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "F11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "F12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.102,
+    "well": "F2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "F3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "F4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "F5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "F6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "F7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "F8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "F9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "G1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "G10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "G11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "G12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.102,
+    "well": "G2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "G3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "G4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "G5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "G6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "G7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "G8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "G9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.1,
+    "well": "H1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.118,
+    "well": "H10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.12,
+    "well": "H11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.122,
+    "well": "H12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.102,
+    "well": "H2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.104,
+    "well": "H3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.106,
+    "well": "H4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.108,
+    "well": "H5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.11,
+    "well": "H6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.112,
+    "well": "H7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.114,
+    "well": "H8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 10.0,
+    "value_raw": 0.116,
+    "well": "H9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.052,
+    "well": "A1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "A10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "A11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "A12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.053,
+    "well": "A2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "A3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "A4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "A5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "A6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "A7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "A8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "A9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.003,
+    "well": "B1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "B10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "B11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "B12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.101,
+    "well": "B2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "B3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "B4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "B5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "B6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "B7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "B8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "B9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.14,
+    "well": "C1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "C10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "C11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "C12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.142,
+    "well": "C2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "C3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "C4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "C5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "C6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "C7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "C8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "C9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.14,
+    "well": "D1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "D10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "D11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "D12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.142,
+    "well": "D2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "D3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "D4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "D5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "D6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "D7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "D8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "D9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.14,
+    "well": "E1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "E10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "E11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "E12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.142,
+    "well": "E2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "E3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "E4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "E5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "E6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "E7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "E8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "E9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.14,
+    "well": "F1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "F10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "F11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "F12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.142,
+    "well": "F2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "F3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "F4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "F5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "F6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "F7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "F8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "F9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.14,
+    "well": "G1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "G10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "G11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "G12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.142,
+    "well": "G2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "G3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "G4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "G5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "G6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "G7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "G8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "G9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.14,
+    "well": "H1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.158,
+    "well": "H10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.16,
+    "well": "H11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.162,
+    "well": "H12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.142,
+    "well": "H2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.144,
+    "well": "H3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.146,
+    "well": "H4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.148,
+    "well": "H5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.15,
+    "well": "H6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.152,
+    "well": "H7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.154,
+    "well": "H8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 20.0,
+    "value_raw": 0.156,
+    "well": "H9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.053,
+    "well": "A1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "A10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "A11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "A12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.054,
+    "well": "A2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "A3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "A4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "A5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "A6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "A7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "A8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "A9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.004,
+    "well": "B1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "B10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "B11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "B12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.102,
+    "well": "B2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "B3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "B4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "B5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "B6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "B7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "B8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "B9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.18,
+    "well": "C1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "C10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "C11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "C12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.182,
+    "well": "C2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "C3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "C4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "C5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "C6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "C7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "C8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "C9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.18,
+    "well": "D1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "D10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "D11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "D12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.182,
+    "well": "D2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "D3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "D4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "D5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "D6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "D7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "D8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "D9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.18,
+    "well": "E1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "E10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "E11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "E12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.182,
+    "well": "E2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "E3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "E4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "E5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "E6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "E7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "E8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "E9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.18,
+    "well": "F1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "F10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "F11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "F12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.182,
+    "well": "F2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "F3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "F4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "F5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "F6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "F7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "F8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "F9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.18,
+    "well": "G1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "G10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "G11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "G12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.182,
+    "well": "G2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "G3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "G4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "G5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "G6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "G7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "G8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "G9"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.18,
+    "well": "H1"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.198,
+    "well": "H10"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.2,
+    "well": "H11"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.202,
+    "well": "H12"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.182,
+    "well": "H2"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.184,
+    "well": "H3"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.186,
+    "well": "H4"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.188,
+    "well": "H5"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.19,
+    "well": "H6"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.192,
+    "well": "H7"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.194,
+    "well": "H8"
+  },
+  {
+    "signal_type": "od600",
+    "time_min": 30.0,
+    "value_raw": 0.196,
+    "well": "H9"
+  }
+]

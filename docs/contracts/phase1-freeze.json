@@ -1,0 +1,26 @@
+{
+  "freeze_version": 1,
+  "frozen_at": "2026-08-01T00:00:00Z",
+  "change_policy": "An ADR and integration-owner review are required after this freeze.",
+  "amendments": [
+    {
+      "date": "2026-08-01",
+      "adr": "docs/adr/0008-additive-mic-contract-extension.md",
+      "reason": "Add typed MIC workflow commands and queries without changing existing contracts."
+    }
+  ],
+  "sha256": {
+    "docs/contracts/AUTHORIZATION_V1.md": "ddc3595e17861d74061507694f3c5c55d5188bc70371af1f41c7c4e19cf36469",
+    "docs/contracts/LEGACY_BEHAVIOR.md": "33178153f07abb8351b4791b8bdce1516eeda6cd0dc487c1973249a6254893a0",
+    "docs/contracts/PORTABLE_FORMAT_V1.md": "508bc77458eb751652bad9ded94bd6429530a1ca7fff4fe98e3237dd00245b86",
+    "docs/contracts/SCHEMA_V1.md": "d74e546d17ba0c72b8acfdd44ee5f4b2c73f968b2207c16943d535b88ed5e8c3",
+    "migrations/0001_schema_v1.sql": "06b028cb32df87d36f734a5d69caa3133d95d05f85b4a4ad766e8284003bb27b",
+    "src/plate_reader/application/contracts.py": "1e7f62631e61cbc008be3bece4497ce33d68f40a01147134a54462d4daada142",
+    "src/plate_reader/application/ports/repositories.py": "fbaffafb06bd2a984df3bcad7bd0b36f74eea09d6318f561706fcff3a2ef4fd0",
+    "tests/fixtures/golden/growth_background_edge_cases.json": "5b9497bf40f6d985e8cbfa6aa5dcefb06cf01cfb1d53ea0b65c40de0191c9798",
+    "tests/fixtures/golden/growth_backgrounds.json": "79971bdd40cd6297681df6aaa668e3f0add8bc415e40b25fcfac0c0019aa9c33",
+    "tests/fixtures/golden/growth_normalized_with_time.json": "8f01b593a583e67358ece48d68f05e35748cfe15d5f45bfe0201f7eaf03900a2",
+    "tests/fixtures/golden/growth_normalized_without_time.json": "3b9a5efbcef5d0bfc315293d9ab98a18b881ae724d66cdf6255837d0eb1c94bf",
+    "tests/fixtures/golden/mic_endpoint.json": "738ec4226e3a0f3de441530167af16cf868c443d4ebda54906e8f1d0a598b4f1"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "freeze_version": 1,
+  "frozen_at": "2026-08-01T00:00:00Z",
+  "change_policy": "Scientific behavior changes require a new algorithm version and ADR.",
+  "amendments": [
+    {
+      "date": "2026-08-01",
+      "adr": "docs/adr/0008-additive-mic-contract-extension.md",
+      "reason": "Add MIC notes, deterministic custom labels, and strict long-format parsing; endpoint behavior is unchanged."
+    }
+  ],
+  "sha256": {
+    "docs/contracts/DOMAIN_V1.md": "5d2030fe100c9ba3dd999f90ff7249660bdf791de70423a27844721b2e17bf8c",
+    "src/plate_reader/domain/common/__init__.py": "795f055aa9b91dd0fe0833cfa808da8e85979d187887664ef6656bc3bab8d266",
+    "src/plate_reader/domain/common/errors.py": "30dcf75667c1a8abd027c9b42406f34cd904871aa7a2ff4174363fdafb75fd1e",
+    "src/plate_reader/domain/common/plate.py": "442166dd077b242f8ec84fc3d42892a1b681dec752344fabcf2ecccda38a4bc5",
+    "src/plate_reader/domain/growth/__init__.py": "71fe816abbee1e53ad3a35e3194f5b5d4eb3dd41dd3bdc73e3f58b414f7b8233",
+    "src/plate_reader/domain/growth/background.py": "21d80900f1680f8d14529f8ec634ae4f8d6bf0c25d768ca866eda0ab1c8ddee1",
+    "src/plate_reader/domain/growth/models.py": "f6a5cab2948d437734aa349abcf94e1aaea52b8dd36db3d9eab4875c2225e841",
+    "src/plate_reader/domain/growth/parsing.py": "28774080994f8faeb6e9829508a0a4d48b674894f8607337284592bdf12bc201",
+    "src/plate_reader/domain/mic/__init__.py": "4607d088e31c63cf21aa1c5fdbe59c56de7c328085e2404e4071f9845d00ef84",
+    "src/plate_reader/domain/mic/analysis.py": "448dfa921a57d35536e5a3f3e9ccc3352f45f06ecc3bfcb49235dfbff360e69e",
+    "src/plate_reader/domain/mic/models.py": "5e739534b08cfcf85b2e6f9589fda11cd9a6f3fb19618128468b86fea6867ace",
+    "src/plate_reader/domain/mic/parsing.py": "2b614a53f61e946c168ccf37613830ad41b2b4ea0c52188abcd22deb44dfff96"
+  }
+}

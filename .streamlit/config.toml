@@ -1,0 +1,16 @@
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = "none"
+
+[runner]
+fastReruns = true
+
+[server]
+headless = true
+maxUploadSize = 25
+
+[theme]
+base = "light"
+primaryColor = "#2563EB"

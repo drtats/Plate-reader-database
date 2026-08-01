@@ -1,0 +1,689 @@
+"""MIC plate library, import wizard, workspace, search, and visualization pages."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import date
+from pathlib import Path
+from typing import cast
+
+import streamlit as st
+
+from plate_reader import __version__
+from plate_reader.application.contracts import (
+    ComputeMicRevision,
+    ExportPortableRun,
+    ImportMicPlate,
+    MicExperimentMetadata,
+    MicWellLayoutChange,
+    PlateId,
+    RevisionId,
+    Role,
+    SearchMicResults,
+    SearchRuns,
+    SetMicLockState,
+    SetMicReviewState,
+    SoftDeleteMicPlate,
+    UpdateMicLayout,
+    UpdateMicMetadata,
+)
+from plate_reader.application.demo import synthetic_mic_csv
+from plate_reader.application.ports.repositories import PlateSnapshot
+from plate_reader.application.services import (
+    ComputeMicRevisionService,
+    ExportMicPlateService,
+    ImportMicPlateService,
+    LoadMicPlateService,
+    MicPlateView,
+    PortableArtifact,
+    PreviewMicPlateService,
+    SearchMicPlatesService,
+    SearchMicResultsService,
+    SetMicLockStateService,
+    SetMicReviewStateService,
+    SoftDeleteMicPlateService,
+    UpdateMicLayoutService,
+    UpdateMicMetadataService,
+)
+from plate_reader.domain.common.plate import PLATE_96, WellPosition
+from plate_reader.domain.mic import (
+    MIC_ENDPOINT_VERSION,
+    MIC_PLATE_PARSER_VERSION,
+    MicWell,
+    parse_mic_plate_csv,
+)
+from plate_reader.infrastructure.database import SqlitePortableRunExporter
+from plate_reader.ui.context import AppContext
+from plate_reader.ui.pages import render_exception, render_records
+from plate_reader.ui.plotting import mic_growth_map, mic_plate_heatmap, mic_result_dot_plot
+
+
+def render_mic_library(context: AppContext) -> None:
+    st.header("MIC Plate Library")
+    with st.form("mic-library-search"):
+        text = st.text_input("Search MIC experiment, plate, or project")
+        submitted = st.form_submit_button("Search MIC plates")
+    if submitted:
+        st.session_state.mic_library_offset = 0
+    offset = int(st.session_state.setdefault("mic_library_offset", 0))
+    if submitted or "mic_library_results" not in st.session_state:
+        st.session_state.mic_library_results = SearchMicPlatesService(context.repository).execute(
+            SearchRuns(context.actor, text=text, limit=25, offset=offset)
+        )
+    results = st.session_state.mic_library_results
+    if not results:
+        st.info("No MIC plates match this page. Open New MIC Plate to add one.")
+    else:
+        for run in results:
+            with st.container(border=True):
+                st.markdown(f"**{run.experiment_name} — {run.plate_name}**")
+                st.caption(f"{run.experiment_date} · updated {run.updated_at}")
+        labels = {f"{run.experiment_name} — {run.plate_name}": run.plate_id for run in results}
+        selected = st.selectbox("Open MIC plate", tuple(labels))
+        if st.button("Open MIC workspace", type="primary"):
+            st.session_state.selected_mic_plate_id = labels[selected]
+            st.session_state.pending_navigation = "MIC Workspace"
+            _clear_mic_cached_artifacts()
+            st.rerun()
+    previous, next_page = st.columns(2)
+    if previous.button("Previous page", disabled=offset == 0):
+        st.session_state.mic_library_offset = max(0, offset - 25)
+        st.session_state.pop("mic_library_results", None)
+        st.rerun()
+    if next_page.button("Next page", disabled=len(results) < 25):
+        st.session_state.mic_library_offset = offset + 25
+        st.session_state.pop("mic_library_results", None)
+        st.rerun()
+
+
+def render_mic_wizard(context: AppContext, *, allow_local_path: bool) -> None:
+    st.header("New MIC Plate")
+    step = int(st.session_state.setdefault("mic_wizard_step", 1))
+    st.progress(step / 5, text=f"Step {step} of 5")
+    if step == 1:
+        _mic_source_step(allow_local_path)
+    elif step == 2:
+        _mic_preview_step()
+    elif step == 3:
+        _mic_metadata_step()
+    elif step == 4:
+        _mic_layout_step()
+    else:
+        _mic_commit_step(context)
+
+
+def _mic_source_step(allow_local_path: bool) -> None:
+    st.subheader("1. Choose endpoint plate data")
+    upload = st.file_uploader("MIC long-format CSV", type=("csv", "txt"), key="mic_upload")
+    pasted = st.text_area("Or paste long-format CSV", key="mic_pasted_csv", height=140)
+    use_upload, use_demo = st.columns(2)
+    if use_demo.button("Use synthetic MIC demo"):
+        _store_mic_source("synthetic-mic.csv", synthetic_mic_csv())
+        _mic_next()
+    if use_upload.button("Use selected MIC source", type="primary"):
+        try:
+            if upload is not None:
+                _store_mic_source(upload.name, upload.getvalue().decode("utf-8-sig"))
+            elif pasted.strip():
+                _store_mic_source("pasted-mic.csv", pasted)
+            else:
+                raise ValueError("Choose a MIC file or paste CSV text")
+            _mic_next()
+        except Exception as error:
+            render_exception(error)
+    if allow_local_path:
+        with st.expander("Power user: load a configured local MIC path"):
+            path_value = st.text_input("Local MIC CSV path")
+            if st.button("Load MIC local path"):
+                try:
+                    path = Path(path_value).expanduser()
+                    _store_mic_source(path.name, path.read_text(encoding="utf-8"))
+                    _mic_next()
+                except Exception as error:
+                    render_exception(error)
+
+
+def _mic_preview_step() -> None:
+    st.subheader("2. Validate and calculate")
+    threshold = st.number_input("Growth threshold (OD)", min_value=0.0, value=0.1, format="%.4f")
+    if st.button("Validate MIC plate", type="primary"):
+        try:
+            preview = PreviewMicPlateService().execute(st.session_state.mic_csv_text, threshold)
+            st.session_state.mic_preview = preview
+            st.session_state.mic_threshold = threshold
+            _mic_next()
+        except Exception as error:
+            render_exception(error)
+    if st.button("Back", key="mic-preview-back"):
+        _mic_previous()
+
+
+def _mic_metadata_step() -> None:
+    st.subheader("3. Describe the MIC experiment")
+    preview = st.session_state.mic_preview
+    columns = st.columns(4)
+    columns[0].metric("Wells", preview.well_count)
+    columns[1].metric("Blanks", preview.blank_count)
+    columns[2].metric("MIC groups", preview.group_count)
+    columns[3].metric("Background", f"{preview.background_value:.4f}")
+    with st.form("mic-metadata"):
+        experiment_name = st.text_input("MIC experiment name")
+        plate_name = st.text_input("MIC plate name", value="MIC Plate 1")
+        experiment_date = st.date_input("MIC experiment date", value=date.today())
+        operator_name = st.text_input("Operator")
+        reader = st.text_input("Reader")
+        submitted = st.form_submit_button("Save MIC metadata and continue")
+    if submitted:
+        if not experiment_name.strip() or not plate_name.strip():
+            st.error("MIC experiment and plate names are required.")
+        else:
+            st.session_state.mic_metadata = {
+                "experiment_name": experiment_name.strip(),
+                "plate_name": plate_name.strip(),
+                "experiment_date": experiment_date,
+                "operator_name": operator_name.strip() or None,
+                "reader": reader.strip() or None,
+            }
+            _mic_next()
+    if st.button("Back", key="mic-metadata-back"):
+        _mic_previous()
+
+
+def _mic_layout_step() -> None:
+    st.subheader("4. Review and optionally edit the layout")
+    st.warning("Staged changes are written only with the final atomic commit.")
+    wells = parse_mic_plate_csv(st.session_state.mic_csv_text)
+    position = st.selectbox(
+        "Inspect/edit well",
+        tuple(well.position.label for well in wells),
+        key="mic-wizard-layout-position",
+    )
+    well = next(well for well in wells if well.position.label == position)
+    if change := _mic_well_form(well, f"mic-wizard-{position}"):
+        changes = cast(
+            dict[str, MicWellLayoutChange],
+            st.session_state.setdefault("mic_layout_changes", {}),
+        )
+        changes[position] = change
+        st.success(f"Staged {position}. {len(changes)} well change(s) pending.")
+    if st.button("Accept MIC layout and continue", type="primary"):
+        _mic_next()
+    if st.button("Back", key="mic-layout-back"):
+        _mic_previous()
+
+
+def _mic_commit_step(context: AppContext) -> None:
+    st.subheader("5. Review and commit")
+    metadata = st.session_state.mic_metadata
+    preview = st.session_state.mic_preview
+    staged = cast(dict[str, MicWellLayoutChange], st.session_state.get("mic_layout_changes", {}))
+    st.write(
+        f"**{metadata['experiment_name']} — {metadata['plate_name']}**  \n"
+        f"{preview.well_count} wells, {preview.group_count} MIC groups, "
+        f"{len(staged)} staged layout edit(s)"
+    )
+    st.info("Raw OD, layout, initial MIC revision, and provenance commit in one transaction.")
+    if st.button("Commit MIC plate", type="primary"):
+        try:
+            result = ImportMicPlateService(context.repository).execute(
+                ImportMicPlate(
+                    actor=context.actor,
+                    source_name=st.session_state.mic_source_name,
+                    source_sha256=preview.source_sha256,
+                    parser_version=MIC_PLATE_PARSER_VERSION,
+                    experiment_name=str(metadata["experiment_name"]),
+                    plate_name=str(metadata["plate_name"]),
+                    experiment_date=cast(date, metadata["experiment_date"]),
+                    threshold=float(st.session_state.mic_threshold),
+                ),
+                st.session_state.mic_csv_text,
+                metadata=MicExperimentMetadata(
+                    operator_name=cast(str | None, metadata["operator_name"]),
+                    reader=cast(str | None, metadata["reader"]),
+                ),
+                layout_changes=tuple(staged.values()),
+            )
+            st.session_state.selected_mic_plate_id = result.plate_id
+            st.session_state.pending_navigation = "MIC Workspace"
+            st.session_state.mic_commit_message = (
+                "MIC plate committed successfully."
+                if result.created
+                else "This exact MIC source already exists; the stored plate was opened."
+            )
+            _reset_mic_wizard()
+            _clear_mic_cached_artifacts()
+            st.rerun()
+        except Exception as error:
+            render_exception(error)
+    if st.button("Back", key="mic-commit-back"):
+        _mic_previous()
+
+
+def render_mic_workspace(context: AppContext, migrations: Path) -> None:
+    plate_value = st.session_state.get("selected_mic_plate_id")
+    if not plate_value:
+        st.info("Choose a MIC plate from the MIC Plate Library first.")
+        return
+    plate_id = PlateId(str(plate_value))
+    try:
+        view = _load_mic_view(context, plate_id)
+    except Exception as error:
+        render_exception(error)
+        return
+    metadata = view.snapshot.metadata
+    st.header(f"{metadata['name']} — {metadata['plate_name']}")
+    st.caption(
+        f"MIC plate · threshold {metadata['threshold']} · "
+        f"{'checked' if metadata['is_checked'] else 'not checked'} · "
+        f"{'locked' if metadata['is_locked'] else 'unlocked'}"
+    )
+    if message := st.session_state.pop("mic_commit_message", None):
+        st.success(message)
+    tabs = st.tabs(
+        (
+            "Overview",
+            "Metadata",
+            "Layout",
+            "MIC Results",
+            "Revisions",
+            "Review & Lifecycle",
+            "Export",
+            "Provenance",
+        )
+    )
+    with tabs[0]:
+        _render_mic_overview(view)
+    with tabs[1]:
+        _render_mic_metadata(context, plate_id, view)
+    with tabs[2]:
+        _render_mic_layout(context, plate_id, view)
+    with tabs[3]:
+        _render_mic_results(view.results)
+    with tabs[4]:
+        _render_mic_revisions(context, plate_id, view)
+    with tabs[5]:
+        _render_mic_lifecycle(context, plate_id, view)
+    with tabs[6]:
+        _render_mic_export(context, migrations, plate_id, view)
+    with tabs[7]:
+        render_records(view.provenance, empty_message="No MIC provenance events yet.")
+
+
+def _render_mic_overview(view: MicPlateView) -> None:
+    snapshot = view.snapshot
+    metrics = st.columns(4)
+    metrics[0].metric("Wells", len(snapshot.wells))
+    metrics[1].metric("Raw readings", len(snapshot.raw_observations))
+    metrics[2].metric("MIC groups", len(view.results))
+    metrics[3].metric("Warnings", sum(bool(row.get("warning")) for row in view.results))
+    raw_hash = _mic_raw_hash(snapshot.raw_observations)
+    left, right = st.columns(2)
+    left.plotly_chart(
+        mic_plate_heatmap(snapshot.raw_observations, snapshot.wells, raw_hash), width="stretch"
+    )
+    revision_key = _current_revision_key(snapshot)
+    right.plotly_chart(
+        mic_growth_map(snapshot.wells, view.well_calls, revision_key), width="stretch"
+    )
+
+
+def _render_mic_metadata(context: AppContext, plate_id: PlateId, view: MicPlateView) -> None:
+    metadata = view.snapshot.metadata
+    st.warning("Changes are unsaved until Save MIC metadata is pressed.")
+    with st.form(f"mic-metadata-{plate_id}"):
+        experiment_name = st.text_input("MIC experiment name", value=str(metadata["name"]))
+        plate_name = st.text_input("MIC plate name", value=str(metadata["plate_name"]))
+        project = st.text_input("MIC project", value=str(metadata["project"] or ""))
+        threshold = st.number_input(
+            "MIC threshold",
+            min_value=0.0,
+            value=_database_float(metadata["threshold"]),
+            format="%.4f",
+        )
+        submitted = st.form_submit_button("Save MIC metadata", type="primary")
+    if submitted:
+        try:
+            UpdateMicMetadataService(context.repository).execute(
+                UpdateMicMetadata(
+                    context.actor,
+                    plate_id,
+                    str(metadata["updated_at"]),
+                    experiment_name=experiment_name,
+                    plate_name=plate_name,
+                    project=project or None,
+                    threshold=threshold,
+                )
+            )
+            _clear_mic_cached_artifacts()
+            st.success("MIC metadata and threshold revision saved.")
+            st.rerun()
+        except Exception as error:
+            render_exception(error)
+
+
+def _render_mic_layout(context: AppContext, plate_id: PlateId, view: MicPlateView) -> None:
+    position = st.selectbox(
+        "MIC well",
+        tuple(str(well["position"]) for well in view.snapshot.wells),
+        key=f"mic-layout-position-{plate_id}",
+    )
+    row = next(well for well in view.snapshot.wells if str(well["position"]) == position)
+    well = _well_from_view(row, view.snapshot.raw_observations)
+    if change := _mic_well_form(well, f"mic-workspace-{plate_id}-{position}", row=row):
+        try:
+            UpdateMicLayoutService(context.repository).execute(
+                UpdateMicLayout(
+                    context.actor,
+                    plate_id,
+                    str(view.snapshot.metadata["updated_at"]),
+                    (change,),
+                )
+            )
+            _clear_mic_cached_artifacts()
+            st.success("MIC well saved and a new analysis revision created.")
+            st.rerun()
+        except Exception as error:
+            render_exception(error)
+
+
+def _mic_well_form(
+    well: MicWell,
+    key_prefix: str,
+    *,
+    row: dict[str, object] | None = None,
+) -> MicWellLayoutChange | None:
+    with st.form(f"{key_prefix}-form"):
+        display_name = st.text_input(
+            "Display name", value="" if row is None else str(row.get("display_name") or "")
+        )
+        is_blank = st.checkbox("Blank well", value=well.is_blank)
+        strain = st.text_input("Strain", value=well.strain or "")
+        treatment = st.text_input("Treatment", value=well.treatment or "")
+        concentration = st.number_input(
+            "Concentration", min_value=0.0, value=well.concentration or 0.0
+        )
+        unit = st.text_input("Concentration unit", value=well.concentration_unit)
+        medium = st.text_input("Medium", value=well.medium or "")
+        replicate = st.number_input("Replicate", min_value=1, value=well.replicate, step=1)
+        notes = st.text_area("Well notes", value=well.notes or "")
+        labels_text = st.text_area(
+            "Custom labels (JSON object)",
+            value=json.dumps(dict(well.custom_labels), sort_keys=True),
+        )
+        submitted = st.form_submit_button(
+            "Save staged MIC well" if row is None else "Save MIC well"
+        )
+    if not submitted:
+        return None
+    labels = json.loads(labels_text or "{}")
+    if not isinstance(labels, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in labels.items()
+    ):
+        raise ValueError("Custom labels must be a JSON object of string values")
+    return MicWellLayoutChange(
+        position=well.position.label,
+        display_name=display_name,
+        is_blank=is_blank,
+        strain=strain,
+        treatment=treatment,
+        concentration=concentration,
+        concentration_unit=unit,
+        medium=medium,
+        replicate=int(replicate),
+        notes=notes,
+        custom_labels=labels,
+    )
+
+
+def _render_mic_results(results: tuple[dict[str, object], ...]) -> None:
+    if not results:
+        st.info("No MIC result groups exist for this revision.")
+        return
+    for result in results:
+        with st.container(border=True):
+            st.markdown(
+                f"**{result['strain']} · {result['treatment']} · replicate {result['replicate']}**"
+            )
+            st.metric(
+                "MIC",
+                f"{result['mic_operator']} {result['mic_value']} {result['mic_unit']}",
+            )
+            if result.get("warning"):
+                st.warning(str(result["warning"]))
+
+
+def _render_mic_revisions(context: AppContext, plate_id: PlateId, view: MicPlateView) -> None:
+    render_records(view.snapshot.revisions, empty_message="No MIC analysis revisions yet.")
+    threshold = st.number_input(
+        "New revision threshold",
+        min_value=0.0,
+        value=_database_float(view.snapshot.metadata["threshold"]),
+        format="%.4f",
+    )
+    if st.button("Compute MIC revision", type="primary"):
+        try:
+            result = ComputeMicRevisionService(context.repository).execute(
+                ComputeMicRevision(
+                    context.actor,
+                    plate_id,
+                    MIC_ENDPOINT_VERSION,
+                    threshold,
+                )
+            )
+            _clear_mic_cached_artifacts()
+            st.success(f"Saved MIC revision with {result.result_count} group(s).")
+            st.rerun()
+        except Exception as error:
+            render_exception(error)
+
+
+def _render_mic_lifecycle(context: AppContext, plate_id: PlateId, view: MicPlateView) -> None:
+    metadata = view.snapshot.metadata
+    checked = st.checkbox("MIC manually checked", value=bool(metadata["is_checked"]))
+    if st.button("Save MIC review state"):
+        try:
+            SetMicReviewStateService(context.repository).execute(
+                SetMicReviewState(context.actor, plate_id, str(metadata["updated_at"]), checked)
+            )
+            _clear_mic_cached_artifacts()
+            st.rerun()
+        except Exception as error:
+            render_exception(error)
+    if context.actor.role is Role.ADMIN:
+        locked = st.checkbox("Locked from deletion", value=bool(metadata["is_locked"]))
+        if st.button("Save MIC lock state"):
+            try:
+                SetMicLockStateService(context.repository).execute(
+                    SetMicLockState(context.actor, plate_id, str(metadata["updated_at"]), locked)
+                )
+                _clear_mic_cached_artifacts()
+                st.rerun()
+            except Exception as error:
+                render_exception(error)
+        with st.expander("Soft-delete MIC plate"):
+            st.warning("Soft delete hides the plate but keeps all immutable data.")
+            if st.button("Confirm soft delete MIC plate", disabled=bool(metadata["is_locked"])):
+                try:
+                    SoftDeleteMicPlateService(context.repository).execute(
+                        SoftDeleteMicPlate(context.actor, plate_id, str(metadata["updated_at"]))
+                    )
+                    st.session_state.pop("selected_mic_plate_id", None)
+                    st.session_state.pending_navigation = "MIC Plate Library"
+                    _clear_mic_cached_artifacts()
+                    st.rerun()
+                except Exception as error:
+                    render_exception(error)
+
+
+def _render_mic_export(
+    context: AppContext, migrations: Path, plate_id: PlateId, view: MicPlateView
+) -> None:
+    revisions = tuple(
+        RevisionId(str(row["revision_id"]))
+        for row in view.snapshot.revisions
+        if bool(row["is_current"])
+    )
+    if st.button("Prepare MIC portable export", type="primary"):
+        try:
+            artifact = ExportMicPlateService(
+                context.repository,
+                SqlitePortableRunExporter(
+                    context.repository.connection,
+                    migrations,
+                    exporter_version=f"plate-reader/{__version__}",
+                ),
+            ).execute(ExportPortableRun(context.actor, (plate_id,), revisions))
+            st.session_state.mic_portable_artifact = artifact
+        except Exception as error:
+            render_exception(error)
+    if artifact_value := st.session_state.get("mic_portable_artifact"):
+        artifact = cast(PortableArtifact, artifact_value)
+        st.download_button(
+            "Download MIC portable SQLite",
+            data=artifact.content,
+            file_name=artifact.filename,
+            mime="application/vnd.sqlite3",
+        )
+
+
+def render_mic_results_search(context: AppContext) -> None:
+    st.header("MIC Results")
+    with st.form("mic-results-search"):
+        text = st.text_input("Search MIC results")
+        strain = st.text_input("Filter strain")
+        treatment = st.text_input("Filter treatment")
+        medium = st.text_input("Filter medium")
+        submitted = st.form_submit_button("Search MIC results")
+    if submitted:
+        st.session_state.mic_results_offset = 0
+    offset = int(st.session_state.setdefault("mic_results_offset", 0))
+    if submitted or "mic_result_rows" not in st.session_state:
+        st.session_state.mic_result_rows = SearchMicResultsService(context.repository).execute(
+            SearchMicResults(
+                context.actor,
+                strain=strain or None,
+                treatment=treatment or None,
+                medium=medium or None,
+                text=text,
+                limit=50,
+                offset=offset,
+            )
+        )
+    results = st.session_state.mic_result_rows
+    _render_mic_results(results)
+    if results:
+        result_key = hashlib.sha256(repr(results).encode()).hexdigest()
+        if st.button("Render MIC dot plot", type="primary"):
+            st.session_state.mic_result_plot = mic_result_dot_plot(results, result_key)
+        if figure := st.session_state.get("mic_result_plot"):
+            st.plotly_chart(figure, width="stretch")
+    previous, next_page = st.columns(2)
+    if previous.button("Previous MIC results", disabled=offset == 0):
+        st.session_state.mic_results_offset = max(0, offset - 50)
+        st.session_state.pop("mic_result_rows", None)
+        st.rerun()
+    if next_page.button("Next MIC results", disabled=len(results) < 50):
+        st.session_state.mic_results_offset = offset + 50
+        st.session_state.pop("mic_result_rows", None)
+        st.rerun()
+
+
+def _well_from_view(row: dict[str, object], readings: tuple[dict[str, object], ...]) -> MicWell:
+    raw = next(item for item in readings if item["well_id"] == row["well_id"])
+    custom_value = row.get("custom_json") or "{}"
+    custom = json.loads(str(custom_value)) if isinstance(custom_value, str) else custom_value
+    if not isinstance(custom, dict):
+        custom = {}
+    return MicWell(
+        WellPosition.parse(str(row["position"]), PLATE_96),
+        _database_float(raw["value_raw"]),
+        is_blank=bool(row["is_blank"]),
+        strain=cast(str | None, row.get("strain")),
+        treatment=cast(str | None, row.get("treatment")),
+        concentration=(
+            None if row.get("concentration") is None else _database_float(row["concentration"])
+        ),
+        concentration_unit=str(row.get("concentration_unit") or "ug/mL"),
+        medium=cast(str | None, row.get("medium")),
+        replicate=_database_int(row.get("replicate") or 1),
+        notes=cast(str | None, row.get("notes")),
+        custom_labels=tuple(sorted((str(key), str(value)) for key, value in custom.items())),
+    )
+
+
+def _load_mic_view(context: AppContext, plate_id: PlateId) -> MicPlateView:
+    service = LoadMicPlateService(context.repository)
+    token = service.cache_token(context.actor, plate_id)
+    cache = cast(
+        dict[str, tuple[str, MicPlateView]], st.session_state.setdefault("mic_plate_cache", {})
+    )
+    cached = cache.get(str(plate_id))
+    if cached is not None and cached[0] == token:
+        return cached[1]
+    view = service.execute(context.actor, plate_id)
+    cache[str(plate_id)] = (token, view)
+    return view
+
+
+def _current_revision_key(snapshot: PlateSnapshot) -> str:
+    revisions = snapshot.revisions
+    return next(
+        (
+            str(row["revision_id"])
+            for row in reversed(revisions)
+            if row["algorithm_name"] == "mic_endpoint" and bool(row["is_current"])
+        ),
+        "none",
+    )
+
+
+def _mic_raw_hash(rows: tuple[dict[str, object], ...]) -> str:
+    payload = sorted((str(row["well_id"]), str(row["channel"]), row["value_raw"]) for row in rows)
+    return hashlib.sha256(repr(payload).encode()).hexdigest()
+
+
+def _store_mic_source(name: str, text: str) -> None:
+    if not text.strip():
+        raise ValueError("MIC CSV is empty")
+    st.session_state.mic_source_name = name
+    st.session_state.mic_csv_text = text
+
+
+def _mic_next() -> None:
+    st.session_state.mic_wizard_step += 1
+    st.rerun()
+
+
+def _mic_previous() -> None:
+    st.session_state.mic_wizard_step -= 1
+    st.rerun()
+
+
+def _reset_mic_wizard() -> None:
+    for key in tuple(st.session_state):
+        if str(key).startswith("mic_") and key not in {
+            "mic_commit_message",
+            "mic_plate_cache",
+        }:
+            del st.session_state[key]
+
+
+def _clear_mic_cached_artifacts() -> None:
+    st.session_state.pop("mic_plate_cache", None)
+    st.session_state.pop("mic_library_results", None)
+    st.session_state.pop("mic_result_rows", None)
+    st.session_state.pop("mic_result_plot", None)
+    st.session_state.pop("mic_portable_artifact", None)
+
+
+def _database_float(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError("Expected a numeric database value")
+    return float(value)
+
+
+def _database_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Expected an integer database value")
+    return value

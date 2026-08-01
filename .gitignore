@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.venv/
+venv/
+.tools/
+.python/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+secrets.toml
+*.pem
+*.key
+
+# Databases and laboratory data
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.duckdb
+data/
+uploads/
+exports/
+backups/
+
+# Synthetic, reviewed fixtures may be committed explicitly
+!tests/fixtures/**/*.db
+!tests/fixtures/**/*.sqlite
+!tests/fixtures/**/*.sqlite3
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Packaging
+*.spec
+!packaging/plate_reader.spec
+*.app/

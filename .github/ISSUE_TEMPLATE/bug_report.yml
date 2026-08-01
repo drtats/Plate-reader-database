@@ -1,0 +1,44 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Use anonymized or synthetic data only.
+      placeholder: Steps, fixture name, and relevant settings
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Application version
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Storage mode
+      options:
+        - fake-cloud
+        - local
+        - cloud
+        - sync
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data safety
+      options:
+        - label: I removed credentials and identifiable laboratory data.
+          required: true
