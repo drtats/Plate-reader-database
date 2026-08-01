@@ -44,6 +44,27 @@ restored:
 All 17 logical table hashes matched. These synthetic artifacts lived in the
 temporary directory and were not committed.
 
-Real Turso backup and restore remain pending. The cloud procedure must export to
-a local standard-SQLite artifact, restore to an isolated Turso test database, and
-run the same logical verification before the Phase 5 exit gate can pass.
+## Real Turso procedure (implemented; live drill pending)
+
+With `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` present only in the process
+environment, create a complete standard-SQLite backup. Reads and hashes stream in
+1,000-row batches so multi-gigabyte databases are not loaded into memory:
+
+```bash
+uv run --no-sync python scripts/manage_turso.py backup \
+  backups/turso-complete-YYYYMMDD.sqlite
+```
+
+Create a new isolated Turso restore-test database, replace the two environment
+values with that database's credentials, migrate it, and restore:
+
+```bash
+uv run --no-sync python scripts/manage_turso.py migrate
+uv run --no-sync python scripts/manage_turso.py restore \
+  backups/turso-complete-YYYYMMDD.sqlite --confirm-empty-target
+uv run --no-sync python scripts/manage_turso.py status
+```
+
+Restore rejects any target containing application rows and verifies every table's
+row count and canonical SHA-256 inside the transaction. The real cloud drill and
+recorded evidence remain required before the Phase 5 exit gate can pass.

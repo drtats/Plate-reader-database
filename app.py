@@ -7,7 +7,9 @@ from pathlib import Path
 import streamlit as st
 
 from plate_reader import __version__
+from plate_reader.application.services import AuthenticationError
 from plate_reader.runtime import load_local_app_config
+from plate_reader.ui.cloud import load_cloud_credentials, oidc_provider
 from plate_reader.ui.context import app_context
 from plate_reader.ui.mic_pages import (
     render_mic_library,
@@ -34,7 +36,25 @@ def main() -> None:
     try:
         root = Path(__file__).resolve().parent
         config = load_local_app_config(root)
-        context = app_context(config, root / "migrations")
+        if config.runtime.storage_mode == "cloud":
+            if not getattr(st.user, "is_logged_in", False):
+                st.info("Sign in with the laboratory identity provider to continue.")
+                if st.button("Sign in"):
+                    st.login(oidc_provider())
+                st.stop()
+            context = app_context(
+                config,
+                root / "migrations",
+                cloud_credentials=load_cloud_credentials(),
+                oidc_claims=st.user.to_dict(),
+            )
+        else:
+            context = app_context(config, root / "migrations")
+    except AuthenticationError:
+        st.error("This signed-in account is not authorized to use the application.")
+        if st.button("Sign out and use another account"):
+            st.logout()
+        st.stop()
     except ValueError as exc:
         st.error(f"Configuration error: {exc}")
         st.stop()
@@ -52,7 +72,12 @@ def main() -> None:
     if not config.writes_enabled:
         st.warning("Read-only rollback mode is active. Write services are disabled.")
 
-    st.sidebar.caption(f"Signed in for development as {context.actor.email}")
+    if config.runtime.storage_mode == "cloud":
+        st.sidebar.caption(f"Signed in as {context.actor.email}")
+        if st.sidebar.button("Sign out"):
+            st.logout()
+    else:
+        st.sidebar.caption(f"Signed in for development as {context.actor.email}")
     if pending_navigation := st.session_state.pop("pending_navigation", None):
         st.session_state.navigation = pending_navigation
     navigation = st.sidebar.radio(

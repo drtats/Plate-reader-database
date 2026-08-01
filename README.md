@@ -6,7 +6,8 @@ The planned application uses one Python/Streamlit codebase with interchangeable
 local and cloud persistence:
 
 - Local and standalone operation: `pyturso` with a local database file.
-- Streamlit Community Cloud: `turso_serverless` connected to Turso Cloud.
+- Streamlit Community Cloud: the official Python `libsql` driver connected
+  directly to Turso Cloud.
 - Future offline synchronization: explicit `turso.sync` push/pull.
 
 The existing growth-curve and MIC repositories are legacy reference
@@ -15,13 +16,14 @@ dependencies.
 
 ## Current status
 
-The shared growth and MIC workflows, local `pyturso` adapter, isolated fake-cloud
-adapter, legacy migration tools, portable exchange, and macOS standalone package
-are implemented and tested. Imports are atomic and idempotent; metadata/layout
-edits preserve immutable raw observations; analyses are revisioned; queries and
-plots are bounded; and complete backup/restore is verified. Real Turso,
-production authentication, GitHub publication, and hosted cutover are
-intentionally deferred until credentials and accounts are supplied.
+The shared growth and MIC workflows, local `pyturso`, isolated fake-cloud, and
+official remote `libsql` adapters, legacy migration tools, portable exchange,
+OIDC login gate, database-backed roles, and macOS standalone package are
+implemented and tested locally. Imports are atomic and idempotent;
+metadata/layout edits preserve immutable raw observations; analyses are
+revisioned; queries and plots are bounded; and complete backup/restore is
+verified. Live Turso contract execution, GitHub publication, hosted OIDC
+configuration, and cutover remain pending until accounts and credentials exist.
 
 Start here:
 
@@ -79,6 +81,8 @@ Copy `.env.example` only for local configuration; do not commit the resulting
 
 GitHub remote creation and Streamlit Community Cloud smoke deployment are the
 remaining external Phase 0 checks. Real Turso setup is intentionally deferred.
+The remote adapter and operational commands are ready; see the deployment
+runbook before supplying credentials.
 
 ## Guiding principles
 

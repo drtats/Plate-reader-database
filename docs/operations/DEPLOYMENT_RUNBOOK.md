@@ -21,8 +21,9 @@ file.
 1. Create the private GitHub repository and enable required CI checks.
 2. Create separate Turso development and production databases. Never test
    destructive behavior against production.
-3. Implement and contract-test the `turso_serverless` adapter before adding
-   credentials. Fake-cloud tests do not prove network transaction behavior.
+3. Use the implemented official Python `libsql` adapter. Fake-cloud tests do not
+   prove network transaction behavior, so the opt-in live contract remains a
+   required gate.
 4. Select Google Identity or Microsoft Entra and create an OIDC client with the
    deployed app URL plus `/oauth2callback` as its redirect URL.
 5. Copy `.streamlit/secrets.example.toml` into Streamlit Community Cloud secrets
@@ -31,6 +32,46 @@ file.
    for later role changes.
 7. Deploy the app as private and verify anonymous denial before importing any
    representative synthetic run.
+
+## Real Turso commands
+
+Install and authenticate the Turso CLI, then create a disposable development
+database. Follow Turso's current CLI output rather than placing either credential
+in Git:
+
+```bash
+turso db create plate-reader-development
+export TURSO_DATABASE_URL="$(turso db show plate-reader-development --url)"
+export TURSO_AUTH_TOKEN="$(turso db tokens create plate-reader-development)"
+```
+
+Apply migrations, create the first database-authorized administrator, and inspect
+logical counts:
+
+```bash
+make turso-migrate
+uv run --no-sync python scripts/manage_turso.py bootstrap-admin \
+  scientist@example.org --display-name "Initial Administrator"
+make turso-status
+```
+
+The token is accepted only from the process environment or Streamlit secret
+storage, never as a command-line argument. Bootstrap refuses to run once any user
+exists. For the disposable live contract database, use separate test-only values:
+
+```bash
+export TURSO_TEST_DATABASE_URL="$TURSO_DATABASE_URL"
+export TURSO_TEST_AUTH_TOKEN="$TURSO_AUTH_TOKEN"
+make test-remote
+```
+
+The live contract deliberately requires an empty isolated database and leaves its
+synthetic contract run behind for inspection. Never point it at production.
+
+For hosted operation set `PLATE_READER_ENV=production`,
+`PLATE_READER_STORAGE_MODE=cloud`, and `PLATE_READER_OIDC_PROVIDER=google` (or
+`microsoft`) in Streamlit configuration, then copy the Turso and `[auth]` values
+from `.streamlit/secrets.example.toml` into Community Cloud secret storage.
 
 Streamlit's native OIDC flow uses `st.login()`, `st.user`, and `st.logout()`;
 authentication identifies the user while the database remains the authorization

@@ -64,7 +64,8 @@ Goal: create a reproducible, safe repository before application behavior exists.
 - [x] The minimal Streamlit app starts locally on Python 3.12.
 - [ ] CI passes on GitHub without Turso credentials.
 - [x] A deliberately created local secrets file and `.sqlite` file remain ignored.
-- [ ] `git grep`/secret scanner finds no credentials.
+- [x] The redacting tracked-file scanner finds no credentials locally; CI also
+      runs the scanner plus full-history Gitleaks.
 - [ ] Streamlit Community Cloud can deploy the minimal app from GitHub.
 
 ### Exit gate
@@ -314,9 +315,10 @@ exit gate by itself.
 ### Tasks
 
 - [ ] Create a development Turso database using the selected Turso engine.
-- [ ] Implement `turso_serverless` connection factory behind the existing ports.
+- [x] Implement the official Python `libsql` remote connection factory behind the
+      existing ports (ADR 0010 corrects the earlier TypeScript package name).
 - [ ] Run the same repository contract tests against an isolated remote test DB.
-- [ ] Add explicit remote migration command and deployment runbook.
+- [x] Add explicit remote migration command and deployment runbook.
 - [ ] Configure Google or Microsoft OIDC through Streamlit secrets.
 - [x] Implement `viewer`, `editor`, and `admin` authorization checks.
 - [x] Record actor identity for writes and provenance.

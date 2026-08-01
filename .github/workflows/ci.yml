@@ -37,6 +37,9 @@ jobs:
       - name: Test
         run: uv run pytest --cov-report=term-missing --cov-report=xml
 
+      - name: Scan tracked files for secrets
+        run: uv run python scripts/scan_secrets.py
+
   secrets:
     runs-on: ubuntu-latest
     timeout-minutes: 10

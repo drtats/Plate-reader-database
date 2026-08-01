@@ -36,7 +36,8 @@ and [usage documentation](https://docs.turso.tech/help/usage-and-billing).
 ## Still required for the exit gate
 
 - create Turso development/production databases;
-- implement and contract-test `turso_serverless` against the isolated remote DB;
+- run the implemented official Python `libsql` adapter contract against the
+  isolated remote DB;
 - configure and exercise Google or Microsoft OIDC;
 - create/push the GitHub repository and observe hosted CI;
 - deploy the private Streamlit pilot;

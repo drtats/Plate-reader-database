@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 
@@ -49,6 +50,58 @@ def test_oidc_name_defaults_to_email_prefix() -> None:
         {"sub": "provider-subject", "email": "Scientist@Example.Invalid"}
     )
     assert claims.display_name == "scientist"
+
+
+def test_microsoft_username_fallback_and_temporal_claim_validation() -> None:
+    claims = OidcClaims.from_mapping(
+        {
+            "sub": "provider-subject",
+            "preferred_username": "Scientist@Example.Invalid",
+            "exp": int(datetime.now(UTC).timestamp()) + 60,
+        }
+    )
+    assert claims.email == "scientist@example.invalid"
+    assert claims.expires_at is not None
+
+
+@pytest.mark.parametrize(
+    "claims",
+    (
+        {
+            "sub": "x",
+            "email": "scientist@example.invalid",
+            "email_verified": False,
+        },
+        {
+            "sub": "x",
+            "email": "scientist@example.invalid",
+            "email_verified": "false",
+        },
+        {
+            "sub": "x",
+            "email": "scientist@example.invalid",
+            "exp": 1,
+        },
+        {
+            "sub": "x",
+            "email": "scientist@example.invalid",
+            "exp": "tomorrow",
+        },
+    ),
+)
+def test_unverified_expired_or_malformed_oidc_claims_are_rejected(
+    claims: dict[str, object],
+) -> None:
+    with pytest.raises(AuthenticationError):
+        OidcClaims.from_mapping(claims)
+
+
+def test_hosted_oidc_claims_require_expiration() -> None:
+    with pytest.raises(AuthenticationError, match="exp claim"):
+        OidcClaims.from_mapping(
+            {"sub": "x", "email": "scientist@example.invalid"},
+            require_expiration=True,
+        )
 
 
 @pytest.mark.parametrize(

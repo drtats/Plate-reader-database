@@ -389,6 +389,12 @@ class CompleteRestoreReport:
     table_sha256: dict[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class CompleteConnectionRestoreReport:
+    table_counts: dict[str, int]
+    table_sha256: dict[str, str]
+
+
 def export_portable_runs(
     source: Connection,
     destination: Path,
@@ -683,10 +689,15 @@ def backup_complete_database(
     target = cast(Connection, target_sqlite)
     try:
         apply_migrations(target, migrations_directory)
-        with transaction(target):
-            for table in TABLE_COLUMNS:
-                rows = _select_rows(source, table)
-                _insert_rows(target, table, rows)
+        if source.in_transaction:
+            raise RuntimeError("Complete backup requires an idle source connection")
+        source.execute("BEGIN")
+        try:
+            with transaction(target):
+                for table in TABLE_COLUMNS:
+                    _copy_table_in_chunks(source, target, table)
+        finally:
+            source.rollback()
         target_sqlite.execute("VACUUM")
         if target_sqlite.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise PortableValidationError("Backup integrity check failed")
@@ -717,11 +728,11 @@ def restore_complete_database(
         apply_migrations(target, migrations_directory)
         with transaction(target):
             for table in TABLE_COLUMNS:
-                _insert_rows(target, table, _select_rows(cast(Connection, source), table))
-        for table in TABLE_COLUMNS:
-            restored_count, restored_hash = logical_table_hash(target, table)
-            if restored_count != counts[table] or restored_hash != hashes[table]:
-                raise PortableValidationError(f"Restored table verification failed: {table}")
+                _copy_table_in_chunks(cast(Connection, source), target, table)
+            for table in TABLE_COLUMNS:
+                restored_count, restored_hash = logical_table_hash(target, table)
+                if restored_count != counts[table] or restored_hash != hashes[table]:
+                    raise PortableValidationError(f"Restored table verification failed: {table}")
         if target_sqlite.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise PortableValidationError("Restored database integrity check failed")
         target_sqlite.close()
@@ -732,6 +743,39 @@ def restore_complete_database(
             target_sqlite.close()
         destination.unlink(missing_ok=True)
         raise
+    finally:
+        source.close()
+
+
+def restore_complete_database_to_connection(
+    backup: Path, target: Connection
+) -> CompleteConnectionRestoreReport:
+    """Restore a verified complete backup into an empty, migrated connection."""
+
+    source = sqlite3.connect(f"{backup.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        _validate_complete_backup(source)
+        nonempty = [
+            table
+            for table in TABLE_COLUMNS
+            if target.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+        ]
+        if nonempty:
+            raise PortableValidationError(
+                "Remote restore target is not empty; refusing to overwrite application data"
+            )
+        counts: dict[str, int] = {}
+        hashes: dict[str, str] = {}
+        for table in TABLE_COLUMNS:
+            counts[table], hashes[table] = logical_table_hash(cast(Connection, source), table)
+        with transaction(target):
+            for table in TABLE_COLUMNS:
+                _copy_table_in_chunks(cast(Connection, source), target, table)
+            for table in TABLE_COLUMNS:
+                restored_count, restored_hash = logical_table_hash(target, table)
+                if restored_count != counts[table] or restored_hash != hashes[table]:
+                    raise PortableValidationError(f"Restored table verification failed: {table}")
+        return CompleteConnectionRestoreReport(counts, hashes)
     finally:
         source.close()
 
@@ -888,14 +932,17 @@ def _copy_selection(source: Connection, target: Connection, selection: _Selectio
 def logical_table_hash(connection: Connection, table: str) -> tuple[int, str]:
     columns = TABLE_COLUMNS[table]
     order = PRIMARY_KEYS[table]
-    rows = connection.execute(
+    cursor = connection.execute(
         f"SELECT {_column_sql(columns)} FROM {table} ORDER BY {_column_sql(order)}"
-    ).fetchall()
+    )
     digest = hashlib.sha256()
-    for row in rows:
-        digest.update(_canonical_json(row).encode())
-        digest.update(b"\n")
-    return len(rows), digest.hexdigest()
+    count = 0
+    while rows := cursor.fetchmany(1_000):
+        for row in rows:
+            digest.update(_canonical_json(row).encode())
+            digest.update(b"\n")
+            count += 1
+    return count, digest.hexdigest()
 
 
 def _select_rows(
@@ -921,6 +968,21 @@ def _insert_rows(connection: Connection, table: str, rows: Iterable[Sequence[obj
     connection.executemany(
         f"INSERT INTO {table} ({_column_sql(columns)}) VALUES ({placeholders})", materialized
     )
+
+
+def _copy_table_in_chunks(
+    source: Connection,
+    target: Connection,
+    table: str,
+    *,
+    batch_size: int = 1_000,
+) -> None:
+    cursor = source.execute(
+        f"SELECT {_column_sql(TABLE_COLUMNS[table])} FROM {table} "
+        f"ORDER BY {_column_sql(PRIMARY_KEYS[table])}"
+    )
+    while rows := cursor.fetchmany(batch_size):
+        _insert_rows(target, table, rows)
 
 
 def _create_portable_manifest_tables(connection: Connection) -> None:

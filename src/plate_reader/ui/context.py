@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import streamlit as st
 
 from plate_reader.application.contracts import Actor, Role, UserId
+from plate_reader.application.services import OidcClaims, ResolveAuthenticatedActorService
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
     SqlPlateReaderRepository,
+    TursoDatabaseConfig,
     connect_database,
+    connect_turso_database,
 )
 from plate_reader.runtime import LocalAppConfig
 
@@ -24,14 +28,43 @@ class AppContext:
     actor: Actor
 
 
-def app_context(config: LocalAppConfig, migrations: Path) -> AppContext:
+@dataclass(frozen=True, slots=True)
+class CloudCredentials:
+    database_url: str
+    auth_token: str
+
+
+def app_context(
+    config: LocalAppConfig,
+    migrations: Path,
+    *,
+    cloud_credentials: CloudCredentials | None = None,
+    oidc_claims: Mapping[str, object] | None = None,
+) -> AppContext:
+    if config.runtime.storage_mode == "cloud":
+        if cloud_credentials is None:
+            raise ValueError("Turso credentials are required in cloud mode")
+        if oidc_claims is None:
+            raise ValueError("An authenticated OIDC identity is required in cloud mode")
+        repository = _cached_cloud_repository(
+            cloud_credentials.database_url,
+            str(migrations),
+            _auth_token=cloud_credentials.auth_token,
+        )
+        actor = ResolveAuthenticatedActorService(repository).execute(
+            OidcClaims.from_mapping(oidc_claims, require_expiration=True)
+        )
+        if not config.writes_enabled:
+            actor = Actor(actor.user_id, actor.email, Role.VIEWER)
+        return AppContext(repository, actor)
+
     backend = (
         DatabaseBackend.PYTURSO
         if config.runtime.storage_mode == "local"
         else DatabaseBackend.FAKE_CLOUD
     )
     if config.runtime.storage_mode not in {"local", "fake-cloud"}:
-        raise ValueError("Cloud and sync storage begin in Phase 5")
+        raise ValueError("Sync storage is not enabled; choose local, fake-cloud, or cloud")
     return _cached_context(
         str(config.database_path),
         backend,
@@ -68,3 +101,16 @@ def _cached_context(
         )
     actor_role = Role(configured_role) if writes_enabled else Role.VIEWER
     return AppContext(repository, Actor(UserId(user_id), email, actor_role))
+
+
+@st.cache_resource(show_spinner="Connecting to Turso Cloud…")
+def _cached_cloud_repository(
+    database_url: str,
+    migrations_directory: str,
+    *,
+    _auth_token: str,
+) -> SqlPlateReaderRepository:
+    connection = connect_turso_database(
+        TursoDatabaseConfig(database_url, _auth_token, Path(migrations_directory))
+    )
+    return SqlPlateReaderRepository(connection)

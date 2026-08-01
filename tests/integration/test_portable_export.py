@@ -19,6 +19,7 @@ from plate_reader.infrastructure.database import (
     connect_database,
     export_portable_runs,
     restore_complete_database,
+    restore_complete_database_to_connection,
     validate_portable_file,
 )
 from plate_reader.infrastructure.database.dbapi import Connection
@@ -220,6 +221,27 @@ def test_complete_backup_restore_drill_verifies_every_table(
         restored_sqlite.close()
     with pytest.raises(FileExistsError):
         restore_complete_database(backup, restored, MIGRATIONS)
+
+
+def test_complete_backup_restores_transactionally_to_empty_connection(
+    source: tuple[Connection, SqlPlateReaderRepository], tmp_path: Path
+) -> None:
+    connection, repository = source
+    seed_import(repository)
+    backup = tmp_path / "remote-style-backup.sqlite"
+    backup_complete_database(connection, backup, MIGRATIONS)
+    target = connect_database(
+        DatabaseConfig(tmp_path / "remote-target.sqlite", DatabaseBackend.FAKE_CLOUD, MIGRATIONS)
+    )
+    try:
+        report = restore_complete_database_to_connection(backup, target)
+        assert report.table_counts["growth_measurements"] == 384
+        for table in TABLE_COLUMNS:
+            assert logical_table_hash(connection, table) == logical_table_hash(target, table)
+        with pytest.raises(PortableValidationError, match="not empty"):
+            restore_complete_database_to_connection(backup, target)
+    finally:
+        target.close()
 
 
 def test_complete_restore_rejects_modified_backup_schema(

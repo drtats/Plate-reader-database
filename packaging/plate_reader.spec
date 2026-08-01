@@ -28,6 +28,11 @@ analysis = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     excludes=[
+        "authlib",
+        "cffi",
+        "cryptography",
+        "joserfc",
+        "libsql",
         "matplotlib",
         "pyarrow",
         "pytest",

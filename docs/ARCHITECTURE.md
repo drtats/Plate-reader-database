@@ -11,7 +11,7 @@ One repository will provide three compatible operating modes:
 
 | Mode | UI | Storage | Purpose |
 | --- | --- | --- | --- |
-| Cloud | Streamlit Community Cloud | Turso Cloud through `turso_serverless` | Shared, always-available laboratory database |
+| Cloud | Streamlit Community Cloud | Turso Cloud through the official Python `libsql` driver | Shared, always-available laboratory database |
 | Local server | Streamlit on a workstation, optionally through Cloudflare Tunnel | Local database through `pyturso`, or remote Turso by configuration | Fast local use and private remote access |
 | Standalone | Packaged Streamlit application | Local database through `pyturso` | Offline use and portable distribution |
 
@@ -29,7 +29,7 @@ local-only behavior are independently reliable and conflict rules are tested.
 - Pydantic v2 for validated domain and application data transfer models.
 - Plain numbered SQL migrations and small typed repository implementations.
 - `pyturso` for local/embedded databases.
-- `turso_serverless` for direct cloud access from stateless Streamlit hosting.
+- official Python `libsql` for direct cloud access from stateless Streamlit hosting.
 - `uv` plus `pyproject.toml` and `uv.lock` for reproducible environments.
 - Pytest, Ruff, and mypy for automated checks.
 
@@ -52,7 +52,7 @@ Application services and repository interfaces
     v                    v
 Domain models/logic   Infrastructure adapters
                          |-- local pyturso
-                         |-- cloud turso_serverless
+                         |-- cloud libsql (direct remote)
                          |-- imports/exports
                          `-- filesystem/secrets/logging
 ```

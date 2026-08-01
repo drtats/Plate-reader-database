@@ -3,10 +3,13 @@
 from plate_reader.infrastructure.database.connections import (
     DatabaseBackend,
     DatabaseConfig,
+    TursoDatabaseConfig,
     connect_database,
+    connect_turso_database,
 )
 from plate_reader.infrastructure.database.migrations import Migration, apply_migrations
 from plate_reader.infrastructure.database.portable import (
+    CompleteConnectionRestoreReport,
     CompleteRestoreReport,
     PortableExportReport,
     PortableImportPreview,
@@ -19,11 +22,13 @@ from plate_reader.infrastructure.database.portable import (
     import_portable_file,
     preview_portable_import,
     restore_complete_database,
+    restore_complete_database_to_connection,
     validate_portable_file,
 )
 from plate_reader.infrastructure.database.repository import SqlPlateReaderRepository
 
 __all__ = [
+    "CompleteConnectionRestoreReport",
     "CompleteRestoreReport",
     "DatabaseBackend",
     "DatabaseConfig",
@@ -35,12 +40,15 @@ __all__ = [
     "SqlPlateReaderRepository",
     "SqlitePortableRunExporter",
     "SqlitePortableRunImporter",
+    "TursoDatabaseConfig",
     "apply_migrations",
     "backup_complete_database",
     "connect_database",
+    "connect_turso_database",
     "export_portable_runs",
     "import_portable_file",
     "preview_portable_import",
     "restore_complete_database",
+    "restore_complete_database_to_connection",
     "validate_portable_file",
 ]

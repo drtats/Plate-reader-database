@@ -9,12 +9,13 @@ description = "Modular Streamlit platform for growth-curve and MIC plate-reader 
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "libsql>=0.1,<1",
     "numpy>=2.3,<3",
     "pandas>=2.3,<3",
     "plotly>=6.3,<7",
     "pydantic>=2.11,<3",
     "pyturso>=0.7,<0.8",
-    "streamlit>=1.54,<1.55",
+    "streamlit[auth]>=1.54,<1.55",
 ]
 
 [dependency-groups]
@@ -50,13 +51,16 @@ show_error_codes = true
 pretty = true
 
 [[tool.mypy.overrides]]
-module = ["pandas", "plotly", "plotly.*"]
+module = ["libsql", "pandas", "plotly", "plotly.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=plate_reader --cov-report=term-missing --cov-fail-under=90"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "remote: opt-in test requiring an isolated live Turso database",
+]
 
 [tool.coverage.run]
 branch = true

@@ -24,6 +24,22 @@ def test_smoke_app_renders_in_fake_cloud_mode(
     assert "Fake cloud mode is active" in app.info[0].value
 
 
+def test_cloud_mode_stops_at_login_before_loading_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PLATE_READER_ENV", "production")
+    monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "cloud")
+    monkeypatch.delenv("TURSO_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TURSO_AUTH_TOKEN", raising=False)
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+
+    assert not app.exception
+    assert any("Sign in" in item.value for item in app.info)
+    assert any(button.label == "Sign in" for button in app.button)
+    assert not app.error
+
+
 def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
