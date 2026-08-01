@@ -57,6 +57,11 @@ make check
 make run-local
 ```
 
+On macOS, you can instead double-click `Start Plate Reader.command` in Finder.
+It starts the credential-free fake-cloud app, opens `http://localhost:8501`, and
+stores the working database in the ignored `.data` directory. Keep its Terminal
+window open; press Control-C there to stop the app.
+
 Create or safely re-use a deterministic 13,920-measurement demo run:
 
 ```bash
