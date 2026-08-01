@@ -27,3 +27,4 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0015](0015-restore-growth-overview-and-qc.md): lazy Growth overview and QC
 - [ADR-0016](0016-detect-stale-growth-backgrounds.md): stale Growth background detection
 - [ADR-0017](0017-restore-typed-mic-result-search.md): typed MIC result search and columns
+- [ADR-0018](0018-restore-configurable-mic-visualization.md): configurable MIC visualization

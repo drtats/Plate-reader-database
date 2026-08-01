@@ -266,6 +266,10 @@ def test_mic_ui_import_review_edit_visualize_and_export(
     assert {"Date", "Plate", "Strain", "Antibiotic / treatment", "MIC value"}.issubset(
         set(result_columns.options)
     )
+    assert any(item.label == "Group MIC plot by" for item in app.multiselect)
+    assert any(item.label == "Color MIC plot by" for item in app.selectbox)
+    assert any(item.label == "Shape MIC plot by" for item in app.selectbox)
+    assert next(item for item in app.checkbox if item.label == "Logarithmic MIC axis").value is True
     assert any("MIC Plate 1" in item.value for item in app.markdown)
     click(app, "Render MIC dot plot")
     assert len(app.get("plotly_chart")) == 1

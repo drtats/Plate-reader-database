@@ -68,7 +68,12 @@ from plate_reader.ui.plate_editor import (
     mic_layout_frame_from_snapshot,
     render_plate_editor,
 )
-from plate_reader.ui.plotting import mic_growth_map, mic_plate_heatmap, mic_result_dot_plot
+from plate_reader.ui.plotting import (
+    MicDotPlotOptions,
+    mic_growth_map,
+    mic_plate_heatmap,
+    mic_result_dot_plot,
+)
 from plate_reader.ui.template_controls import render_plate_template_controls
 
 
@@ -792,6 +797,31 @@ def render_mic_results_search(context: AppContext) -> None:
             unsafe_allow_html=True,
         )
     if results:
+        plot_fields = tuple(
+            key
+            for key in field_by_key
+            if key != "mic_value" and any(row.get(key) is not None for row in results)
+        )
+        plot_controls = st.columns(3)
+        group_by = plot_controls[0].multiselect(
+            "Group MIC plot by",
+            plot_fields,
+            default=tuple(key for key in ("treatment", "strain") if key in plot_fields),
+            format_func=lambda key: field_by_key[key].label,
+        )
+        optional_plot_fields = ("None", *plot_fields)
+        color_by = plot_controls[1].selectbox(
+            "Color MIC plot by",
+            optional_plot_fields,
+            index=(optional_plot_fields.index("strain") if "strain" in plot_fields else 0),
+            format_func=lambda key: "None" if key == "None" else field_by_key[key].label,
+        )
+        symbol_by = plot_controls[2].selectbox(
+            "Shape MIC plot by",
+            optional_plot_fields,
+            format_func=lambda key: "None" if key == "None" else field_by_key[key].label,
+        )
+        log_y = st.checkbox("Logarithmic MIC axis", value=True)
         result_indexes = tuple(range(len(results)))
         selected_index = st.selectbox(
             "Select a result to open",
@@ -809,7 +839,16 @@ def render_mic_results_search(context: AppContext) -> None:
             st.rerun()
         result_key = hashlib.sha256(repr(results).encode()).hexdigest()
         if st.button("Render MIC dot plot", type="primary"):
-            st.session_state.mic_result_plot = mic_result_dot_plot(results, result_key)
+            st.session_state.mic_result_plot = mic_result_dot_plot(
+                results,
+                result_key,
+                MicDotPlotOptions(
+                    group_by=tuple(str(value) for value in group_by),
+                    color_by=None if color_by == "None" else str(color_by),
+                    symbol_by=None if symbol_by == "None" else str(symbol_by),
+                    log_y=log_y,
+                ),
+            )
         if figure := st.session_state.get("mic_result_plot"):
             st.plotly_chart(figure, width="stretch")
     previous, next_page = st.columns(2)

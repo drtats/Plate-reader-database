@@ -33,6 +33,14 @@ class GrowthPlotOptions:
             raise ValueError("Y minimum must be less than Y maximum")
 
 
+@dataclass(frozen=True, slots=True)
+class MicDotPlotOptions:
+    group_by: tuple[str, ...] = ("treatment", "strain")
+    color_by: str | None = "strain"
+    symbol_by: str | None = None
+    log_y: bool = True
+
+
 @st.cache_data(show_spinner="Preparing growth curves…")
 def growth_curve_figure(
     plot_data: GrowthPlotData,
@@ -283,20 +291,83 @@ def mic_growth_map(
 
 
 @st.cache_data(show_spinner="Preparing MIC plot…")
-def mic_result_dot_plot(results: Sequence[dict[str, object]], result_key: str) -> go.Figure:
+def mic_result_dot_plot(
+    results: Sequence[dict[str, object]],
+    result_key: str,
+    options: MicDotPlotOptions | None = None,
+) -> go.Figure:
     del result_key
+    options = options or MicDotPlotOptions()
     frame = pd.DataFrame.from_records(results)
     if frame.empty:
         return go.Figure().update_layout(title="No MIC results match the filters")
-    return px.scatter(
-        frame,
-        x="treatment",
-        y="mic_value",
-        color="strain",
-        symbol="mic_operator",
-        hover_data=("medium", "replicate", "mic_unit", "plate_name", "experiment_date"),
-        labels={"treatment": "Treatment", "mic_value": "MIC"},
+    requested_fields = tuple(
+        field
+        for field in (*options.group_by, options.color_by, options.symbol_by)
+        if field is not None
     )
+    missing = tuple(field for field in requested_fields if field not in frame.columns)
+    if missing:
+        raise ValueError(f"MIC plot field(s) are unavailable: {', '.join(missing)}")
+    if options.group_by:
+        group_values = frame[list(options.group_by)].fillna("Unknown").astype(str)
+        frame["_mic_group"] = group_values.agg(" | ".join, axis=1)
+        x_title = " / ".join(options.group_by)
+    else:
+        frame["_mic_group"] = "All data"
+        x_title = "All data"
+    ordered_groups = tuple(dict.fromkeys(str(value) for value in frame["_mic_group"]))
+    group_index = {value: index for index, value in enumerate(ordered_groups)}
+    frame["_mic_group_index"] = [group_index[str(value)] for value in frame["_mic_group"]]
+    frame["_mic_group_jitter"] = [
+        group_index[str(value)] + (((index * 37) % 101) / 100 - 0.5) * 0.45
+        for index, value in enumerate(frame["_mic_group"])
+    ]
+    hover_fields = tuple(
+        dict.fromkeys(
+            (
+                *options.group_by,
+                "mic_operator",
+                "mic_unit",
+                "medium",
+                "replicate",
+                "plate_name",
+                "experiment_date",
+            )
+        )
+    )
+    figure = px.scatter(
+        frame,
+        x="_mic_group_jitter",
+        y="mic_value",
+        color=options.color_by,
+        symbol=options.symbol_by,
+        symbol_sequence=(
+            "circle",
+            "square",
+            "diamond",
+            "cross",
+            "x",
+            "triangle-up",
+            "star",
+            "hexagon",
+        ),
+        hover_data=tuple(field for field in hover_fields if field in frame.columns),
+        labels={"_mic_group_jitter": x_title, "mic_value": "MIC"},
+    )
+    figure.update_traces(marker={"size": 12, "opacity": 0.9, "line": {"width": 1}})
+    figure.update_xaxes(
+        tickmode="array",
+        tickvals=list(range(len(ordered_groups))),
+        ticktext=list(ordered_groups),
+        title=x_title,
+    )
+    if options.log_y and all(float(value) > 0 for value in frame["mic_value"]):
+        figure.update_yaxes(type="log", title="MIC (log scale)")
+    else:
+        figure.update_yaxes(type="linear", title="MIC")
+    figure.update_layout(title="MIC distribution by group")
+    return figure
 
 
 def int_value(value: object) -> int:
