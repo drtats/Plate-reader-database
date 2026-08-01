@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Any
 
 import pandas as pd
@@ -292,6 +293,94 @@ def mic_layout_changes(
     return tuple(result)
 
 
+def growth_template_layout(frame: pd.DataFrame) -> tuple[dict[str, object], ...]:
+    """Serialize editable Growth fields without source-specific raw labels."""
+
+    return tuple(asdict(change) for change in growth_layout_changes(frame))
+
+
+def mic_template_layout(frame: pd.DataFrame) -> tuple[dict[str, object], ...]:
+    """Serialize editable MIC fields without immutable raw OD measurements."""
+
+    return tuple(
+        {key: value for key, value in asdict(change).items() if key != "value_raw"}
+        for change in mic_layout_changes(frame, include_raw=False)
+    )
+
+
+def apply_growth_template(
+    frame: pd.DataFrame, layout: Sequence[Mapping[str, object]]
+) -> pd.DataFrame:
+    """Apply template metadata while preserving the current Growth raw labels."""
+
+    current = normalize_layout_frame(frame).set_index(WELL)
+    by_position = _template_rows(layout)
+    custom_names = sorted(
+        {
+            name
+            for row in by_position.values()
+            for name in _mapping(row.get("custom_fields"))
+            if name != "t0_added_min"
+        }
+    )
+    rows: list[dict[str, object]] = []
+    for position in PLATE_96.positions():
+        saved = by_position[position.label]
+        custom = _mapping(saved.get("custom_fields"))
+        row: dict[str, object] = {
+            WELL: position.label,
+            "Raw label": current.at[position.label, "Raw label"],
+            "Display name": saved.get("display_name") or "",
+            "Blank": bool(saved.get("is_blank")),
+            "Background group": saved.get("background_group") or "plate",
+            "Plot": bool(saved.get("plot_selected")),
+            "Group": saved.get("grouping_label") or "",
+            "Media": saved.get("medium") or "",
+            "Strain": saved.get("strain") or "",
+            "Inoculum size": saved.get("inoculum_size"),
+            "Inoculum unit": saved.get("inoculum_unit") or "",
+            "Replicate": saved.get("replicate") or 1,
+            "Notes": saved.get("notes") or "",
+            "Treatment": saved.get("treatment") or "",
+            "Concentration": saved.get("concentration"),
+            "Concentration unit": saved.get("concentration_unit") or "",
+            "T0 added (min)": custom.get("t0_added_min"),
+        }
+        row.update({name: custom.get(name, "") for name in custom_names})
+        rows.append(row)
+    return pd.DataFrame(rows, columns=(*GROWTH_COLUMNS, *custom_names))
+
+
+def apply_mic_template(frame: pd.DataFrame, layout: Sequence[Mapping[str, object]]) -> pd.DataFrame:
+    """Apply template metadata while preserving the current MIC raw OD values."""
+
+    current = normalize_layout_frame(frame).set_index(WELL)
+    by_position = _template_rows(layout)
+    custom_names = sorted(
+        {name for row in by_position.values() for name in _mapping(row.get("custom_labels"))}
+    )
+    rows: list[dict[str, object]] = []
+    for position in PLATE_96.positions():
+        saved = by_position[position.label]
+        custom = _mapping(saved.get("custom_labels"))
+        row: dict[str, object] = {
+            WELL: position.label,
+            "Raw OD": current.at[position.label, "Raw OD"],
+            "Display name": saved.get("display_name") or "",
+            "Blank": bool(saved.get("is_blank")),
+            "Strain": saved.get("strain") or "",
+            "Antibiotic / treatment": saved.get("treatment") or "",
+            "Concentration": saved.get("concentration"),
+            "Concentration unit": saved.get("concentration_unit") or "",
+            "Media": saved.get("medium") or "",
+            "Replicate": saved.get("replicate") or 1,
+            "Notes": saved.get("notes") or "",
+        }
+        row.update({name: custom.get(name, "") for name in custom_names})
+        rows.append(row)
+    return pd.DataFrame(rows, columns=(*MIC_COLUMNS, *custom_names))
+
+
 def normalize_layout_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if WELL not in frame:
         raise ValueError("The layout table is missing its Well column")
@@ -303,6 +392,14 @@ def normalize_layout_frame(frame: pd.DataFrame) -> pd.DataFrame:
     order = {well: index for index, well in enumerate(expected)}
     normalized["__order"] = normalized[WELL].map(order)
     return normalized.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+
+
+def replace_editor_frame(state_key: str, frame: pd.DataFrame) -> None:
+    """Replace a staged editor frame and invalidate both synchronized widgets."""
+
+    revision_key = f"{state_key}_revision"
+    st.session_state[state_key] = normalize_layout_frame(frame)
+    st.session_state[revision_key] = int(st.session_state.get(revision_key, 0)) + 1
 
 
 def render_plate_editor(
@@ -475,8 +572,7 @@ def _fill_value_widget(  # pragma: no cover - Streamlit widget composition
 def _replace_frame(  # pragma: no cover - Streamlit widget composition
     state_key: str, revision_key: str, frame: pd.DataFrame
 ) -> None:
-    st.session_state[state_key] = normalize_layout_frame(frame)
-    st.session_state[revision_key] = int(st.session_state[revision_key]) + 1
+    replace_editor_frame(state_key, frame)
     st.rerun()
 
 
@@ -518,6 +614,24 @@ def _custom_values(row: Mapping[str, object], columns: Sequence[str]) -> dict[st
         for column in columns
         if (value := row[column]) is not None and not _is_missing(value) and str(value) != ""
     }
+
+
+def _template_rows(
+    layout: Sequence[Mapping[str, object]],
+) -> dict[str, Mapping[str, object]]:
+    expected = {position.label for position in PLATE_96.positions()}
+    by_position = {str(row.get("position", "")): row for row in layout}
+    if len(layout) != 96 or set(by_position) != expected:
+        raise ValueError("A plate template must contain each A1-H12 position exactly once")
+    return by_position
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("Template custom fields must be a JSON object")
+    return value
 
 
 def _json_object(value: object) -> dict[str, object]:

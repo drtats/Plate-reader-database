@@ -12,6 +12,7 @@ import streamlit as st
 
 from plate_reader import __version__
 from plate_reader.application.contracts import (
+    AssayType,
     ComputeMicRevision,
     ExportPortableRun,
     ImportMicPlate,
@@ -62,6 +63,7 @@ from plate_reader.ui.plate_editor import (
     render_plate_editor,
 )
 from plate_reader.ui.plotting import mic_growth_map, mic_plate_heatmap, mic_result_dot_plot
+from plate_reader.ui.template_controls import render_plate_template_controls
 
 
 def render_mic_library(context: AppContext) -> None:
@@ -113,7 +115,7 @@ def render_mic_wizard(context: AppContext, *, allow_local_path: bool) -> None:
     elif step == 3:
         _mic_metadata_step()
     elif step == 4:
-        _mic_layout_step()
+        _mic_layout_step(context)
     else:
         _mic_commit_step(context)
 
@@ -253,7 +255,7 @@ def _mic_metadata_step() -> None:
         _mic_previous()
 
 
-def _mic_layout_step() -> None:
+def _mic_layout_step(context: AppContext) -> None:
     st.subheader("4. Review and optionally edit the layout")
     if os.environ.get("PLATE_READER_ENV", "").casefold() == "test":
         # AppTest retains the prior form nodes for one turn; keep their keyed state alive.
@@ -282,6 +284,12 @@ def _mic_layout_step() -> None:
             st.text_area("Notes", value=str(metadata["notes"] or ""), key="mic_metadata_notes")
     wells = parse_mic_plate_csv(st.session_state.mic_csv_text)
     frame = render_plate_editor(mic_layout_frame(wells), state_key="mic_layout_frame", assay="mic")
+    render_plate_template_controls(
+        context,
+        assay_type=AssayType.MIC,
+        frame=frame,
+        state_key="mic_layout_frame",
+    )
     if st.button("Accept MIC layout and continue", type="primary"):
         try:
             changes = mic_layout_changes(frame)
@@ -529,6 +537,12 @@ def _render_mic_layout(context: AppContext, plate_id: PlateId, view: MicPlateVie
         state_key=state_key,
         assay="mic",
         immutable_columns=("Raw OD",),
+    )
+    render_plate_template_controls(
+        context,
+        assay_type=AssayType.MIC,
+        frame=frame,
+        state_key=state_key,
     )
     if st.button("Save full MIC layout", type="primary"):
         try:

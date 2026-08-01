@@ -22,6 +22,12 @@ Background subtraction creates a versioned analysis revision. Select a bounded
 set of wells before rendering curves. Export produces a checksummed standard
 SQLite artifact containing the selected plate and current revisions.
 
+Both import and saved-run layout editors include **Reusable plate templates**.
+Any signed-in user can apply a Growth template to the staged 96-well layout;
+administrators can save, overwrite, and delete templates. Applying one never
+replaces labels imported from the source file, and it reaches the database only
+after the normal commit or full-layout save.
+
 ## MIC plates
 
 Open **New MIC Plate** and supply long-format CSV with `well_position` and
@@ -33,6 +39,10 @@ Use **MIC Plate Library** or **MIC Results** for bounded, server-side search. Th
 workspace shows raw OD and growth-call maps, result groups, revisions, review
 state, lifecycle controls, export, and provenance. Changing threshold or well
 layout creates a new MIC revision and preserves raw values.
+
+MIC uses the same reusable-template controls. Templates carry editable well
+metadata and custom columns, never raw OD readings. Applying one is staged until
+the normal MIC commit or full-layout save.
 
 ## Portable transfer
 
@@ -52,7 +62,8 @@ for disaster recovery.
 - Viewer: search, inspect, plot, preview portable data, and export.
 - Editor: viewer actions plus imports, metadata/layout edits, revisions, and
   manual review state.
-- Admin: editor actions plus lock, soft delete/restore, and user administration.
+- Admin: editor actions plus template management, lock, soft delete/restore, and
+  user administration.
 
 Deletion is soft. Locked MIC plates cannot be deleted. If an operation fails,
 copy the diagnostic ID shown in the UI before contacting an administrator.

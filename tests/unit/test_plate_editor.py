@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import pytest
+
 from plate_reader.application.demo import synthetic_mic_csv
 from plate_reader.domain.mic import parse_mic_plate_csv
 from plate_reader.ui.plate_editor import (
+    apply_growth_template,
+    apply_mic_template,
     apply_plate_matrix,
     fill_layout,
     growth_layout_changes,
     growth_layout_frame,
     growth_layout_frame_from_wells,
+    growth_template_layout,
     mic_layout_changes,
     mic_layout_frame,
     mic_layout_frame_from_snapshot,
+    mic_template_layout,
     plate_matrix,
 )
 
@@ -199,3 +205,52 @@ def test_persisted_mic_layout_rehydrates_and_omits_immutable_raw_updates() -> No
     assert change.value_raw is None
     assert change.notes == "saved note"
     assert change.custom_labels == {"Oxygen": "low"}
+
+
+def test_growth_template_round_trip_preserves_target_raw_labels() -> None:
+    source = growth_layout_frame({"A1": "source raw"})
+    source["Oxygen"] = ""
+    source.loc[0, "Display name"] = "template name"
+    source.loc[0, "Strain"] = "template strain"
+    source.loc[0, "T0 added (min)"] = 7.5
+    source.loc[0, "Oxygen"] = "low"
+
+    layout = growth_template_layout(source)
+    target = growth_layout_frame({"A1": "new imported raw", "B2": "another raw"})
+    applied = apply_growth_template(target, layout)
+
+    assert len(layout) == 96
+    assert "raw_label" not in layout[0]
+    assert applied.loc[0, "Raw label"] == "new imported raw"
+    assert applied.loc[0, "Display name"] == "template name"
+    assert applied.loc[0, "Strain"] == "template strain"
+    assert applied.loc[0, "T0 added (min)"] == 7.5
+    assert applied.loc[0, "Oxygen"] == "low"
+    assert applied.loc[13, "Raw label"] == "another raw"
+
+
+def test_mic_template_round_trip_preserves_target_raw_od() -> None:
+    source = mic_layout_frame(parse_mic_plate_csv(synthetic_mic_csv()))
+    source["Oxygen"] = ""
+    source.loc[0, "Raw OD"] = 0.111
+    source.loc[0, "Strain"] = "template strain"
+    source.loc[0, "Oxygen"] = "anaerobic"
+    layout = mic_template_layout(source)
+
+    target = mic_layout_frame(parse_mic_plate_csv(synthetic_mic_csv()))
+    target.loc[0, "Raw OD"] = 0.987
+    applied = apply_mic_template(target, layout)
+
+    assert len(layout) == 96
+    assert "value_raw" not in layout[0]
+    assert applied.loc[0, "Raw OD"] == 0.987
+    assert applied.loc[0, "Strain"] == "template strain"
+    assert applied.loc[0, "Oxygen"] == "anaerobic"
+
+
+def test_applying_incomplete_template_is_rejected() -> None:
+    frame = growth_layout_frame()
+    with pytest.raises(ValueError, match="each A1-H12"):
+        apply_growth_template(frame, ({"position": "A1"},))
+    with pytest.raises(ValueError, match="each A1-H12"):
+        apply_mic_template(frame, ({"position": "A1"},))

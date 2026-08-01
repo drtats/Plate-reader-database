@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -70,6 +71,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     input_named(app, "Experiment name").set_value("UI workflow experiment")
     click(app, "Save metadata and continue")
     assert app.subheader[0].value == "4. Review the 96-well layout"
+    assert any(button.label == "Apply selected template" for button in app.button)
     click(app, "Accept layout and continue")
     assert app.subheader[0].value == "5. Review and commit"
     click(app, "Commit growth run")
@@ -178,6 +180,7 @@ def test_mic_ui_import_review_edit_visualize_and_export(
     click(app, "Save MIC metadata and continue")
     assert app.subheader[0].value == "4. Review and optionally edit the layout"
     app.run()  # Drop stale rich-form widgets retained by Streamlit AppTest.
+    assert any(button.label == "Apply selected template" for button in app.button)
     click(app, "Accept MIC layout and continue")
     assert app.subheader[0].value == "5. Review and commit"
     click(app, "Commit MIC plate")
@@ -304,6 +307,20 @@ def test_admin_mic_lock_and_soft_delete_ui(monkeypatch: pytest.MonkeyPatch, tmp_
     input_named(app, "MIC experiment name").set_value("Admin MIC")
     click(app, "Save MIC metadata and continue")
     app.run()  # Drop stale rich-form widgets retained by Streamlit AppTest.
+    input_named(app, "New template name").set_value("Admin MIC template")
+    click(app, "Save current layout as new template")
+    with sqlite3.connect(database_path) as database:
+        template_id, template_name, assay_type, layout_json = database.execute(
+            "SELECT template_id, template_name, assay_type, layout_json FROM plate_templates"
+        ).fetchone()
+    layout = json.loads(layout_json)
+    assert (template_name, assay_type, len(layout)) == ("Admin MIC template", "mic", 96)
+    assert all("value_raw" not in row for row in layout)
+    next(item for item in app.selectbox if item.label == "Saved template").set_value(
+        template_id
+    ).run()
+    click(app, "Apply selected template")
+    assert any("Applied template: Admin MIC template" in item.value for item in app.success)
     click(app, "Accept MIC layout and continue")
     click(app, "Commit MIC plate")
 

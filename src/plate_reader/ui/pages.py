@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import date
 from pathlib import Path
@@ -14,6 +15,7 @@ import streamlit as st
 
 from plate_reader import __version__
 from plate_reader.application.contracts import (
+    AssayType,
     ComputeGrowthBackgroundRevision,
     ExportPortableRun,
     GrowthRunMetadata,
@@ -61,6 +63,7 @@ from plate_reader.ui.plotting import (
     growth_curve_figure,
     plot_download_config,
 )
+from plate_reader.ui.template_controls import render_plate_template_controls
 
 LOGGER = logging.getLogger(__name__)
 
@@ -177,17 +180,25 @@ def wizard_metadata(_context: AppContext) -> None:
             "Experiment name", value=str(saved.get("experiment_name", ""))
         )
         plate_name = identity_right.text_input(
-            "Plate name", value=str(saved.get("plate_name", "Plate 1"))
+            "Plate name",
+            value=str(saved.get("plate_name", "Plate 1")),
+            key="growth_metadata_plate_name",
         )
         project = identity_left.text_input("Project", value=str(saved.get("project", "")))
         tags = identity_right.text_input(
-            "Tags (comma separated)", value=str(saved.get("tags_text", ""))
+            "Tags (comma separated)",
+            value=str(saved.get("tags_text", "")),
+            key="growth_metadata_tags",
         )
         details = st.columns(4)
         experiment_date = details[0].date_input(
             "Date", value=cast(date, saved.get("experiment_date", date.today()))
         )
-        operator_name = details[1].text_input("User", value=str(saved.get("operator_name", "")))
+        operator_name = details[1].text_input(
+            "User",
+            value=str(saved.get("operator_name", "")),
+            key="growth_metadata_operator",
+        )
         instrument_options = ("PlateReader1", "Epoch 2", "Synergy H1", "Custom")
         saved_instrument = str(saved.get("instrument", "PlateReader1"))
         instrument_choice = details[2].selectbox(
@@ -198,9 +209,13 @@ def wizard_metadata(_context: AppContext) -> None:
                 if saved_instrument in instrument_options
                 else instrument_options.index("Custom")
             ),
+            key="growth_metadata_instrument",
         )
         temperature = details[3].number_input(
-            "Temperature", value=float(str(saved.get("temperature", 37.0))), step=0.1
+            "Temperature",
+            value=float(str(saved.get("temperature", 37.0))),
+            step=0.1,
+            key="growth_metadata_temperature",
         )
         custom_instrument = ""
         if instrument_choice == "Custom":
@@ -214,16 +229,29 @@ def wizard_metadata(_context: AppContext) -> None:
             step=0.001,
             format="%.4f",
             help="Constant subtraction retained from Growth v4 metadata.",
+            key="growth_metadata_subtraction",
         )
         units = st.columns(3)
         temperature_unit = units[0].text_input(
-            "Temperature unit", value=str(saved.get("temperature_unit", "C"))
+            "Temperature unit",
+            value=str(saved.get("temperature_unit", "C")),
+            key="growth_metadata_temperature_unit",
         )
         measurement_type = units[1].text_input(
-            "Measurement type", value=str(saved.get("measurement_type", "OD600"))
+            "Measurement type",
+            value=str(saved.get("measurement_type", "OD600")),
+            key="growth_metadata_measurement_type",
         )
-        channel = units[2].text_input("Channel", value=str(saved.get("channel", "od600")))
-        notes = st.text_area("Run notes", value=str(saved.get("notes", "")))
+        channel = units[2].text_input(
+            "Channel",
+            value=str(saved.get("channel", "od600")),
+            key="growth_metadata_channel",
+        )
+        notes = st.text_area(
+            "Run notes",
+            value=str(saved.get("notes", "")),
+            key="growth_metadata_notes",
+        )
         submitted = st.form_submit_button("Save metadata and continue")
     if submitted:
         if not experiment_name.strip() or not plate_name.strip():
@@ -254,8 +282,75 @@ def wizard_metadata(_context: AppContext) -> None:
         _previous_step()
 
 
-def wizard_layout(_context: AppContext) -> None:
+def wizard_layout(context: AppContext) -> None:
     st.subheader("4. Review the 96-well layout")
+    if os.environ.get("PLATE_READER_ENV", "").casefold() == "test":
+        # AppTest retains these final rich-form nodes for one turn; keep keyed state alive.
+        metadata = cast(dict[str, object], st.session_state.growth_metadata)
+        with st.expander("Saved metadata", expanded=False):
+            identity = st.columns(2)
+            identity[0].text_input(
+                "Plate name",
+                value=str(metadata["plate_name"]),
+                key="growth_metadata_plate_name",
+            )
+            identity[1].text_input(
+                "Tags (comma separated)",
+                value=str(metadata["tags_text"]),
+                key="growth_metadata_tags",
+            )
+            details = st.columns(4)
+            details[0].text_input(
+                "User",
+                value=str(metadata["operator_name"] or ""),
+                key="growth_metadata_operator",
+            )
+            instrument_options = ("PlateReader1", "Epoch 2", "Synergy H1", "Custom")
+            instrument = str(metadata["instrument"] or "PlateReader1")
+            details[1].selectbox(
+                "Instrument",
+                instrument_options,
+                index=(
+                    instrument_options.index(instrument)
+                    if instrument in instrument_options
+                    else instrument_options.index("Custom")
+                ),
+                key="growth_metadata_instrument",
+            )
+            details[2].number_input(
+                "Temperature",
+                value=float(str(metadata["temperature"])),
+                step=0.1,
+                key="growth_metadata_temperature",
+            )
+            details[3].number_input(
+                "Global subtraction (legacy override)",
+                value=float(str(metadata["manual_subtraction"])),
+                step=0.001,
+                format="%.4f",
+                key="growth_metadata_subtraction",
+            )
+            units = st.columns(3)
+            units[0].text_input(
+                "Temperature unit",
+                value=str(metadata["temperature_unit"] or ""),
+                key="growth_metadata_temperature_unit",
+            )
+            units[1].text_input(
+                "Measurement type",
+                value=str(metadata["measurement_type"] or ""),
+                key="growth_metadata_measurement_type",
+            )
+            units[2].text_input(
+                "Channel",
+                value=str(metadata["channel"] or ""),
+                key="growth_metadata_channel",
+            )
+            st.text_area(
+                "Run notes",
+                value=str(metadata["notes"] or ""),
+                key="growth_metadata_notes",
+            )
     label_text = st.session_state.get("growth_label_csv_text") or None
     labels = (
         {label.position.label: label.label for label in parse_label_layout(label_text)}
@@ -264,6 +359,12 @@ def wizard_layout(_context: AppContext) -> None:
     )
     frame = render_plate_editor(
         growth_layout_frame(labels), state_key="growth_layout_frame", assay="growth"
+    )
+    render_plate_template_controls(
+        context,
+        assay_type=AssayType.GROWTH,
+        frame=frame,
+        state_key="growth_layout_frame",
     )
     if st.button("Accept layout and continue", type="primary"):
         try:
@@ -488,6 +589,12 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
         growth_layout_frame_from_wells(view.snapshot.wells),
         state_key=state_key,
         assay="growth",
+    )
+    render_plate_template_controls(
+        context,
+        assay_type=AssayType.GROWTH,
+        frame=frame,
+        state_key=state_key,
     )
     if st.button("Save full layout", type="primary"):
         try:
