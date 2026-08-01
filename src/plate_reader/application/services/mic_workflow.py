@@ -66,6 +66,8 @@ class MicWorkflowRepository(Protocol):
         changes: dict[str, object],
     ) -> str: ...
 
+    def replace_experiment_tags(self, experiment_id: ExperimentId, tags: Sequence[str]) -> None: ...
+
     def update_well_layout(
         self, plate_id: PlateId, changes: Sequence[dict[str, object]]
     ) -> None: ...
@@ -176,7 +178,18 @@ class UpdateMicMetadataService:
             {
                 "name": command.experiment_name,
                 "project": command.project,
+                "experiment_date": (
+                    command.experiment_date.isoformat() if command.experiment_date else None
+                ),
+                "operator_name": command.operator_name,
+                "reader": command.reader,
+                "incubation_time_hours": command.incubation_time_hours,
+                "inoculum_od": command.inoculum_od,
+                "growth_phase": command.growth_phase,
+                "harvest_od": command.harvest_od,
+                "doubling_time_minutes": command.doubling_time_minutes,
                 "notes": command.notes,
+                "custom_json": command.experiment_custom_json,
             }
         )
         plate_changes = _present(
@@ -184,10 +197,11 @@ class UpdateMicMetadataService:
                 "plate_name": command.plate_name,
                 "instrument": command.instrument,
                 "threshold": command.threshold,
+                "custom_json": command.plate_custom_json,
                 "lifecycle_status": command.lifecycle_status,
             }
         )
-        if not experiment_changes and not plate_changes:
+        if not experiment_changes and not plate_changes and command.tags is None:
             raise ValueError("At least one MIC metadata field must be changed")
         experiment_id = ExperimentId(str(snapshot.metadata["experiment_id"]))
         with self.repository.transaction():
@@ -197,6 +211,8 @@ class UpdateMicMetadataService:
                     str(snapshot.metadata["experiment_updated_at"]),
                     experiment_changes,
                 )
+            if command.tags is not None:
+                self.repository.replace_experiment_tags(experiment_id, command.tags)
             self.repository.update_plate_metadata(
                 command.plate_id, command.expected_updated_at, plate_changes
             )
@@ -225,6 +241,7 @@ class UpdateMicMetadataService:
                     "details_json": {
                         "experiment_fields": sorted(experiment_changes),
                         "plate_fields": sorted(plate_changes),
+                        "tags_replaced": command.tags is not None,
                         "revision_id": revision_id,
                     },
                 }

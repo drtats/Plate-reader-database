@@ -12,6 +12,11 @@
       "date": "2026-08-01",
       "adr": "docs/adr/0011-restore-rich-import-metadata-and-layout.md",
       "reason": "Add rich Growth metadata and lossless Growth/MIC well-layout fields required by the frozen legacy behavior contract."
+    },
+    {
+      "date": "2026-08-01",
+      "adr": "docs/adr/0012-complete-backend-parity-before-ui-work.md",
+      "reason": "Complete additive metadata-update contracts for backend parity while deferring further UI changes."
     }
   ],
   "sha256": {
@@ -20,7 +25,7 @@
     "docs/contracts/PORTABLE_FORMAT_V1.md": "508bc77458eb751652bad9ded94bd6429530a1ca7fff4fe98e3237dd00245b86",
     "docs/contracts/SCHEMA_V1.md": "d74e546d17ba0c72b8acfdd44ee5f4b2c73f968b2207c16943d535b88ed5e8c3",
     "migrations/0001_schema_v1.sql": "06b028cb32df87d36f734a5d69caa3133d95d05f85b4a4ad766e8284003bb27b",
-    "src/plate_reader/application/contracts.py": "07e8a6e3b6eaaf43408e133f792e85ea555d38c79c9d18950233f6e4181dc218",
+    "src/plate_reader/application/contracts.py": "0c7a4b554f8c3c56fdc6149bd618e2dd9e82fe10bacbf801a26c74188cfcf19e",
     "src/plate_reader/application/ports/repositories.py": "fbaffafb06bd2a984df3bcad7bd0b36f74eea09d6318f561706fcff3a2ef4fd0",
     "tests/fixtures/golden/growth_background_edge_cases.json": "5b9497bf40f6d985e8cbfa6aa5dcefb06cf01cfb1d53ea0b65c40de0191c9798",
     "tests/fixtures/golden/growth_backgrounds.json": "79971bdd40cd6297681df6aaa668e3f0add8bc415e40b25fcfac0c0019aa9c33",

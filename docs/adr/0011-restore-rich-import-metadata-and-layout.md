@@ -1,6 +1,6 @@
 # ADR-0011: Restore rich import metadata and dual-view plate editing
 
-- Status: accepted
+- Status: superseded in part by ADR-0012 (UI decision only)
 - Date: 2026-08-01
 - Owners: integration owner
 

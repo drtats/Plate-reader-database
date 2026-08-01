@@ -65,6 +65,8 @@ class GrowthWorkflowRepository(Protocol):
         changes: dict[str, object],
     ) -> str: ...
 
+    def replace_experiment_tags(self, experiment_id: ExperimentId, tags: Sequence[str]) -> None: ...
+
     def update_well_layout(
         self, plate_id: PlateId, changes: Sequence[dict[str, object]]
     ) -> None: ...
@@ -161,16 +163,38 @@ class UpdateGrowthMetadataService:
         actor_id = require_role(self.repository, command.actor, {Role.EDITOR, Role.ADMIN})
         snapshot = _growth_snapshot(self.repository, command.plate_id)
         experiment_changes = _present_values(
-            {"name": command.experiment_name, "project": command.project, "notes": command.notes}
+            {
+                "name": command.experiment_name,
+                "project": command.project,
+                "experiment_date": (
+                    command.experiment_date.isoformat() if command.experiment_date else None
+                ),
+                "operator_name": command.operator_name,
+                "notes": command.notes,
+                "custom_json": command.experiment_custom_json,
+            }
         )
         plate_changes = _present_values(
             {
                 "plate_name": command.plate_name,
                 "instrument": command.instrument,
+                "channel": command.channel,
+                "temperature": command.temperature,
+                "temperature_unit": command.temperature_unit,
+                "manual_subtraction": command.manual_subtraction,
+                "custom_json": command.plate_custom_json,
                 "lifecycle_status": command.lifecycle_status,
             }
         )
-        if not experiment_changes and not plate_changes:
+        if command.measurement_type is not None:
+            plate_custom = _json_mapping(
+                command.plate_custom_json
+                if command.plate_custom_json is not None
+                else snapshot.metadata.get("plate_custom_json", {})
+            )
+            plate_custom["measurement_type"] = command.measurement_type
+            plate_changes["custom_json"] = plate_custom
+        if not experiment_changes and not plate_changes and command.tags is None:
             raise ValueError("At least one metadata field must be changed")
         experiment_id = ExperimentId(str(snapshot.metadata["experiment_id"]))
         with self.repository.transaction():
@@ -180,6 +204,8 @@ class UpdateGrowthMetadataService:
                     str(snapshot.metadata["experiment_updated_at"]),
                     experiment_changes,
                 )
+            if command.tags is not None:
+                self.repository.replace_experiment_tags(experiment_id, command.tags)
             self.repository.update_plate_metadata(
                 command.plate_id, command.expected_updated_at, plate_changes
             )
@@ -192,6 +218,7 @@ class UpdateGrowthMetadataService:
                     "details_json": {
                         "experiment_fields": sorted(experiment_changes),
                         "plate_fields": sorted(plate_changes),
+                        "tags_replaced": command.tags is not None,
                     },
                 }
             )
@@ -401,7 +428,23 @@ def _record_values(record: WellLayoutChange) -> dict[str, object]:
         "concentration": record.concentration,
         "concentration_unit": record.concentration_unit,
         "replicate": record.replicate,
+        "plot_selected": record.plot_selected,
+        "notes": record.notes,
+        "grouping_label": record.grouping_label,
+        "inoculum_size": record.inoculum_size,
+        "inoculum_unit": record.inoculum_unit,
+        "custom_json": record.custom_fields,
     }
+
+
+def _json_mapping(value: object) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        return {str(key): item for key, item in value.items()}
+    if isinstance(value, str):
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return {str(key): item for key, item in parsed.items()}
+    raise ValueError("Expected a JSON object")
 
 
 def _background_input_hash(snapshot: PlateSnapshot) -> str:

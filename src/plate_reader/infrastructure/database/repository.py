@@ -366,6 +366,16 @@ class SqlPlateReaderRepository:
             raise ConcurrencyConflictError(f"Experiment changed since {expected_updated_at}")
         return timestamp
 
+    def replace_experiment_tags(self, experiment_id: ExperimentId, tags: Sequence[str]) -> None:
+        normalized = _string_sequence(tags)
+        self.connection.execute(
+            "DELETE FROM experiment_tags WHERE experiment_id = ?", (experiment_id,)
+        )
+        self.connection.executemany(
+            "INSERT INTO experiment_tags(experiment_id, tag) VALUES (?, ?)",
+            ((experiment_id, tag) for tag in normalized),
+        )
+
     def update_well_layout(self, plate_id: PlateId, changes: Sequence[dict[str, object]]) -> None:
         well_allowed = {
             "raw_label",
@@ -640,7 +650,8 @@ class SqlPlateReaderRepository:
 
     def load_plate(self, plate_id: PlateId) -> PlateSnapshot | None:
         metadata_cursor = self.connection.execute(
-            "SELECT e.*, p.*, e.updated_at AS experiment_updated_at "
+            "SELECT e.*, p.*, e.updated_at AS experiment_updated_at, "
+            "e.custom_json AS experiment_custom_json, p.custom_json AS plate_custom_json "
             "FROM plates p JOIN experiments e "
             "ON e.experiment_id = p.experiment_id WHERE p.plate_id = ?",
             (plate_id,),
@@ -649,6 +660,14 @@ class SqlPlateReaderRepository:
         if metadata_row is None:
             return None
         metadata = _row_dict(metadata_cursor, metadata_row)
+        metadata["tags"] = tuple(
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT tag FROM experiment_tags WHERE experiment_id = ? "
+                "ORDER BY tag COLLATE NOCASE",
+                (metadata["experiment_id"],),
+            ).fetchall()
+        )
         wells = _all_dicts(
             self.connection.execute(
                 "SELECT w.*, wc.strain, wc.medium, wc.replicate, wc.inoculum_size, "

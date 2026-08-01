@@ -122,7 +122,20 @@ def test_metadata_and_layout_edits_preserve_flags_methods_and_raw(
             experiment_name="Renamed MIC experiment",
             plate_name="Renamed MIC plate",
             project="MIC project",
+            experiment_date=date(2026, 3, 4),
+            tags=("mic", "reviewed"),
+            operator_name="Researcher C",
+            reader="Synergy H1",
+            incubation_time_hours=20,
+            inoculum_od=0.01,
+            growth_phase="Exponential",
+            harvest_od=0.5,
+            doubling_time_minutes=32,
+            instrument="Synergy H1",
+            notes="Complete MIC metadata",
             threshold=0.12,
+            experiment_custom_json={"batch": "M2"},
+            plate_custom_json={"sealed": True},
             lifecycle_status=LifecycleStatus.FINAL,
         )
     )
@@ -130,6 +143,19 @@ def test_metadata_and_layout_edits_preserve_flags_methods_and_raw(
     assert metadata_view.snapshot.metadata["name"] == "Renamed MIC experiment"
     assert metadata_view.snapshot.metadata["plate_name"] == "Renamed MIC plate"
     assert metadata_view.snapshot.metadata["project"] == "MIC project"
+    assert metadata_view.snapshot.metadata["experiment_date"] == "2026-03-04"
+    assert metadata_view.snapshot.metadata["tags"] == ("mic", "reviewed")
+    assert metadata_view.snapshot.metadata["operator_name"] == "Researcher C"
+    assert metadata_view.snapshot.metadata["reader"] == "Synergy H1"
+    assert metadata_view.snapshot.metadata["incubation_time_hours"] == 20.0
+    assert metadata_view.snapshot.metadata["inoculum_od"] == 0.01
+    assert metadata_view.snapshot.metadata["growth_phase"] == "Exponential"
+    assert metadata_view.snapshot.metadata["harvest_od"] == 0.5
+    assert metadata_view.snapshot.metadata["doubling_time_minutes"] == 32.0
+    assert metadata_view.snapshot.metadata["instrument"] == "Synergy H1"
+    assert metadata_view.snapshot.metadata["notes"] == "Complete MIC metadata"
+    assert metadata_view.snapshot.metadata["experiment_custom_json"] == '{"batch":"M2"}'
+    assert metadata_view.snapshot.metadata["plate_custom_json"] == '{"sealed":true}'
     assert metadata_view.snapshot.metadata["plate_format"] == 96
     assert metadata_view.snapshot.metadata["threshold_method"] == "fixed"
     assert metadata_view.snapshot.metadata["background_method"] == "average_blanks"

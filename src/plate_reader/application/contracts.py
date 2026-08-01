@@ -131,9 +131,20 @@ class UpdateMicMetadata:
     experiment_name: str | None = None
     plate_name: str | None = None
     project: str | None = None
+    experiment_date: date | None = None
+    tags: tuple[str, ...] | None = None
+    operator_name: str | None = None
+    reader: str | None = None
+    incubation_time_hours: float | None = None
+    inoculum_od: float | None = None
+    growth_phase: str | None = None
+    harvest_od: float | None = None
+    doubling_time_minutes: float | None = None
     instrument: str | None = None
     notes: str | None = None
     threshold: float | None = None
+    experiment_custom_json: dict[str, object] | None = None
+    plate_custom_json: dict[str, object] | None = None
     lifecycle_status: LifecycleStatus | None = None
 
 
@@ -180,8 +191,18 @@ class UpdatePlateMetadata:
     experiment_name: str | None = None
     plate_name: str | None = None
     project: str | None = None
+    experiment_date: date | None = None
+    tags: tuple[str, ...] | None = None
+    operator_name: str | None = None
     instrument: str | None = None
+    channel: str | None = None
+    temperature: float | None = None
+    temperature_unit: str | None = None
+    measurement_type: str | None = None
+    manual_subtraction: float | None = None
     notes: str | None = None
+    experiment_custom_json: dict[str, object] | None = None
+    plate_custom_json: dict[str, object] | None = None
     lifecycle_status: LifecycleStatus | None = None
 
 

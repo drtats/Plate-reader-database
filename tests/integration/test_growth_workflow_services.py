@@ -100,6 +100,33 @@ def test_growth_workflow_rejects_empty_stale_or_unsupported_requests(
         LoadGrowthRunService(repository).cache_token(ACTOR, PlateId("missing"))
 
 
+def test_measurement_type_merges_with_stored_plate_custom_metadata(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = import_run(repository)
+    initial = repository.load_plate(plate_id)
+    assert initial is not None
+    with_custom_metadata = UpdateGrowthMetadataService(repository).execute(
+        UpdatePlateMetadata(
+            ACTOR,
+            plate_id,
+            str(initial.metadata["updated_at"]),
+            plate_custom_json={"lid": True},
+        )
+    )
+
+    updated = UpdateGrowthMetadataService(repository).execute(
+        UpdatePlateMetadata(
+            ACTOR,
+            plate_id,
+            str(with_custom_metadata.metadata["updated_at"]),
+            measurement_type="OD600",
+        )
+    )
+
+    assert updated.metadata["plate_custom_json"] == '{"lid":true,"measurement_type":"OD600"}'
+
+
 def test_metadata_layout_background_search_load_and_export(
     repository: SqlPlateReaderRepository, tmp_path: Path
 ) -> None:
@@ -117,8 +144,18 @@ def test_metadata_layout_background_search_load_and_export(
             experiment_name="Updated experiment",
             plate_name="Updated plate",
             project="Growth project",
+            experiment_date=date(2026, 2, 3),
+            tags=("kinetics", "priority"),
+            operator_name="Researcher B",
             instrument="Synthetic reader",
+            channel="OD600",
+            temperature=35.5,
+            temperature_unit="C",
+            measurement_type="OD600",
+            manual_subtraction=0.012,
             notes="Saved explicitly",
+            experiment_custom_json={"batch": "B2"},
+            plate_custom_json={"lid": True},
             lifecycle_status=LifecycleStatus.FINAL,
         )
     )
@@ -132,7 +169,17 @@ def test_metadata_layout_background_search_load_and_export(
             changes=(
                 WellLayoutChange(position="A1", is_blank=True, background_group="plate"),
                 WellLayoutChange(position="A2", is_blank=True, background_group="plate"),
-                WellLayoutChange(position="B1", strain="strain-b", replicate=2),
+                WellLayoutChange(
+                    position="B1",
+                    strain="strain-b",
+                    replicate=2,
+                    plot_selected=True,
+                    notes="important well",
+                    grouping_label="condition-b",
+                    inoculum_size=0.02,
+                    inoculum_unit="OD600",
+                    custom_fields={"oxygen": "low", "t0_added_min": 5.0},
+                ),
             ),
         )
     )
@@ -152,9 +199,34 @@ def test_metadata_layout_background_search_load_and_export(
     assert str(layout.metadata["name"]) == "Updated experiment"
     assert str(layout.metadata["plate_name"]) == "Updated plate"
     assert str(layout.metadata["project"]) == "Growth project"
+    assert str(layout.metadata["experiment_date"]) == "2026-02-03"
+    assert layout.metadata["tags"] == ("kinetics", "priority")
+    assert str(layout.metadata["operator_name"]) == "Researcher B"
     assert str(layout.metadata["instrument"]) == "Synthetic reader"
+    assert str(layout.metadata["channel"]) == "OD600"
+    assert layout.metadata["temperature"] == 35.5
+    assert layout.metadata["temperature_unit"] == "C"
+    assert layout.metadata["manual_subtraction"] == 0.012
+    assert layout.metadata["experiment_custom_json"] == '{"batch":"B2"}'
+    assert layout.metadata["plate_custom_json"] == ('{"lid":true,"measurement_type":"OD600"}')
     assert str(layout.metadata["notes"]) == "Saved explicitly"
     assert str(layout.metadata["lifecycle_status"]) == "final"
+    b1 = next(well for well in layout.wells if well["position"] == "B1")
+    assert (
+        b1["plot_selected"],
+        b1["notes"],
+        b1["grouping_label"],
+        b1["inoculum_size"],
+        b1["inoculum_unit"],
+        b1["custom_json"],
+    ) == (
+        1,
+        "important well",
+        "condition-b",
+        0.02,
+        "OD600",
+        '{"oxygen":"low","t0_added_min":5.0}',
+    )
 
     runs = SearchGrowthRunsService(repository).execute(
         SearchRuns(actor=ACTOR, text="Updated", date_from=date(2026, 1, 1))
@@ -181,6 +253,25 @@ def test_metadata_layout_background_search_load_and_export(
     assert preview.plate_ids == (plate_id,)
     with sqlite3.connect(portable_path) as connection:
         assert connection.execute("SELECT count(*) FROM growth_measurements").fetchone() == (384,)
+        assert connection.execute(
+            "SELECT project, experiment_date, operator_name, custom_json FROM experiments"
+        ).fetchone() == ("Growth project", "2026-02-03", "Researcher B", '{"batch":"B2"}')
+        assert connection.execute(
+            "SELECT group_concat(tag, ',') FROM "
+            "(SELECT tag FROM experiment_tags ORDER BY tag COLLATE NOCASE)"
+        ).fetchone() == ("kinetics,priority",)
+        assert connection.execute(
+            "SELECT w.plot_selected, w.notes, w.custom_json, wc.grouping_label, "
+            "wc.inoculum_size, wc.inoculum_unit FROM wells w "
+            "JOIN well_conditions wc ON wc.well_id = w.well_id WHERE w.position = 'B1'"
+        ).fetchone() == (
+            1,
+            "important well",
+            '{"oxygen":"low","t0_added_min":5.0}',
+            "condition-b",
+            0.02,
+            "OD600",
+        )
 
 
 def import_run(repository: SqlPlateReaderRepository) -> PlateId:
