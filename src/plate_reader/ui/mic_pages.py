@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 from datetime import date
 from pathlib import Path
@@ -22,7 +23,6 @@ from plate_reader.application.contracts import (
     PlateId,
     RevisionId,
     Role,
-    SearchMicResults,
     SearchRuns,
     SetMicLockState,
     SetMicReviewState,
@@ -37,7 +37,9 @@ from plate_reader.application.services import (
     ExportMicPlateService,
     ImportMicPlateService,
     LoadMicPlateService,
+    LoadMicResultSearchCatalogService,
     MicPlateView,
+    MicResultSearchQuery,
     PortableArtifact,
     PreviewMicPlateService,
     SearchMicPlatesService,
@@ -701,30 +703,110 @@ def _render_mic_export(
 
 def render_mic_results_search(context: AppContext) -> None:
     st.header("MIC Results")
+    try:
+        catalog = LoadMicResultSearchCatalogService(context.repository).execute(context.actor)
+    except Exception as error:
+        render_exception(error)
+        return
+    field_by_key = {field.key: field for field in catalog.fields}
+    default_columns = tuple(
+        key
+        for key in (
+            "experiment_date",
+            "plate_name",
+            "strain",
+            "treatment",
+            "mic_operator",
+            "mic_value",
+            "mic_unit",
+            "replicate",
+        )
+        if key in field_by_key
+    )
+    extra_field_options = tuple(
+        field.key
+        for field in catalog.fields
+        if field.filterable and field.key not in {"strain", "treatment", "medium"}
+    )
+    extra_fields = st.multiselect(
+        "Additional filter fields",
+        extra_field_options,
+        format_func=lambda key: field_by_key[key].label,
+        key="mic-result-extra-fields",
+    )
     with st.form("mic-results-search"):
         text = st.text_input("Search MIC results")
-        strain = st.text_input("Filter strain")
-        treatment = st.text_input("Filter treatment")
-        medium = st.text_input("Filter medium")
+        primary_filters = st.columns(3)
+        strains = primary_filters[0].multiselect("Filter strains", catalog.strains)
+        treatments = primary_filters[1].multiselect("Filter treatments", catalog.treatments)
+        medium = primary_filters[2].text_input("Filter medium")
+        field_filters = tuple(
+            (
+                key,
+                st.text_input(
+                    f"Filter {field_by_key[key].label}",
+                    key=f"mic-result-filter-{key}",
+                ),
+            )
+            for key in extra_fields
+        )
+        selected_columns = st.multiselect(
+            "Columns to display",
+            tuple(field_by_key),
+            default=default_columns,
+            format_func=lambda key: field_by_key[key].label,
+        )
         submitted = st.form_submit_button("Search MIC results")
     if submitted:
         st.session_state.mic_results_offset = 0
+        st.session_state.pop("mic_result_plot", None)
     offset = int(st.session_state.setdefault("mic_results_offset", 0))
     if submitted or "mic_result_rows" not in st.session_state:
         st.session_state.mic_result_rows = SearchMicResultsService(context.repository).execute(
-            SearchMicResults(
+            MicResultSearchQuery(
                 context.actor,
-                strain=strain or None,
-                treatment=treatment or None,
                 medium=medium or None,
                 text=text,
+                strains=tuple(str(value) for value in strains),
+                treatments=tuple(str(value) for value in treatments),
+                field_filters=tuple(
+                    (key, value.strip()) for key, value in field_filters if value.strip()
+                ),
                 limit=50,
                 offset=offset,
             )
         )
-    results = st.session_state.mic_result_rows
-    _render_mic_results(results)
+    results = cast(tuple[dict[str, object], ...], st.session_state.mic_result_rows)
+    if not results:
+        st.info("No MIC result groups match these filters.")
+    elif not selected_columns:
+        st.warning("Choose at least one result column to display.")
+    else:
+        st.caption(f"Showing {len(results)} MIC result group(s) on this page.")
+        st.markdown(
+            _mic_result_table_html(
+                results,
+                tuple(str(key) for key in selected_columns),
+                {key: field.label for key, field in field_by_key.items()},
+            ),
+            unsafe_allow_html=True,
+        )
     if results:
+        result_indexes = tuple(range(len(results)))
+        selected_index = st.selectbox(
+            "Select a result to open",
+            result_indexes,
+            format_func=lambda index: (
+                f"{results[index]['experiment_date']} — {results[index]['plate_name']} "
+                f"({results[index]['strain']} · {results[index]['treatment']})"
+            ),
+            key="mic-result-open-index",
+        )
+        if st.button("Open selected MIC plate"):
+            st.session_state.selected_mic_plate_id = str(results[selected_index]["plate_id"])
+            st.session_state.pending_navigation = "MIC Workspace"
+            _clear_mic_cached_artifacts()
+            st.rerun()
         result_key = hashlib.sha256(repr(results).encode()).hexdigest()
         if st.button("Render MIC dot plot", type="primary"):
             st.session_state.mic_result_plot = mic_result_dot_plot(results, result_key)
@@ -770,6 +852,30 @@ def _current_revision_key(snapshot: PlateSnapshot) -> str:
 def _mic_raw_hash(rows: tuple[dict[str, object], ...]) -> str:
     payload = sorted((str(row["well_id"]), str(row["channel"]), row["value_raw"]) for row in rows)
     return hashlib.sha256(repr(payload).encode()).hexdigest()
+
+
+def _mic_result_table_html(
+    rows: tuple[dict[str, object], ...],
+    columns: tuple[str, ...],
+    labels: dict[str, str],
+) -> str:
+    """Render selectable MIC columns without Arrow conversion instability."""
+
+    header = "".join(f"<th>{html.escape(labels[key])}</th>" for key in columns)
+    body = "".join(
+        "<tr>"
+        + "".join(
+            f"<td>{html.escape('' if row.get(key) is None else str(row.get(key)))}</td>"
+            for key in columns
+        )
+        + "</tr>"
+        for row in rows
+    )
+    return (
+        '<div style="overflow-x:auto;max-height:32rem">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f"<thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>"
+    )
 
 
 def _store_mic_source(name: str, text: str) -> None:

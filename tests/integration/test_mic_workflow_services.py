@@ -28,6 +28,8 @@ from plate_reader.application.services.mic_import import ImportMicPlateService
 from plate_reader.application.services.mic_workflow import (
     ComputeMicRevisionService,
     LoadMicPlateService,
+    LoadMicResultSearchCatalogService,
+    MicResultSearchQuery,
     RestoreMicPlateService,
     SearchMicPlatesService,
     SearchMicResultsService,
@@ -296,6 +298,48 @@ def test_indexed_search_pagination_and_conflict(repository: SqlPlateReaderReposi
     with pytest.raises(ConcurrencyConflictError):
         UpdateMicMetadataService(repository).execute(
             UpdateMicMetadata(EDITOR, plate_id, stale, plate_name="stale edit")
+        )
+
+
+def test_search_catalog_selected_metadata_and_custom_filters(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = seed_plate(repository)
+    repository.connection.execute(
+        "UPDATE wells SET custom_json = ? WHERE plate_id = ? AND position = 'A1'",
+        ('{"host":"human","batch":"B-7"}', plate_id),
+    )
+    snapshot = LoadMicPlateService(repository).execute(VIEWER, plate_id).snapshot
+    repository.replace_experiment_tags(snapshot.metadata["experiment_id"], ("infection", "screen"))
+
+    catalog = LoadMicResultSearchCatalogService(repository).execute(VIEWER)
+    assert catalog.strains == tuple(sorted(catalog.strains, key=str.casefold))
+    assert "compound_x" in catalog.treatments
+    assert {field.key for field in catalog.fields}.issuperset(
+        {"experiment_date", "plate_name", "mic_value", "custom.host", "custom.batch"}
+    )
+
+    rows = SearchMicResultsService(repository).execute(
+        MicResultSearchQuery(
+            VIEWER,
+            strains=("strain_normal",),
+            treatments=("compound_x",),
+            field_filters=(
+                ("custom.host", "hum"),
+                ("plate_name", "Plate 1"),
+                ("tags", "infect"),
+            ),
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0]["plate_id"] == plate_id
+    assert rows[0]["experiment_name"] == "MIC workflow fixture"
+    assert rows[0]["custom.host"] == "human"
+    assert rows[0]["custom.batch"] == "B-7"
+
+    with pytest.raises(ValueError, match="Unknown MIC result filter"):
+        SearchMicResultsService(repository).execute(
+            MicResultSearchQuery(VIEWER, field_filters=(("not-a-field", "value"),))
         )
 
 

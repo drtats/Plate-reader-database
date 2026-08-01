@@ -55,6 +55,8 @@ class MicWorkflowRepository(Protocol):
         self, filters: Mapping[str, object]
     ) -> tuple[dict[str, object], ...]: ...
 
+    def mic_result_search_catalog(self) -> Mapping[str, object]: ...
+
     def update_plate_metadata(
         self, plate_id: PlateId, expected_updated_at: str, changes: dict[str, object]
     ) -> str: ...
@@ -106,6 +108,82 @@ class MicPlateView:
     well_calls: tuple[dict[str, object], ...]
     results: tuple[dict[str, object], ...]
     provenance: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MicResultSearchField:
+    key: str
+    label: str
+    filterable: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class MicResultSearchCatalog:
+    fields: tuple[MicResultSearchField, ...]
+    strains: tuple[str, ...]
+    treatments: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MicResultSearchQuery:
+    actor: Actor
+    strain: str | None = None
+    treatment: str | None = None
+    medium: str | None = None
+    text: str = ""
+    strains: tuple[str, ...] = ()
+    treatments: tuple[str, ...] = ()
+    field_filters: tuple[tuple[str, str], ...] = ()
+    include_deleted: bool = False
+    limit: int = 100
+    offset: int = 0
+
+
+MIC_RESULT_STANDARD_FIELDS = (
+    MicResultSearchField("experiment_date", "Date"),
+    MicResultSearchField("experiment_name", "Experiment"),
+    MicResultSearchField("project", "Project"),
+    MicResultSearchField("tags", "Tags"),
+    MicResultSearchField("operator_name", "Person"),
+    MicResultSearchField("reader", "Reader"),
+    MicResultSearchField("incubation_time_hours", "Incubation time (hrs)"),
+    MicResultSearchField("inoculum_od", "Inoculum OD"),
+    MicResultSearchField("growth_phase", "Growth phase"),
+    MicResultSearchField("harvest_od", "Harvest OD"),
+    MicResultSearchField("doubling_time_minutes", "Doubling time (min)"),
+    MicResultSearchField("experiment_notes", "Experiment notes"),
+    MicResultSearchField("plate_name", "Plate"),
+    MicResultSearchField("plate_format", "Plate format"),
+    MicResultSearchField("threshold", "Threshold"),
+    MicResultSearchField("plate_created_at", "Plate created"),
+    MicResultSearchField("strain", "Strain"),
+    MicResultSearchField("treatment", "Antibiotic / treatment"),
+    MicResultSearchField("medium", "Media"),
+    MicResultSearchField("replicate", "Replicate"),
+    MicResultSearchField("mic_operator", "MIC operator"),
+    MicResultSearchField("mic_value", "MIC value"),
+    MicResultSearchField("mic_unit", "MIC unit"),
+    MicResultSearchField("calculation_status", "Calculation status"),
+    MicResultSearchField("warning", "Warning"),
+)
+
+
+class LoadMicResultSearchCatalogService:
+    def __init__(self, repository: MicWorkflowRepository) -> None:
+        self.repository = repository
+
+    def execute(self, actor: Actor) -> MicResultSearchCatalog:
+        require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
+        raw = self.repository.mic_result_search_catalog()
+        custom_fields = tuple(
+            MicResultSearchField(f"custom.{key}", f"Custom: {key}")
+            for key in _string_tuple(raw.get("custom_fields"))
+        )
+        return MicResultSearchCatalog(
+            fields=(*MIC_RESULT_STANDARD_FIELDS, *custom_fields),
+            strains=_string_tuple(raw.get("strains")),
+            treatments=_string_tuple(raw.get("treatments")),
+        )
 
 
 class ComputeMicRevisionService:
@@ -392,16 +470,39 @@ class SearchMicResultsService:
     def __init__(self, repository: MicWorkflowRepository) -> None:
         self.repository = repository
 
-    def execute(self, query: SearchMicResults) -> tuple[dict[str, object], ...]:
+    def execute(
+        self, query: SearchMicResults | MicResultSearchQuery
+    ) -> tuple[dict[str, object], ...]:
         require_role(self.repository, query.actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
         if query.include_deleted and query.actor.role is not Role.ADMIN:
             raise PermissionError("Only admins may search deleted MIC plates")
+        strains: tuple[str, ...] = ()
+        treatments: tuple[str, ...] = ()
+        field_filters: tuple[tuple[str, str], ...] = ()
+        if isinstance(query, MicResultSearchQuery):
+            strains = query.strains
+            treatments = query.treatments
+            field_filters = query.field_filters
+            available_fields = {
+                field.key
+                for field in LoadMicResultSearchCatalogService(self.repository)
+                .execute(query.actor)
+                .fields
+            }
+            invalid_fields = sorted(
+                field for field, _value in field_filters if field not in available_fields
+            )
+            if invalid_fields:
+                raise ValueError(f"Unknown MIC result filter field(s): {', '.join(invalid_fields)}")
         return self.repository.search_mic_results(
             {
                 "strain": query.strain,
                 "treatment": query.treatment,
                 "medium": query.medium,
                 "text": query.text,
+                "strains": strains,
+                "treatments": treatments,
+                "field_filters": field_filters,
                 "include_deleted": query.include_deleted,
                 "limit": query.limit,
                 "offset": query.offset,
@@ -550,6 +651,12 @@ def _number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError("Expected a numeric MIC threshold")
     return float(value)
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list)):
+        return ()
+    return tuple(str(item) for item in value if str(item).strip())
 
 
 def _analysis_issues(analysis: object) -> tuple[DomainIssue, ...]:

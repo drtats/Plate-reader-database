@@ -28,6 +28,34 @@ class InvalidRepositoryValueError(ValueError):
     pass
 
 
+_MIC_RESULT_FILTER_COLUMNS = {
+    "experiment_date": "e.experiment_date",
+    "experiment_name": "e.name",
+    "project": "e.project",
+    "operator_name": "e.operator_name",
+    "reader": "e.reader",
+    "incubation_time_hours": "e.incubation_time_hours",
+    "inoculum_od": "e.inoculum_od",
+    "growth_phase": "e.growth_phase",
+    "harvest_od": "e.harvest_od",
+    "doubling_time_minutes": "e.doubling_time_minutes",
+    "experiment_notes": "e.notes",
+    "plate_name": "p.plate_name",
+    "plate_format": "p.plate_format",
+    "threshold": "p.threshold",
+    "plate_created_at": "p.created_at",
+    "strain": "mr.strain",
+    "treatment": "mr.treatment",
+    "medium": "mr.medium",
+    "replicate": "mr.replicate",
+    "mic_operator": "mr.mic_operator",
+    "mic_value": "mr.mic_value",
+    "mic_unit": "mr.mic_unit",
+    "calculation_status": "mr.calculation_status",
+    "warning": "mr.warning",
+}
+
+
 class SqlPlateReaderRepository:
     def __init__(self, connection: Connection) -> None:
         self.connection = connection
@@ -859,6 +887,12 @@ class SqlPlateReaderRepository:
             if value:
                 where.append(f"mr.{key} = ?")
                 parameters.append(value)
+        for key in ("strains", "treatments"):
+            values = _filter_string_sequence(filters.get(key, ()))
+            if values:
+                column = "strain" if key == "strains" else "treatment"
+                where.append(f"mr.{column} IN ({','.join('?' for _value in values)})")
+                parameters.extend(values)
         text = _optional_str(filters, "text")
         if text:
             pattern = f"%{text}%"
@@ -867,14 +901,48 @@ class SqlPlateReaderRepository:
                 "mr.treatment LIKE ? OR mr.medium LIKE ?)"
             )
             parameters.extend((pattern, pattern, pattern, pattern, pattern))
+        for field, value in _field_filter_sequence(filters.get("field_filters", ())):
+            pattern = f"%{value}%"
+            if field == "tags":
+                where.append(
+                    "EXISTS (SELECT 1 FROM experiment_tags et "
+                    "WHERE et.experiment_id = e.experiment_id AND et.tag LIKE ?)"
+                )
+                parameters.append(pattern)
+            else:
+                mapped_column = _MIC_RESULT_FILTER_COLUMNS.get(field)
+                if mapped_column is not None:
+                    where.append(f"CAST({mapped_column} AS TEXT) LIKE ?")
+                    parameters.append(pattern)
+                    continue
+                if not field.startswith("custom."):
+                    raise InvalidRepositoryValueError(f"Unknown MIC result filter field: {field}")
+                where.append(
+                    "EXISTS (SELECT 1 FROM wells sw "
+                    "JOIN well_conditions swc ON swc.well_id = sw.well_id "
+                    "JOIN json_each(sw.custom_json) sj "
+                    "WHERE sw.plate_id = p.plate_id AND "
+                    "COALESCE(NULLIF(TRIM(swc.strain), ''), 'Unknown') = mr.strain AND "
+                    "COALESCE(NULLIF(TRIM(swc.treatment), ''), 'Unknown') = mr.treatment AND "
+                    "COALESCE(NULLIF(TRIM(swc.medium), ''), 'Unknown') = mr.medium AND "
+                    "swc.replicate = mr.replicate AND sj.key = ? "
+                    "AND CAST(sj.value AS TEXT) LIKE ?)"
+                )
+                parameters.extend((field.removeprefix("custom."), pattern))
         limit = _int_value(filters.get("limit", 100), minimum=1, maximum=500)
         offset = _int_value(filters.get("offset", 0), minimum=0)
         parameters.extend((limit, offset))
-        return _all_dicts(
+        rows = _all_dicts(
             self.connection.execute(
                 "SELECT mr.*, p.plate_id, p.plate_name, p.is_locked, p.is_checked, "
-                "p.deleted_at, e.experiment_id, e.name AS experiment_name, "
-                "e.experiment_date, e.project FROM mic_results mr "
+                "p.deleted_at, p.plate_format, p.threshold, p.created_at AS plate_created_at, "
+                "e.experiment_id, e.name AS experiment_name, e.experiment_date, e.project, "
+                "e.operator_name, e.reader, e.incubation_time_hours, e.inoculum_od, "
+                "e.growth_phase, e.harvest_od, e.doubling_time_minutes, "
+                "e.notes AS experiment_notes, "
+                "(SELECT group_concat(tag, ', ') FROM "
+                "(SELECT tag FROM experiment_tags et WHERE et.experiment_id = e.experiment_id "
+                "ORDER BY tag COLLATE NOCASE)) AS tags FROM mic_results mr "
                 "JOIN analysis_revisions ar ON ar.revision_id = mr.revision_id "
                 "JOIN plates p ON p.plate_id = ar.plate_id "
                 "JOIN experiments e ON e.experiment_id = p.experiment_id "
@@ -884,6 +952,81 @@ class SqlPlateReaderRepository:
                 parameters,
             )
         )
+        return self._add_mic_result_custom_values(rows)
+
+    def mic_result_search_catalog(self) -> Mapping[str, object]:
+        base = (
+            " FROM mic_results mr "
+            "JOIN analysis_revisions ar ON ar.revision_id = mr.revision_id "
+            "JOIN plates p ON p.plate_id = ar.plate_id "
+            "WHERE ar.is_current = 1 AND p.deleted_at IS NULL"
+        )
+        strains = tuple(
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT DISTINCT mr.strain" + base + " ORDER BY mr.strain COLLATE NOCASE"
+            ).fetchall()
+            if row[0]
+        )
+        treatments = tuple(
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT DISTINCT mr.treatment" + base + " ORDER BY mr.treatment COLLATE NOCASE"
+            ).fetchall()
+            if row[0]
+        )
+        custom_fields: set[str] = set()
+        for row in self.connection.execute(
+            "SELECT w.custom_json FROM wells w JOIN plates p ON p.plate_id = w.plate_id "
+            "WHERE p.assay_type = 'mic' AND p.deleted_at IS NULL"
+        ).fetchall():
+            custom_fields.update(_json_object_keys(row[0]))
+        return {
+            "strains": strains,
+            "treatments": treatments,
+            "custom_fields": tuple(sorted(custom_fields, key=str.casefold)),
+        }
+
+    def _add_mic_result_custom_values(
+        self, rows: tuple[dict[str, object], ...]
+    ) -> tuple[dict[str, object], ...]:
+        plate_ids = tuple(sorted({str(row["plate_id"]) for row in rows}))
+        if not plate_ids:
+            return rows
+        placeholders = ",".join("?" for _plate_id in plate_ids)
+        custom_by_group: dict[tuple[str, str, str, str, int], dict[str, object]] = {}
+        cursor = self.connection.execute(
+            "SELECT w.plate_id, wc.strain, wc.treatment, wc.medium, wc.replicate, "
+            "w.custom_json FROM wells w JOIN well_conditions wc ON wc.well_id = w.well_id "
+            f"WHERE w.plate_id IN ({placeholders}) ORDER BY w.row_index, w.column_index",
+            plate_ids,
+        )
+        for plate_id, strain, treatment, medium, replicate, custom_json in cursor.fetchall():
+            if replicate is None:
+                continue
+            group = (
+                str(plate_id),
+                _normalized_mic_group_value(strain),
+                _normalized_mic_group_value(treatment),
+                _normalized_mic_group_value(medium),
+                int(replicate),
+            )
+            values = custom_by_group.setdefault(group, {})
+            for key, value in _json_object_items(custom_json):
+                values.setdefault(f"custom.{key}", value)
+        enriched = []
+        for source in rows:
+            row = dict(source)
+            group = (
+                str(row["plate_id"]),
+                str(row["strain"]),
+                str(row["treatment"]),
+                str(row["medium"]),
+                _int_value(row["replicate"], minimum=1),
+            )
+            row.update(custom_by_group.get(group, {}))
+            enriched.append(row)
+        return tuple(enriched)
 
     def provenance_for_plate(self, plate_id: PlateId) -> tuple[dict[str, object], ...]:
         return _all_dicts(
@@ -1020,6 +1163,47 @@ def _string_sequence(value: object) -> tuple[str, ...]:
     if len(result) != len(set(item.casefold() for item in result)):
         raise InvalidRepositoryValueError("Tags must be unique")
     return result
+
+
+def _filter_string_sequence(value: object) -> tuple[str, ...]:
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise InvalidRepositoryValueError("Expected a sequence of filter strings")
+    return tuple(_str_value(item) for item in value)
+
+
+def _field_filter_sequence(value: object) -> tuple[tuple[str, str], ...]:
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise InvalidRepositoryValueError("Expected a sequence of MIC field filters")
+    result: list[tuple[str, str]] = []
+    for item in value:
+        if isinstance(item, str) or not isinstance(item, Sequence) or len(item) != 2:
+            raise InvalidRepositoryValueError(
+                "Each MIC field filter must contain a field and value"
+            )
+        field, field_value = item
+        result.append((_str_value(field), _str_value(field_value)))
+    return tuple(result)
+
+
+def _json_object_items(value: object) -> tuple[tuple[str, object], ...]:
+    if not isinstance(value, str) or not value.strip():
+        return ()
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(parsed, dict):
+        return ()
+    return tuple((str(key), item) for key, item in parsed.items() if str(key).strip())
+
+
+def _json_object_keys(value: object) -> tuple[str, ...]:
+    return tuple(key for key, _item in _json_object_items(value))
+
+
+def _normalized_mic_group_value(value: object) -> str:
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or "Unknown"
 
 
 def _database_value(value: object) -> object:
