@@ -88,6 +88,13 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     input_named(app, "Experiment name").set_value("UI edited experiment")
     click(app, "Save metadata")
     assert app.header[0].value == "UI edited experiment — Plate 1"
+    assert next(item for item in app.number_input if item.label == "X maximum").value == 1_400.0
+    assert next(item for item in app.number_input if item.label == "Y minimum").value == 0.001
+    assert next(item for item in app.number_input if item.label == "Y maximum").value == 1.5
+    assert next(item for item in app.checkbox if item.label == "Symmetric log scale").value is True
+    click(app, "Save well selection")
+    with sqlite3.connect(database_path) as database:
+        assert database.execute("SELECT sum(plot_selected) FROM wells").fetchone() == (8,)
     click(app, "Render selected curves")
     assert len(app.get("plotly_chart")) >= 2
     click(app, "Prepare portable export")
@@ -112,7 +119,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
             "(SELECT count(*) FROM schema_migrations), "
             "(SELECT count(*) FROM plates)"
         ).fetchone()
-    assert counts_after == (27_840, 5, 1, 2)
+    assert counts_after == (27_840, 7, 1, 2)
 
 
 def test_mic_ui_import_review_edit_visualize_and_export(

@@ -2,45 +2,132 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from plate_reader.application.ports.repositories import PlateSnapshot
-from plate_reader.application.services import PrepareGrowthPlotDataService
+from plate_reader.application.services import GrowthPlotData
+
+
+@dataclass(frozen=True, slots=True)
+class GrowthPlotOptions:
+    title: str = ""
+    x_max: float = 1_400.0
+    y_min: float = 0.001
+    y_max: float = 1.5
+    symlog: bool = True
+
+    def __post_init__(self) -> None:
+        values = (self.x_max, self.y_min, self.y_max)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Plot limits must be finite")
+        if self.x_max <= 0:
+            raise ValueError("X maximum must be greater than zero")
+        if self.y_min >= self.y_max:
+            raise ValueError("Y minimum must be less than Y maximum")
 
 
 @st.cache_data(show_spinner="Preparing growth curves…")
 def growth_curve_figure(
-    snapshot: PlateSnapshot,
-    backgrounds: Sequence[dict[str, object]],
-    selected_positions: tuple[str, ...],
-    corrected: bool,
+    plot_data: GrowthPlotData,
+    options: GrowthPlotOptions,
     raw_hash: str,
     revision_key: str,
 ) -> go.Figure:
     del raw_hash, revision_key
-    plot_data = PrepareGrowthPlotDataService().execute(
-        snapshot,
-        tuple(backgrounds),
-        selected_positions,
-        corrected=corrected,
-    )
     records = [
         {
             "Time (minutes)": point.elapsed_minutes,
             "OD": point.value,
-            "Well": point.position,
+            "Plot value": _symlog(point.value) if options.symlog else point.value,
+            "Curve": (
+                point.position
+                if point.label == point.position
+                else f"{point.label} ({point.position})"
+            ),
+            "Channel": point.channel,
+            "Correction": (
+                "corrected"
+                if point.correction_applied
+                else "raw fallback"
+                if plot_data.correction_requested
+                else "raw"
+            ),
         }
         for point in plot_data.points
     ]
     frame = pd.DataFrame.from_records(records)
     if frame.empty:
         return go.Figure().update_layout(title="No wells selected")
-    return px.line(frame, x="Time (minutes)", y="OD", color="Well", render_mode="webgl")
+    figure = px.line(
+        frame,
+        x="Time (minutes)",
+        y="Plot value",
+        color="Curve",
+        hover_data={"OD": ":.5g", "Channel": True, "Correction": True, "Plot value": False},
+        render_mode="webgl",
+    )
+    figure.update_layout(title=options.title or None)
+    figure.update_xaxes(range=(0, options.x_max), title="Time (minutes)")
+    if options.symlog:
+        ticks = _symlog_ticks(options.y_min, options.y_max)
+        figure.update_yaxes(
+            range=(_symlog(options.y_min), _symlog(options.y_max)),
+            tickmode="array",
+            tickvals=[_symlog(value) for value in ticks],
+            ticktext=[f"{value:g}" for value in ticks],
+            title="OD (symmetric log)",
+        )
+    else:
+        figure.update_yaxes(range=(options.y_min, options.y_max), title="OD")
+    return figure
+
+
+def plot_download_config(title: str, plate_id: str) -> dict[str, object]:
+    filename_source = title.strip() or f"growth-plot-{plate_id}"
+    filename = "-".join(filename_source.lower().split())
+    safe_filename = "".join(
+        character for character in filename if character.isalnum() or character in "-_"
+    )
+    return {
+        "displaylogo": False,
+        "toImageButtonOptions": {
+            "format": "png",
+            "filename": safe_filename or "growth-plot",
+            "width": 1_200,
+            "height": 750,
+            "scale": 2,
+        },
+    }
+
+
+def _symlog(value: float, *, linear_threshold: float = 0.01) -> float:
+    return math.copysign(math.log10(1 + abs(value) / linear_threshold), value)
+
+
+def _symlog_ticks(minimum: float, maximum: float) -> tuple[float, ...]:
+    candidates = (
+        -100.0,
+        -10.0,
+        -1.0,
+        -0.1,
+        -0.01,
+        -0.001,
+        0.0,
+        0.001,
+        0.01,
+        0.1,
+        1.0,
+        10.0,
+        100.0,
+    )
+    ticks = tuple(value for value in candidates if minimum <= value <= maximum)
+    return ticks or (minimum, maximum)
 
 
 @st.cache_data(show_spinner=False)

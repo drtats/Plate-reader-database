@@ -34,6 +34,7 @@ from plate_reader.application.services import (
     ImportGrowthRunService,
     LoadGrowthRunService,
     PortableArtifact,
+    PrepareGrowthPlotDataService,
     PreviewGrowthRunService,
     SearchGrowthRunsService,
     UpdateGrowthLayoutService,
@@ -52,7 +53,12 @@ from plate_reader.ui.plate_editor import (
     growth_layout_frame,
     render_plate_editor,
 )
-from plate_reader.ui.plotting import endpoint_heatmap, growth_curve_figure
+from plate_reader.ui.plotting import (
+    GrowthPlotOptions,
+    endpoint_heatmap,
+    growth_curve_figure,
+    plot_download_config,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +87,7 @@ def render_run_library(context: AppContext) -> None:
     if st.button("Open workspace", type="primary"):
         st.session_state.selected_plate_id = labels[selected_label]
         st.session_state.pending_navigation = "Growth Workspace"
-        st.session_state.pop("growth_plot", None)
+        _clear_growth_plot()
         st.session_state.pop("portable_artifact", None)
         st.rerun()
 
@@ -352,7 +358,7 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
     with tabs[2]:
         render_layout_form(context, plate_id, view)
     with tabs[3]:
-        render_plotting(view)
+        render_plotting(context, plate_id, view)
     with tabs[4]:
         render_revisions(context, plate_id, view)
     with tabs[5]:
@@ -469,17 +475,49 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
             render_exception(error)
 
 
-def render_plotting(view: GrowthRunView) -> None:
+def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
     positions = tuple(str(well["position"]) for well in view.snapshot.wells)
-    selected = st.multiselect("Wells", positions, default=positions[:8])
-    corrected = st.toggle(
-        "Apply current background revision",
-        value=bool(view.backgrounds),
-        disabled=not bool(view.backgrounds),
+    persisted = tuple(
+        str(well["position"]) for well in view.snapshot.wells if bool(well["plot_selected"])
     )
-    if corrected and not view.backgrounds:
-        st.warning("No background revision exists; raw values will be shown.")
-    if st.button("Render selected curves", type="primary"):
+    default_positions = persisted or positions[:8]
+    with st.form(f"growth-plot-options-{plate_id}"):
+        selected = st.multiselect("Wells", positions, default=default_positions)
+        corrected = st.toggle(
+            "Apply current background revision",
+            value=bool(view.backgrounds),
+            disabled=not bool(view.backgrounds),
+        )
+        limits = st.columns(4)
+        x_max = limits[0].number_input("X maximum", min_value=0.001, value=1_400.0)
+        y_min = limits[1].number_input("Y minimum", value=0.001, format="%.4f")
+        y_max = limits[2].number_input("Y maximum", value=1.5, format="%.4f")
+        symlog = limits[3].checkbox("Symmetric log scale", value=True)
+        title = st.text_input("Plot title")
+        save_selection = st.form_submit_button("Save well selection")
+        render = st.form_submit_button("Render selected curves", type="primary")
+    if save_selection:
+        try:
+            selected_set = set(selected)
+            UpdateGrowthLayoutService(context.repository).execute(
+                UpdateWellLayout(
+                    context.actor,
+                    plate_id,
+                    str(view.snapshot.metadata["updated_at"]),
+                    tuple(
+                        WellLayoutChange(
+                            position=position,
+                            plot_selected=position in selected_set,
+                        )
+                        for position in positions
+                    ),
+                )
+            )
+            st.success("Plot selection saved without rewriting measurements.")
+            st.rerun()
+        except Exception as error:
+            render_exception(error)
+    if render:
         revision_key = next(
             (
                 str(row["revision_id"])
@@ -489,19 +527,41 @@ def render_plotting(view: GrowthRunView) -> None:
             "raw",
         )
         raw_hash = _raw_hash(view.snapshot.raw_observations)
-        st.session_state.growth_plot = growth_curve_figure(
+        plot_data = PrepareGrowthPlotDataService().execute(
             view.snapshot,
             view.backgrounds,
             tuple(selected),
-            corrected,
+            corrected=corrected,
+        )
+        options = GrowthPlotOptions(
+            title=title.strip(),
+            x_max=float(x_max),
+            y_min=float(y_min),
+            y_max=float(y_max),
+            symlog=symlog,
+        )
+        st.session_state.growth_plot = growth_curve_figure(
+            plot_data,
+            options,
             raw_hash,
             revision_key,
         )
+        st.session_state.growth_plot_issues = plot_data.issues
+        st.session_state.growth_plot_title = options.title
         st.session_state.growth_plot_plate_id = str(view.snapshot.plate_id)
+    for issue in st.session_state.get("growth_plot_issues", ()):
+        st.warning(issue.message)
     if (figure := st.session_state.get("growth_plot")) is not None and st.session_state.get(
         "growth_plot_plate_id"
     ) == str(view.snapshot.plate_id):
-        st.plotly_chart(figure, width="stretch")
+        st.plotly_chart(
+            figure,
+            width="stretch",
+            config=plot_download_config(
+                str(st.session_state.get("growth_plot_title", "")), str(plate_id)
+            ),
+        )
+        st.caption("Use the camera button in the plot toolbar to download a high-resolution PNG.")
 
 
 def render_revisions(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
@@ -644,6 +704,16 @@ def _reset_wizard() -> None:
     for key in tuple(st.session_state):
         if str(key).startswith("growth_"):
             del st.session_state[key]
+
+
+def _clear_growth_plot() -> None:
+    for key in (
+        "growth_plot",
+        "growth_plot_issues",
+        "growth_plot_plate_id",
+        "growth_plot_title",
+    ):
+        st.session_state.pop(key, None)
 
 
 def _noop(*_args: object, **_kwargs: object) -> None:

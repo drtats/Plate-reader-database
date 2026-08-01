@@ -25,6 +25,7 @@ from plate_reader.application.services import (
     ImportGrowthRunService,
     ImportMicPlateService,
     LoadMicPlateService,
+    PrepareGrowthPlotDataService,
     SearchMicResultsService,
 )
 from plate_reader.domain.growth import GROWTH_NORMALIZATION_VERSION
@@ -38,6 +39,7 @@ from plate_reader.infrastructure.database import (
     export_portable_runs,
 )
 from plate_reader.ui.plotting import (
+    GrowthPlotOptions,
     endpoint_heatmap,
     growth_curve_figure,
     mic_growth_map,
@@ -154,11 +156,12 @@ def measure(
             raise RuntimeError("Growth benchmark plate did not load")
         selected_positions = tuple(str(row["position"]) for row in growth_snapshot.wells[:12])
         started = time.perf_counter()
+        growth_plot_data = PrepareGrowthPlotDataService().execute(
+            growth_snapshot, (), selected_positions, corrected=False
+        )
         growth_figure = growth_curve_figure.__wrapped__(
-            growth_snapshot,
-            (),
-            selected_positions,
-            False,
+            growth_plot_data,
+            GrowthPlotOptions(),
             "benchmark-raw",
             "benchmark-revision",
         )
