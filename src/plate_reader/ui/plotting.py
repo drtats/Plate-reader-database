@@ -9,11 +9,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from plate_reader.application.ports.repositories import PlateSnapshot
+from plate_reader.application.services import PrepareGrowthPlotDataService
+
 
 @st.cache_data(show_spinner="Preparing growth curves…")
 def growth_curve_figure(
-    raw_rows: Sequence[dict[str, object]],
-    wells: Sequence[dict[str, object]],
+    snapshot: PlateSnapshot,
     backgrounds: Sequence[dict[str, object]],
     selected_positions: tuple[str, ...],
     corrected: bool,
@@ -21,43 +23,20 @@ def growth_curve_figure(
     revision_key: str,
 ) -> go.Figure:
     del raw_hash, revision_key
-    well_by_id = {str(well["well_id"]): well for well in wells}
-    background_by_key = {
-        (
-            str(row["background_group"]),
-            str(row["channel"]),
-            int_value(row["time_index"]),
-            int_value(row["elapsed_microseconds"]),
-        ): float_value(row["mean_value"])
-        for row in backgrounds
-    }
-    records: list[dict[str, object]] = []
-    for row in raw_rows:
-        well = well_by_id[str(row["well_id"])]
-        position = str(well["position"])
-        if position not in selected_positions:
-            continue
-        raw_value = float_value(row["value_raw"])
-        value = raw_value
-        if corrected:
-            group = str(well["background_group"] or "plate")
-            background = background_by_key.get(
-                (
-                    group,
-                    str(row["channel"]),
-                    int_value(row["time_index"]),
-                    int_value(row["elapsed_microseconds"]),
-                )
-            )
-            if background is not None:
-                value -= background
-        records.append(
-            {
-                "Time (minutes)": int_value(row["elapsed_microseconds"]) / 60_000_000,
-                "OD": value,
-                "Well": position,
-            }
-        )
+    plot_data = PrepareGrowthPlotDataService().execute(
+        snapshot,
+        tuple(backgrounds),
+        selected_positions,
+        corrected=corrected,
+    )
+    records = [
+        {
+            "Time (minutes)": point.elapsed_minutes,
+            "OD": point.value,
+            "Well": point.position,
+        }
+        for point in plot_data.points
+    ]
     frame = pd.DataFrame.from_records(records)
     if frame.empty:
         return go.Figure().update_layout(title="No wells selected")

@@ -490,8 +490,7 @@ def render_plotting(view: GrowthRunView) -> None:
         )
         raw_hash = _raw_hash(view.snapshot.raw_observations)
         st.session_state.growth_plot = growth_curve_figure(
-            view.snapshot.raw_observations,
-            view.snapshot.wells,
+            view.snapshot,
             view.backgrounds,
             tuple(selected),
             corrected,

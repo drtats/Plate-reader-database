@@ -155,8 +155,7 @@ def measure(
         selected_positions = tuple(str(row["position"]) for row in growth_snapshot.wells[:12])
         started = time.perf_counter()
         growth_figure = growth_curve_figure.__wrapped__(
-            growth_snapshot.raw_observations,
-            growth_snapshot.wells,
+            growth_snapshot,
             (),
             selected_positions,
             False,

@@ -7,6 +7,11 @@ from plate_reader.application.services.growth_import import (
     SourceHashMismatchError,
     UnsupportedParserVersionError,
 )
+from plate_reader.application.services.growth_plotting import (
+    GrowthPlotData,
+    GrowthPlotPoint,
+    PrepareGrowthPlotDataService,
+)
 from plate_reader.application.services.growth_workflow import (
     BackgroundRevisionResult,
     ComputeGrowthBackgroundService,
@@ -60,6 +65,8 @@ __all__ = [
     "ExportGrowthRunService",
     "ExportMicPlateService",
     "GrowthImportResult",
+    "GrowthPlotData",
+    "GrowthPlotPoint",
     "GrowthPreview",
     "GrowthRunView",
     "ImportAuthorizationError",
@@ -74,6 +81,7 @@ __all__ = [
     "MicRevisionResult",
     "OidcClaims",
     "PortableArtifact",
+    "PrepareGrowthPlotDataService",
     "PreviewGrowthRunService",
     "PreviewMicPlateService",
     "PreviewPortableRunService",
