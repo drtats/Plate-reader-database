@@ -12,6 +12,11 @@ from plate_reader.application.services.growth_plotting import (
     GrowthPlotPoint,
     PrepareGrowthPlotDataService,
 )
+from plate_reader.application.services.growth_qc import (
+    GrowthBackgroundQcGroup,
+    GrowthBackgroundQcReport,
+    SummarizeGrowthBackgroundQcService,
+)
 from plate_reader.application.services.growth_workflow import (
     BackgroundRevisionResult,
     ComputeGrowthBackgroundService,
@@ -76,6 +81,8 @@ __all__ = [
     "DeletePlateTemplateService",
     "ExportGrowthRunService",
     "ExportMicPlateService",
+    "GrowthBackgroundQcGroup",
+    "GrowthBackgroundQcReport",
     "GrowthImportResult",
     "GrowthPlotData",
     "GrowthPlotPoint",
@@ -113,6 +120,7 @@ __all__ = [
     "SoftDeleteMicPlateService",
     "SourceHashMismatchError",
     "SourceTooLargeError",
+    "SummarizeGrowthBackgroundQcService",
     "UnsupportedParserVersionError",
     "UpdateGrowthLayoutService",
     "UpdateGrowthMetadataService",

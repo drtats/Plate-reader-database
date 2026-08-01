@@ -10,8 +10,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
-from plate_reader.application.services import GrowthPlotData
+from plate_reader.application.services import GrowthPlotData, GrowthPlotPoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +89,72 @@ def growth_curve_figure(
     return figure
 
 
-def plot_download_config(title: str, plate_id: str) -> dict[str, object]:
+@st.cache_data(show_spinner="Preparing the 96-well curve overview…")
+def growth_plate_overview_figure(
+    plot_data: GrowthPlotData,
+    raw_hash: str,
+    revision_key: str,
+) -> go.Figure:
+    """Build the legacy 8x12 curve overview on demand with shared axes."""
+
+    del raw_hash, revision_key
+    positions = tuple(f"{row}{column}" for row in "ABCDEFGH" for column in range(1, 13))
+    figure = make_subplots(
+        rows=8,
+        cols=12,
+        shared_xaxes=True,
+        shared_yaxes=True,
+        horizontal_spacing=0.004,
+        vertical_spacing=0.018,
+        subplot_titles=positions,
+    )
+    by_curve: dict[tuple[str, str], list[GrowthPlotPoint]] = {}
+    for point in plot_data.points:
+        by_curve.setdefault((point.position, point.channel), []).append(point)
+    for index, position in enumerate(positions):
+        row = index // 12 + 1
+        column = index % 12 + 1
+        channels = sorted(channel for well, channel in by_curve if well == position)
+        for channel in channels:
+            points = sorted(by_curve[(position, channel)], key=lambda point: point.elapsed_minutes)
+            figure.add_trace(
+                go.Scattergl(
+                    x=[point.elapsed_minutes for point in points],
+                    y=[point.value for point in points],
+                    customdata=[(point.label, point.value_raw, point.channel) for point in points],
+                    mode="lines",
+                    line={"width": 1},
+                    fill="tozeroy",
+                    fillcolor="rgba(31, 119, 180, 0.18)",
+                    hovertemplate=(
+                        "%{customdata[0]}<br>Time: %{x:.1f} min<br>"
+                        "OD: %{y:.5g}<br>Raw: %{customdata[1]:.5g}<br>"
+                        "Channel: %{customdata[2]}<extra></extra>"
+                    ),
+                    showlegend=False,
+                ),
+                row=row,
+                col=column,
+            )
+    figure.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+    figure.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
+    figure.update_annotations(font={"size": 8})
+    state = "background-corrected" if plot_data.correction_requested else "raw"
+    figure.update_layout(
+        title=f"96-well growth curves ({state})",
+        height=900,
+        margin={"l": 20, "r": 20, "t": 55, "b": 20},
+    )
+    return figure
+
+
+def plot_download_config(
+    title: str,
+    plate_id: str,
+    *,
+    width: int = 1_200,
+    height: int = 750,
+) -> dict[str, object]:
     filename_source = title.strip() or f"growth-plot-{plate_id}"
     filename = "-".join(filename_source.lower().split())
     safe_filename = "".join(
@@ -99,8 +165,8 @@ def plot_download_config(title: str, plate_id: str) -> dict[str, object]:
         "toImageButtonOptions": {
             "format": "png",
             "filename": safe_filename or "growth-plot",
-            "width": 1_200,
-            "height": 750,
+            "width": width,
+            "height": height,
             "scale": 2,
         },
     }

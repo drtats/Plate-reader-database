@@ -16,8 +16,8 @@ opened or changed during this verification.
 | Validation | Several warnings occur after loading | Dedicated preview step blocks malformed time, wells, labels, and values before commit | Intentionally stricter |
 | Save | Full-run autosave can rewrite raw rows | One explicit atomic commit; later metadata/layout writes cannot update raw tables | Safer intentional change |
 | Library | Scans standalone database paths | Indexed repository search with portable SQLite exchange | Compatible purpose, different storage model |
-| Overview | Large static multi-axis view | Fast final-OD 8x12 heatmap and visible raw/revision/QC state | Faster interactive replacement |
-| Curves | Eager Matplotlib overview and selected curves | Plotly/WebGL curves rendered only on request and cached by raw hash/revision | Compatible core plotting |
+| Overview | Large static multi-axis view | Fast final-OD heatmap plus an on-demand cached 8x12 curve overview and group/timepoint QC | Preserved without eager rerendering |
+| Curves | Eager Matplotlib overview and selected curves | Plotly/WebGL overview and selected curves rendered on request and cached by raw hash/revision | Compatible core plotting |
 | Background | Mean/SD/CV by time, channel, and blank group | Frozen `growth-background/1.0.0` calculation stored as an immutable revision | Scientifically compatible |
 | Missing background | Silently treated as zero in some paths | Remains raw and visibly warns; it is never labeled corrected | Intentional correctness change |
 | Export | Per-run SQLite and historical folder variants | Manifested, checksummed, standard-SQLite portable run | Compatible and independently verifiable |

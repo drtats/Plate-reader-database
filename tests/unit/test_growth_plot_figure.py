@@ -6,6 +6,7 @@ from plate_reader.application.services import GrowthPlotData, GrowthPlotPoint
 from plate_reader.ui.plotting import (
     GrowthPlotOptions,
     growth_curve_figure,
+    growth_plate_overview_figure,
     plot_download_config,
 )
 
@@ -60,3 +61,33 @@ def test_plot_download_uses_safe_stable_png_filename() -> None:
         "height": 750,
         "scale": 2,
     }
+
+
+def test_growth_plate_overview_uses_all_physical_subplots_and_cached_inputs() -> None:
+    plot_data = GrowthPlotData(
+        (
+            GrowthPlotPoint("H12", "last", 10.0, "od600", 0.4, 0.5, 0.1, True),
+            GrowthPlotPoint("A1", "first", 10.0, "od600", 0.2, 0.3, 0.1, True),
+            GrowthPlotPoint("A1", "first", 0.0, "od600", 0.1, 0.2, 0.1, True),
+        ),
+        (),
+        True,
+    )
+
+    figure = growth_plate_overview_figure.__wrapped__(plot_data, "raw-hash", "revision")
+
+    assert figure.layout.title.text == "96-well growth curves (background-corrected)"
+    assert len(figure.layout.annotations) == 96
+    assert len(figure.data) == 2
+    assert list(figure.data[0].x) == [0.0, 10.0]
+    assert figure.data[0].type == "scattergl"
+    assert figure.data[1].xaxis == "x96"
+
+
+def test_plot_download_accepts_overview_dimensions() -> None:
+    config = plot_download_config("overview", "plate", width=1_800, height=1_200)
+    options = config["toImageButtonOptions"]
+
+    assert isinstance(options, dict)
+    assert options["width"] == 1_800
+    assert options["height"] == 1_200

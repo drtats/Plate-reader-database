@@ -40,6 +40,7 @@ from plate_reader.application.services import (
     PrepareGrowthPlotDataService,
     PreviewGrowthRunService,
     SearchGrowthRunsService,
+    SummarizeGrowthBackgroundQcService,
     UpdateGrowthLayoutService,
     UpdateGrowthMetadataService,
 )
@@ -65,6 +66,7 @@ from plate_reader.ui.plotting import (
     GrowthPlotOptions,
     endpoint_heatmap,
     growth_curve_figure,
+    growth_plate_overview_figure,
     plot_download_config,
 )
 from plate_reader.ui.template_controls import render_plate_template_controls
@@ -504,18 +506,90 @@ def render_overview(view: GrowthRunView) -> None:
     elif not view.backgrounds:
         st.warning("The current revision contains no background rows; check blank assignments.")
     else:
-        status_counts: dict[str, int] = {}
-        for row in view.backgrounds:
-            status = str(row["qc_status"])
-            status_counts[status] = status_counts.get(status, 0) + 1
-        st.caption(
-            "Background QC: "
-            + ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
+        report = SummarizeGrowthBackgroundQcService().execute(view.backgrounds)
+        st.subheader("Background group QC")
+        st.caption("CV interpretation: <0.05 good; 0.05-<0.10 caution; ≥0.10 high variance.")
+        st.dataframe(
+            [
+                {
+                    "Background group": group.background_group,
+                    "Channel": group.channel,
+                    "Timepoints": group.timepoint_count,
+                    "Blank wells (min-max)": (f"{group.blank_count_min}-{group.blank_count_max}"),
+                    "Mean CV": group.mean_cv,
+                    "Maximum CV": group.max_cv,
+                    "Good": group.good_count,
+                    "Caution": group.caution_count,
+                    "High CV": group.high_cv_count,
+                }
+                for group in report.groups
+            ],
+            hide_index=True,
+            width="stretch",
         )
+        with st.expander("Detailed background timepoint QC"):
+            st.dataframe(
+                [
+                    {
+                        "Background group": row["background_group"],
+                        "Channel": row["channel"],
+                        "Time (minutes)": float(str(row["elapsed_microseconds"])) / 60_000_000,
+                        "Mean": row["mean_value"],
+                        "SD": row["std_value"],
+                        "CV": row["coefficient_of_variation"],
+                        "Blank wells": row["blank_count"],
+                        "QC status": row["qc_status"],
+                    }
+                    for row in view.backgrounds
+                ],
+                hide_index=True,
+                width="stretch",
+            )
     st.plotly_chart(
         endpoint_heatmap(snapshot.raw_observations, snapshot.wells, raw_hash),
         width="stretch",
     )
+    with st.expander("96-well curve overview", expanded=False):
+        corrected = st.toggle(
+            "Apply current background revision to overview",
+            value=bool(view.backgrounds),
+            disabled=not bool(view.backgrounds),
+            key=f"growth-overview-corrected-{snapshot.plate_id}",
+        )
+        if st.button(
+            "Render 96-well curve overview",
+            type="primary",
+            key=f"growth-overview-render-{snapshot.plate_id}",
+        ):
+            positions = tuple(str(well["position"]) for well in snapshot.wells)
+            plot_data = PrepareGrowthPlotDataService().execute(
+                snapshot,
+                view.backgrounds,
+                positions,
+                corrected=corrected,
+            )
+            revision_key = current_background_revision(snapshot) or "raw"
+            st.session_state.growth_plate_overview = growth_plate_overview_figure(
+                plot_data,
+                raw_hash,
+                revision_key,
+            )
+            st.session_state.growth_plate_overview_issues = plot_data.issues
+            st.session_state.growth_plate_overview_plate_id = str(snapshot.plate_id)
+        for issue in st.session_state.get("growth_plate_overview_issues", ()):
+            st.warning(issue.message)
+        if st.session_state.get("growth_plate_overview_plate_id") == str(snapshot.plate_id):
+            st.plotly_chart(
+                st.session_state.growth_plate_overview,
+                width="stretch",
+                config=plot_download_config(
+                    "96-well-growth-overview",
+                    str(snapshot.plate_id),
+                    width=1_800,
+                    height=1_200,
+                ),
+            )
+            st.caption("Use the camera button to download the complete overview as PNG.")
 
 
 def render_metadata_form(
@@ -875,6 +949,9 @@ def _clear_growth_plot() -> None:
         "growth_plot_issues",
         "growth_plot_plate_id",
         "growth_plot_title",
+        "growth_plate_overview",
+        "growth_plate_overview_issues",
+        "growth_plate_overview_plate_id",
     ):
         st.session_state.pop(key, None)
 

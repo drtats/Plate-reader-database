@@ -19,3 +19,9 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0007](0007-standard-sqlite-portable-format.md): portable export format
 - [ADR-0008](0008-additive-mic-contract-extension.md): additive MIC workflow contracts
 - [ADR-0009](0009-defer-automatic-offline-sync.md): defer automatic offline sync
+- [ADR-0010](0010-official-python-libsql-remote-adapter.md): official remote libSQL adapter
+- [ADR-0011](0011-restore-rich-import-metadata-and-layout.md): rich import metadata/layout
+- [ADR-0012](0012-complete-backend-parity-before-ui-work.md): backend parity before UI work
+- [ADR-0013](0013-unify-growth-metadata-and-layout-editors.md): unified Growth editors
+- [ADR-0014](0014-activate-template-and-saved-option-backend.md): supporting data backend/UI
+- [ADR-0015](0015-restore-growth-overview-and-qc.md): lazy Growth overview and QC

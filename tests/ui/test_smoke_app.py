@@ -82,6 +82,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     assert not app.exception
     assert app.header[0].value == "UI workflow experiment — Plate 1"
     assert any("Run committed successfully" in item.value for item in app.success)
+    assert any(button.label == "Render 96-well curve overview" for button in app.button)
     with sqlite3.connect(database_path) as database:
         counts_before = database.execute(
             "SELECT (SELECT count(*) FROM growth_measurements), "

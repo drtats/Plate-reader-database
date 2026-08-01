@@ -22,6 +22,12 @@ Background subtraction creates a versioned analysis revision. Select a bounded
 set of wells before rendering curves. Export produces a checksummed standard
 SQLite artifact containing the selected plate and current revisions.
 
+**Overview & QC** shows the final-OD heatmap immediately. After a background
+revision exists, it also shows group/channel CV summaries and detailed stored
+timepoint statistics. Open **96-well curve overview** and render it when the full
+8x12 small-multiple view is needed; it is lazy and cached so routine reruns do not
+rebuild all 96 curves.
+
 Both import and saved-run layout editors include **Reusable plate templates**.
 Any signed-in user can apply a Growth template to the staged 96-well layout;
 administrators can save, overwrite, and delete templates. Applying one never
