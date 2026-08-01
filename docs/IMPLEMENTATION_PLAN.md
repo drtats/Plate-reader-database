@@ -58,7 +58,9 @@ Goal: create a reproducible, safe repository before application behavior exists.
 
 ### Checks
 
-- [ ] A clean clone can run `uv sync --all-groups` and the full check command.
+- [x] A clean clone can run `uv sync --all-groups --frozen` and the full check
+      command (verified 2026-08-01: 251 passed, 1 optional remote test skipped,
+      90.10% combined line/branch coverage).
 - [x] The minimal Streamlit app starts locally on Python 3.12.
 - [ ] CI passes on GitHub without Turso credentials.
 - [x] A deliberately created local secrets file and `.sqlite` file remain ignored.
@@ -511,6 +513,8 @@ serial responsibilities.
 
 ## Immediate next action
 
-Execute Phase 0 only. Do not port legacy code yet. Once the repository foundation
-and smoke deployment pass, perform Phase 1 as an evidence-gathering and contract
-freeze before distributing implementation work.
+Create the private GitHub repository, add it as `origin`, push `main`, and let the
+configured CI and macOS/Windows packaging matrix run. Keep fake-cloud as the
+default until the user deliberately supplies real Turso and OIDC credentials;
+then execute the still-open remote contract, authorization, backup/restore,
+deployment, UAT, and cutover gates in order.
