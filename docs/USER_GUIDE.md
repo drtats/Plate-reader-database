@@ -68,21 +68,12 @@ treatment, units, and Growth grouping fields. These appear as suggestions in
 the fill helper; the field remains editable, so a new value never has to be
 registered before use.
 
-## MIC plates
+## MIC modules
 
-Open **New MIC Plate** and supply long-format CSV with `well_position` and
-`od_raw`. The parser accepts documented aliases such as `well`, `od`,
-`antibiotic`, and `media`; unknown columns become stable custom labels. A commit
-requires exactly 96 unique wells.
-
-Use **MIC Plate Library** or **MIC Results** for bounded, server-side search. The
-workspace shows raw OD and growth-call maps, result groups, revisions, review
-state, lifecycle controls, export, and provenance. Changing threshold or well
-layout creates a new MIC revision and preserves raw values.
-
-MIC uses the same reusable-template controls. Templates carry editable well
-metadata and custom columns, never raw OD readings. Applying one is staged until
-the normal MIC commit or full-layout save.
+MIC modules remain in the repository for possible future work, but **MIC Plate
+Library**, **New MIC Plate**, **MIC Workspace**, and **MIC Results** are hidden
+from the normal application. They are not part of the current Growth workflow,
+and users do not need to take any MIC-specific action.
 
 ## Portable transfer
 

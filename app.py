@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -12,12 +13,6 @@ from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.runtime import load_local_app_config
 from plate_reader.ui.cloud import load_cloud_credentials, oidc_provider
 from plate_reader.ui.context import app_context
-from plate_reader.ui.mic_pages import (
-    render_mic_library,
-    render_mic_results_search,
-    render_mic_wizard,
-    render_mic_workspace,
-)
 from plate_reader.ui.pages import render_growth_wizard, render_run_library, render_workspace
 from plate_reader.ui.portable_pages import render_portable_import
 
@@ -34,7 +29,7 @@ def main() -> None:
     """Render the local application without putting SQL in the presentation layer."""
 
     st.title("Plate Reader Database")
-    st.caption("Modular growth-curve and MIC data platform")
+    st.caption("Growth-curve data platform")
 
     try:
         root = Path(__file__).resolve().parent
@@ -81,20 +76,28 @@ def main() -> None:
             st.logout()
     else:
         st.sidebar.caption(f"Signed in for development as {context.actor.email}")
-    if pending_navigation := st.session_state.pop("pending_navigation", None):
+    navigation_options = [
+        "Growth Run Library",
+        "New Growth Run",
+        "Growth Workspace",
+    ]
+    if (
+        config.runtime.environment == "test"
+        and os.environ.get("PLATE_READER_TEST_ENABLE_MIC_UI") == "1"
+    ):
+        navigation_options.extend(
+            ("MIC Plate Library", "New MIC Plate", "MIC Workspace", "MIC Results")
+        )
+    navigation_options.append("Import Portable Data")
+    if (
+        pending_navigation := st.session_state.pop("pending_navigation", None)
+    ) and pending_navigation in navigation_options:
         st.session_state.navigation = pending_navigation
+    if st.session_state.get("navigation") not in navigation_options:
+        st.session_state.pop("navigation", None)
     navigation = st.sidebar.radio(
         "Navigation",
-        (
-            "Growth Run Library",
-            "New Growth Run",
-            "Growth Workspace",
-            "MIC Plate Library",
-            "New MIC Plate",
-            "MIC Workspace",
-            "MIC Results",
-            "Import Portable Data",
-        ),
+        navigation_options,
         key="navigation",
     )
     if navigation == "Growth Run Library":
@@ -107,15 +110,23 @@ def main() -> None:
     elif navigation == "Growth Workspace":
         render_workspace(context, root / "migrations")
     elif navigation == "MIC Plate Library":
+        from plate_reader.ui.mic_pages import render_mic_library
+
         render_mic_library(context)
     elif navigation == "New MIC Plate":
+        from plate_reader.ui.mic_pages import render_mic_wizard
+
         render_mic_wizard(
             context,
             allow_local_path=config.runtime.storage_mode in {"local", "fake-cloud"},
         )
     elif navigation == "MIC Workspace":
+        from plate_reader.ui.mic_pages import render_mic_workspace
+
         render_mic_workspace(context, root / "migrations")
     elif navigation == "MIC Results":
+        from plate_reader.ui.mic_pages import render_mic_results_search
+
         render_mic_results_search(context)
     else:
         render_portable_import(

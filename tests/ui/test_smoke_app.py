@@ -23,6 +23,12 @@ def test_smoke_app_renders_in_fake_cloud_mode(
     assert app.title[0].value == "Plate Reader Database"
     assert app.header[0].value == "Run Library"
     assert "Fake cloud mode is active" in app.info[0].value
+    assert app.radio[0].options == [
+        "Growth Run Library",
+        "New Growth Run",
+        "Growth Workspace",
+        "Import Portable Data",
+    ]
 
 
 def test_real_dual_view_plate_editor_component_renders(
@@ -176,6 +182,7 @@ def test_mic_ui_import_review_edit_visualize_and_export(
     monkeypatch.setenv("PLATE_READER_ENV", "test")
     monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "fake-cloud")
     monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("PLATE_READER_TEST_ENABLE_MIC_UI", "1")
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
     app.radio[0].set_value("New MIC Plate").run()
@@ -295,6 +302,7 @@ def test_empty_mic_navigation_and_source_validation(
     monkeypatch.setenv("PLATE_READER_ENV", "test")
     monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "fake-cloud")
     monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(tmp_path / "empty-mic-ui.sqlite"))
+    monkeypatch.setenv("PLATE_READER_TEST_ENABLE_MIC_UI", "1")
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
     app.radio[0].set_value("MIC Plate Library").run()
@@ -316,6 +324,7 @@ def test_admin_mic_lock_and_soft_delete_ui(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "fake-cloud")
     monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(database_path))
     monkeypatch.setenv("PLATE_READER_DEV_ROLE", "admin")
+    monkeypatch.setenv("PLATE_READER_TEST_ENABLE_MIC_UI", "1")
     app = AppTest.from_file("app.py", default_timeout=30).run()
     app.radio[0].set_value("New MIC Plate").run()
     click(app, "Use synthetic MIC demo")
