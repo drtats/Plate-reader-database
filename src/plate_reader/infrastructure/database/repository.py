@@ -256,7 +256,7 @@ class SqlPlateReaderRepository:
             "(well_id, strain, medium, replicate, inoculum_size, inoculum_unit, "
             "grouping_label, treatment, concentration, concentration_unit, custom_json) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
+            [
                 (
                     _required_str(row, "well_id"),
                     _nullable_str(row.get("strain")),
@@ -271,7 +271,7 @@ class SqlPlateReaderRepository:
                     _json_text(row.get("custom_json", {})),
                 )
                 for row in rows
-            ),
+            ],
         )
 
     def insert_raw_observations(self, plate_id: PlateId, rows: Sequence[dict[str, object]]) -> None:
@@ -281,7 +281,7 @@ class SqlPlateReaderRepository:
                 "INSERT INTO growth_measurements "
                 "(plate_id, well_id, channel, time_index, elapsed_microseconds, value_raw) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (
+                [
                     (
                         plate_id,
                         _required_str(row, "well_id"),
@@ -291,12 +291,12 @@ class SqlPlateReaderRepository:
                         _nullable_float(row.get("value_raw")),
                     )
                     for row in rows
-                ),
+                ],
             )
             return
         self.connection.executemany(
             "INSERT INTO mic_readings(plate_id, well_id, channel, value_raw) VALUES (?, ?, ?, ?)",
-            (
+            [
                 (
                     plate_id,
                     _required_str(row, "well_id"),
@@ -304,7 +304,7 @@ class SqlPlateReaderRepository:
                     _nullable_float(row.get("value_raw")),
                 )
                 for row in rows
-            ),
+            ],
         )
 
     def update_plate_metadata(
@@ -401,7 +401,7 @@ class SqlPlateReaderRepository:
         )
         self.connection.executemany(
             "INSERT INTO experiment_tags(experiment_id, tag) VALUES (?, ?)",
-            ((experiment_id, tag) for tag in normalized),
+            [(experiment_id, tag) for tag in normalized],
         )
 
     def list_plate_templates(
@@ -610,7 +610,7 @@ class SqlPlateReaderRepository:
             "(revision_id, background_group, channel, time_index, elapsed_microseconds, "
             "mean_value, std_value, coefficient_of_variation, blank_count, qc_status) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
+            [
                 (
                     revision_id,
                     _required_str(row, "background_group"),
@@ -624,7 +624,7 @@ class SqlPlateReaderRepository:
                     _required_str(row, "qc_status"),
                 )
                 for row in rows
-            ),
+            ],
         )
 
     def insert_growth_metrics(
@@ -634,7 +634,7 @@ class SqlPlateReaderRepository:
             "INSERT INTO growth_metrics "
             "(revision_id, well_id, channel, metric_name, metric_value, metric_unit, "
             "quality_flag) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
+            [
                 (
                     revision_id,
                     _required_str(row, "well_id"),
@@ -645,7 +645,7 @@ class SqlPlateReaderRepository:
                     _nullable_str(row.get("quality_flag")),
                 )
                 for row in rows
-            ),
+            ],
         )
 
     def insert_mic_well_calls(
@@ -655,7 +655,7 @@ class SqlPlateReaderRepository:
             "INSERT INTO mic_well_calls "
             "(revision_id, well_id, background_value, value_background_subtracted, growth_call) "
             "VALUES (?, ?, ?, ?, ?)",
-            (
+            [
                 (
                     revision_id,
                     _required_str(row, "well_id"),
@@ -664,7 +664,7 @@ class SqlPlateReaderRepository:
                     _nullable_bool_int(row.get("growth_call")),
                 )
                 for row in rows
-            ),
+            ],
         )
 
     def insert_mic_results(
@@ -677,7 +677,7 @@ class SqlPlateReaderRepository:
             "lowest_tested_concentration, highest_tested_concentration, concentrations_json, "
             "point_count, calculation_status, warning) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
+            [
                 (
                     _optional_str(row, "result_id") or _new_id(),
                     revision_id,
@@ -698,7 +698,7 @@ class SqlPlateReaderRepository:
                     _nullable_str(row.get("warning")),
                 )
                 for row in rows
-            ),
+            ],
         )
 
     def append_provenance(self, values: Mapping[str, object]) -> str:

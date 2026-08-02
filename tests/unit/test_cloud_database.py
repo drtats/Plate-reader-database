@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -72,3 +73,21 @@ def test_remote_turso_factory_requires_token_without_echoing_it() -> None:
             TursoDatabaseConfig("libsql://database.turso.io", "   ", Path("migrations"))
         )
     assert "libsql://" not in str(error.value)
+
+
+def test_repository_never_passes_generators_to_remote_executemany() -> None:
+    repository_path = Path(__file__).resolve().parents[2] / (
+        "src/plate_reader/infrastructure/database/repository.py"
+    )
+    tree = ast.parse(repository_path.read_text(encoding="utf-8"))
+    generator_lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "executemany"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.GeneratorExp)
+    ]
+
+    assert generator_lines == []
