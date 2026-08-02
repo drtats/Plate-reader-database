@@ -53,6 +53,7 @@ from plate_reader.application.services.growth_plot_styles import (
 )
 from plate_reader.application.services.growth_plotting import (
     GrowthPlotData,
+    GrowthPlotLabelOptions,
     GrowthPlotPoint,
     PrepareGrowthPlotDataService,
 )
@@ -165,6 +166,7 @@ __all__ = [
     "GrowthPlotColorMode",
     "GrowthPlotColorOptions",
     "GrowthPlotData",
+    "GrowthPlotLabelOptions",
     "GrowthPlotPoint",
     "GrowthPlotStyles",
     "GrowthPreview",

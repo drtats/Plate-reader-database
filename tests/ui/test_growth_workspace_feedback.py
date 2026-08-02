@@ -55,7 +55,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert app.session_state["dark_mode"] is True
     assert any("plate-reader-dark-mode" in item.value for item in app.markdown)
 
-    app.radio[0].set_value("New Growth Run").run()
+    _radio_named(app, "Navigation").set_value("New Growth Run").run()
     assert app.session_state["growth_wizard_step"] == 1
 
     _click(app, "Use synthetic 24-hour demo")
@@ -124,6 +124,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     assert any(item.label == "Filter fields" for item in app.multiselect)
     assert any(item.label == "Curve colors" for item in app.selectbox)
+    assert any(item.label == "Curve label format" for item in app.radio)
 
     _input_named(app, "Prefix").set_value("saved-")
     _click(app, "Preview generated names")
@@ -131,8 +132,8 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     confirmation.set_value(True).run()
     _click(app, "Apply and save generated names")
     assert _display_name_count(database_path, "saved-1") == 96
-    app.radio[0].set_value("Growth Run Library").run()
-    app.radio[0].set_value("Growth Workspace").run()
+    _radio_named(app, "Navigation").set_value("Growth Run Library").run()
+    _radio_named(app, "Navigation").set_value("Growth Workspace").run()
     assert _display_name_count(database_path, "saved-1") == 96
     assert set(app.session_state[workspace_layout_key]["Display name"]) == {"saved-1"}
 
@@ -142,6 +143,13 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert _experiment_name(database_path) == "Characterized Growth run"
     assert _growth_raw_hash(database_path) == raw_before
 
+    label_mode = next(item for item in app.radio if item.label == "Curve label format")
+    label_mode.set_value("Combine fields").run()
+    combined_fields = next(
+        item for item in app.multiselect if item.label == "Curve label fields in order"
+    )
+    combined_fields.set_value(["Display name", "Replicate"]).run()
+    _input_named(app, "Label separator").set_value(" + ").run()
     _click(app, "Render selected curves")
     styles = app.session_state["growth_plot_styles"]
     figure = app.session_state["growth_plot"]
@@ -159,7 +167,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     assert wide_rows[0][0] == "Time (minutes)"
     assert wide_rows[0][1:] == [style.legend_label for style in styles.styles]
-    assert any(item.label == "Curve label" for item in app.selectbox)
+    assert all(style.legend_label.startswith("saved-1 + 1") for style in styles.styles)
     csv_rows = list(
         csv.DictReader(io.StringIO(csv_artifact.content.decode("utf-8-sig"), newline=""))
     )
@@ -216,6 +224,10 @@ def _click(app: AppTest, label: str) -> AppTest:
 
 def _input_named(app: AppTest, label: str) -> Any:
     return next(item for item in app.text_input if item.label == label)
+
+
+def _radio_named(app: AppTest, label: str) -> Any:
+    return next(item for item in app.radio if item.label == label)
 
 
 def _button_labels(app: AppTest) -> set[str]:

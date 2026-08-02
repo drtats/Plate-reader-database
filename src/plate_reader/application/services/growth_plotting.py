@@ -39,6 +39,23 @@ class GrowthPlotData:
     correction_requested: bool
 
 
+@dataclass(frozen=True, slots=True)
+class GrowthPlotLabelOptions:
+    fields: tuple[str, ...] = ("display_name",)
+    separator: str = "_"
+    prefix: str = ""
+    suffix: str = ""
+    omit_empty: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.fields:
+            raise ValueError("Growth plot labels require at least one field")
+        if any(not field.strip() for field in self.fields):
+            raise ValueError("Growth plot label fields cannot be empty")
+        if len(set(self.fields)) != len(self.fields):
+            raise ValueError("Growth plot label fields cannot be repeated")
+
+
 class PrepareGrowthPlotDataService:
     """Convert a loaded snapshot into explicit raw/corrected plot points."""
 
@@ -50,6 +67,7 @@ class PrepareGrowthPlotDataService:
         *,
         corrected: bool,
         label_field: str = "display_name",
+        label_options: GrowthPlotLabelOptions | None = None,
     ) -> GrowthPlotData:
         selected = set(selected_positions)
         wells_by_id = {str(well["well_id"]): well for well in snapshot.wells}
@@ -64,8 +82,9 @@ class PrepareGrowthPlotDataService:
             for row in snapshot.raw_observations
             if str(wells_by_id[str(row["well_id"])]["position"]) in selected
         )
+        selected_label_options = label_options or GrowthPlotLabelOptions((label_field,))
         labels = {
-            str(well["position"]): _display_label(well, label_field)
+            str(well["position"]): _display_label(well, selected_label_options)
             for well in snapshot.wells
             if str(well["position"]) in selected
         }
@@ -144,15 +163,36 @@ class PrepareGrowthPlotDataService:
         )
 
 
-def _display_label(well: dict[str, Any], field: str) -> str:
+def _display_label(well: dict[str, Any], options: GrowthPlotLabelOptions) -> str:
+    values = tuple(_label_value(well, field) for field in options.fields)
+    parts = tuple(
+        text for value in values if (text := _label_text(value)) or not options.omit_empty
+    )
+    combined = options.separator.join(parts)
+    if combined:
+        return f"{options.prefix}{combined}{options.suffix}"
+    return _fallback_label(well)
+
+
+def _label_value(well: dict[str, Any], field: str) -> object:
     if field.startswith("custom:"):
-        value = _custom_values(well).get(field.removeprefix("custom:"))
-    elif field in well:
-        value = well.get(field)
-    else:
+        return _custom_values(well).get(field.removeprefix("custom:"))
+    if field not in well:
         raise ValueError(f"Unknown Growth plot label field: {field}")
-    if value is not None and str(value).strip():
-        return str(value).strip()
+    return well.get(field)
+
+
+def _label_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    return str(value).strip()
+
+
+def _fallback_label(well: dict[str, Any]) -> str:
     for key in ("display_name", "raw_label", "position"):
         value = well.get(key)
         if value is not None and str(value).strip():

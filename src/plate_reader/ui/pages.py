@@ -44,6 +44,7 @@ from plate_reader.application.services import (
     GrowthPdfOptions,
     GrowthPlotColorMode,
     GrowthPlotColorOptions,
+    GrowthPlotLabelOptions,
     GrowthRunView,
     ImportGrowthRunService,
     LoadGrowthRunService,
@@ -896,6 +897,58 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             if field.key != "display_name"
         },
     }
+    label_mode = st.radio(
+        "Curve label format",
+        ("Single field", "Combine fields"),
+        horizontal=True,
+        key=f"growth_plot_label_mode_{plate_id}",
+    )
+    label_options: GrowthPlotLabelOptions | None
+    if label_mode == "Single field":
+        label_choice = st.selectbox(
+            "Curve label",
+            tuple(label_choices),
+            key=f"growth_plot_label_field_{plate_id}",
+        )
+        label_options = GrowthPlotLabelOptions((label_choices[label_choice],))
+    else:
+        combined_labels = tuple(
+            st.multiselect(
+                "Curve label fields in order",
+                tuple(label_choices),
+                default=("Display name",),
+                key=f"growth_plot_label_fields_{plate_id}",
+                help="Fields are combined from left to right in the order selected.",
+            )
+        )
+        label_format = st.columns((1, 1, 1, 1.2))
+        label_separator = label_format[0].text_input(
+            "Label separator", value="_", key=f"growth_plot_label_separator_{plate_id}"
+        )
+        label_prefix = label_format[1].text_input(
+            "Label prefix", key=f"growth_plot_label_prefix_{plate_id}"
+        )
+        label_suffix = label_format[2].text_input(
+            "Label suffix", key=f"growth_plot_label_suffix_{plate_id}"
+        )
+        omit_empty_labels = label_format[3].checkbox(
+            "Omit empty label fields",
+            value=True,
+            key=f"growth_plot_label_omit_empty_{plate_id}",
+        )
+        label_options = (
+            GrowthPlotLabelOptions(
+                tuple(label_choices[label] for label in combined_labels),
+                separator=label_separator,
+                prefix=label_prefix,
+                suffix=label_suffix,
+                omit_empty=omit_empty_labels,
+            )
+            if combined_labels
+            else None
+        )
+        if label_options is None:
+            st.info("Choose at least one field for the combined curve label.")
     with st.form(f"growth-plot-options-{plate_id}"):
         corrected = st.toggle(
             "Apply current background revision",
@@ -908,11 +961,12 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         y_max = limits[2].number_input("Y maximum", value=1.5, format="%.4f")
         symlog = limits[3].checkbox("Symmetric log scale", value=True)
         title = st.text_input("Plot title")
-        label_choice = st.selectbox("Curve label", tuple(label_choices))
         color_choice = st.selectbox("Curve colors", tuple(color_choices))
         save_selection = st.form_submit_button("Save well selection")
         render = st.form_submit_button(
-            "Render selected curves", type="primary", disabled=not selected
+            "Render selected curves",
+            type="primary",
+            disabled=not selected or label_options is None,
         )
     if not selected:
         st.info("Select at least one well before rendering curves.")
@@ -948,12 +1002,13 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         )
         revision_key = current_revision_key if corrected else "raw"
         raw_hash = _raw_hash(view.snapshot.raw_observations)
+        assert label_options is not None
         plot_data = PrepareGrowthPlotDataService().execute(
             view.snapshot,
             view.backgrounds,
             tuple(selected),
             corrected=corrected,
-            label_field=label_choices[label_choice],
+            label_options=label_options,
         )
         options = GrowthPlotOptions(
             title=title.strip(),

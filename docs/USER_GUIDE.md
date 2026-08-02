@@ -40,8 +40,10 @@ Use the reusable selector in **Plotting** to stage wells with the 8x12 plate,
 selection list, or metadata add/remove filters. Saving the selection changes the
 default for later sessions; rendering does not require saving it. Curve colors
 can follow plate order, plotted-series order, or any available metadata/custom
-field. Choose **Curve label** to name traces from Display name or another saved
-well field. PNG, vector PDF, and both CSVs correspond to the visible plot. The
+field. Set **Curve label format** to **Single field** to name traces from one
+saved well field, or **Combine fields** to build labels from several fields in
+the selected order. Combined labels support a separator, prefix, suffix, and
+optional omission of empty values. PNG, vector PDF, and both CSVs correspond to the visible plot. The
 database-oriented long CSV includes exact time identities, raw and plotted
 values, correction state, revision identity, and well metadata. The plot-oriented
 wide CSV puts time first and one visible curve in each remaining column.

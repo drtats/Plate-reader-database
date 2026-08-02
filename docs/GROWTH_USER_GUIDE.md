@@ -53,10 +53,13 @@ Use the plate, selection list, or metadata filters in **Plotting**; all three
 control one selection. Rendering does not save it. Press **Save well selection**
 only when it should become the default for later sessions.
 
-Choose **Curve label** to use Display name, strain, group, treatment, or an
-available custom field. Unique labels appear without physical well IDs. If two
-wells share a label, the legend adds `(A1)`, `(A2)`, and so on to prevent
-ambiguous traces and export columns. Choose curve colors independently.
+Set **Curve label format** to **Single field** to use Display name, strain,
+group, treatment, or an available custom field. Select **Combine fields** to
+build each label from several fields, in the order selected, just like the
+display-name builder. You can set the separator, prefix, suffix, and whether
+empty values are omitted. Unique labels appear without physical well IDs. If
+two wells share a final label, the legend adds `(A1)`, `(A2)`, and so on to
+prevent ambiguous traces and export columns. Choose curve colors independently.
 
 Use **Dark mode** in the sidebar when desired. It is a browser-session preference
 and does not modify data. It applies to selectors, number inputs, buttons,

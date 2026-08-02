@@ -4,7 +4,10 @@ import pytest
 
 from plate_reader.application.contracts import PlateId
 from plate_reader.application.ports.repositories import PlateSnapshot
-from plate_reader.application.services.growth_plotting import PrepareGrowthPlotDataService
+from plate_reader.application.services.growth_plotting import (
+    GrowthPlotLabelOptions,
+    PrepareGrowthPlotDataService,
+)
 from plate_reader.domain.common import IssueCode
 
 
@@ -86,6 +89,74 @@ def test_empty_selected_plot_label_falls_back_to_display_name() -> None:
     )
 
     assert result.points[0].label == "sample A1"
+
+
+def test_plot_label_combines_standard_and_custom_metadata_in_selected_order() -> None:
+    snapshot = growth_snapshot()
+    well = dict(
+        snapshot.wells[0],
+        strain="strain-x",
+        treatment="drug-y",
+        concentration=0.125,
+        custom_json='{"Batch":"B7"}',
+    )
+    snapshot = PlateSnapshot(
+        snapshot.plate_id,
+        snapshot.metadata,
+        (well,),
+        snapshot.raw_observations,
+        snapshot.revisions,
+    )
+
+    result = PrepareGrowthPlotDataService().execute(
+        snapshot,
+        (),
+        ("A1",),
+        corrected=False,
+        label_options=GrowthPlotLabelOptions(
+            ("strain", "custom:Batch", "treatment", "concentration"),
+            separator=" | ",
+            prefix="[",
+            suffix="]",
+        ),
+    )
+
+    assert result.points[0].label == "[strain-x | B7 | drug-y | 0.125]"
+
+
+def test_combined_plot_label_can_keep_or_omit_empty_fields() -> None:
+    omitted = PrepareGrowthPlotDataService().execute(
+        growth_snapshot(),
+        (),
+        ("A1",),
+        corrected=False,
+        label_options=GrowthPlotLabelOptions(
+            ("display_name", "strain", "raw_label"), separator="_"
+        ),
+    )
+    retained = PrepareGrowthPlotDataService().execute(
+        growth_snapshot(),
+        (),
+        ("A1",),
+        corrected=False,
+        label_options=GrowthPlotLabelOptions(
+            ("display_name", "strain", "raw_label"),
+            separator="_",
+            omit_empty=False,
+        ),
+    )
+
+    assert omitted.points[0].label == "sample A1_raw A1"
+    assert retained.points[0].label == "sample A1__raw A1"
+
+
+def test_combined_plot_label_requires_distinct_nonempty_fields() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        GrowthPlotLabelOptions(())
+    with pytest.raises(ValueError, match="cannot be empty"):
+        GrowthPlotLabelOptions(("display_name", " "))
+    with pytest.raises(ValueError, match="cannot be repeated"):
+        GrowthPlotLabelOptions(("display_name", "display_name"))
 
 
 def growth_snapshot(*, manual_subtraction: float = 0.0) -> PlateSnapshot:

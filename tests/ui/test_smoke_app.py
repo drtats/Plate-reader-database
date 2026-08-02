@@ -72,7 +72,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(database_path))
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
-    app.radio[0].set_value("New Growth Run").run()
+    navigation_radio(app).set_value("New Growth Run").run()
     click(app, "Use synthetic 24-hour demo")
     assert app.subheader[0].value == "2. Validate and preview"
     click(app, "Validate and continue")
@@ -156,7 +156,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     portable_path = tmp_path / "ui-portable.plate-reader.sqlite"
     portable_path.write_bytes(artifact.content)
 
-    app.radio[0].set_value("Import Portable Data").run()
+    navigation_radio(app).set_value("Import Portable Data").run()
     input_named(app, "Portable file path").set_value(str(portable_path))
     click(app, "Preview portable local path")
     assert app.subheader[0].value == "Validated portable contents"
@@ -185,7 +185,7 @@ def test_mic_ui_import_review_edit_visualize_and_export(
     monkeypatch.setenv("PLATE_READER_TEST_ENABLE_MIC_UI", "1")
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
-    app.radio[0].set_value("New MIC Plate").run()
+    navigation_radio(app).set_value("New MIC Plate").run()
     click(app, "Use synthetic MIC demo")
     assert app.subheader[0].value == "2. Validate and calculate"
     click(app, "Validate MIC plate")
@@ -268,7 +268,7 @@ def test_mic_ui_import_review_edit_visualize_and_export(
     click(app, "Prepare MIC portable export")
     assert app.session_state["mic_portable_artifact"].content.startswith(b"SQLite format 3")
 
-    app.radio[0].set_value("MIC Results").run()
+    navigation_radio(app).set_value("MIC Results").run()
     assert app.header[0].value == "MIC Results"
     result_columns = next(item for item in app.multiselect if item.label == "Columns to display")
     assert {"Date", "Plate", "Strain", "Antibiotic / treatment", "MIC value"}.issubset(
@@ -290,7 +290,7 @@ def test_mic_ui_import_review_edit_visualize_and_export(
         ).fetchone()
     assert final == (1, 96, 4, 5)
 
-    app.radio[0].set_value("MIC Plate Library").run()
+    navigation_radio(app).set_value("MIC Plate Library").run()
     assert app.header[0].value == "MIC Plate Library"
     click(app, "Open MIC workspace")
     assert app.header[0].value == "UI MIC edited — MIC Plate 1"
@@ -305,15 +305,15 @@ def test_empty_mic_navigation_and_source_validation(
     monkeypatch.setenv("PLATE_READER_TEST_ENABLE_MIC_UI", "1")
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
-    app.radio[0].set_value("MIC Plate Library").run()
+    navigation_radio(app).set_value("MIC Plate Library").run()
     assert app.header[0].value == "MIC Plate Library"
     assert any("No MIC plates" in item.value for item in app.info)
-    app.radio[0].set_value("MIC Workspace").run()
+    navigation_radio(app).set_value("MIC Workspace").run()
     assert any("Choose a MIC plate" in item.value for item in app.info)
-    app.radio[0].set_value("MIC Results").run()
+    navigation_radio(app).set_value("MIC Results").run()
     assert app.header[0].value == "MIC Results"
     assert any("No MIC result" in item.value for item in app.info)
-    app.radio[0].set_value("New MIC Plate").run()
+    navigation_radio(app).set_value("New MIC Plate").run()
     click(app, "Use selected MIC source")
     assert any("Choose a MIC file" in item.value for item in app.caption)
 
@@ -326,7 +326,7 @@ def test_admin_mic_lock_and_soft_delete_ui(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setenv("PLATE_READER_DEV_ROLE", "admin")
     monkeypatch.setenv("PLATE_READER_TEST_ENABLE_MIC_UI", "1")
     app = AppTest.from_file("app.py", default_timeout=30).run()
-    app.radio[0].set_value("New MIC Plate").run()
+    navigation_radio(app).set_value("New MIC Plate").run()
     click(app, "Use synthetic MIC demo")
     click(app, "Validate MIC plate")
     input_named(app, "MIC experiment name").set_value("Admin MIC")
@@ -386,3 +386,7 @@ def click(app: AppTest, label: str) -> AppTest:
 
 def input_named(app: AppTest, label: str) -> object:
     return next(item for item in app.text_input if item.label == label)
+
+
+def navigation_radio(app: AppTest) -> object:
+    return next(item for item in app.radio if item.label == "Navigation")
