@@ -434,11 +434,11 @@ title or plate identifier.
 
 ### Tasks
 
-- [ ] Ensure the prepared plot DTO retains exact time index/microseconds required
+- [x] Ensure the prepared plot DTO retains exact time index/microseconds required
       for lossless export; extend it additively if needed.
-- [ ] Add a pure CSV artifact builder.
-- [ ] Add the download button beside the existing plot PDF action.
-- [ ] Do not alter the whole-run portable Export tab.
+- [x] Add a pure CSV artifact builder.
+- [x] Add the download button beside the existing plot PDF action.
+- [x] Do not alter the whole-run portable Export tab.
 
 ### Likely files
 
@@ -451,13 +451,13 @@ title or plate identifier.
 
 ### Checks
 
-- [ ] Exported wells exactly match the current plot selection.
-- [ ] Row count equals the number of prepared plot points, including channels.
-- [ ] Raw values equal stored observations without rounding changes.
-- [ ] Plotted values equal the visible plot data.
-- [ ] Correction state and revision identity are explicit.
-- [ ] First-class and custom well metadata are present.
-- [ ] CSV opens cleanly in Excel and handles commas/newlines through standard CSV
+- [x] Exported wells exactly match the current plot selection.
+- [x] Row count equals the number of prepared plot points, including channels.
+- [x] Raw values equal stored observations without rounding changes.
+- [x] Plotted values equal the visible plot data.
+- [x] Correction state and revision identity are explicit.
+- [x] First-class and custom well metadata are present.
+- [x] CSV opens cleanly in Excel and handles commas/newlines through standard CSV
       quoting.
 
 ### Suggested commit

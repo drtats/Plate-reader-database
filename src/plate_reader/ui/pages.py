@@ -37,6 +37,8 @@ from plate_reader.application.services import (
     ComputeGrowthBackgroundService,
     ExportGrowthRunService,
     GrowthBackgroundGroupSource,
+    GrowthDataCsvArtifact,
+    GrowthDataExportContext,
     GrowthPdfArtifact,
     GrowthPdfOptions,
     GrowthPlotColorMode,
@@ -51,6 +53,7 @@ from plate_reader.application.services import (
     SummarizeGrowthBackgroundQcService,
     UpdateGrowthLayoutService,
     UpdateGrowthMetadataService,
+    export_growth_plot_data_csv,
     export_growth_plot_pdf,
     growth_selection_fields,
 )
@@ -893,7 +896,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         except Exception as error:
             render_exception(error)
     if render:
-        revision_key = next(
+        current_revision_key = next(
             (
                 str(row["revision_id"])
                 for row in reversed(view.snapshot.revisions)
@@ -901,6 +904,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             ),
             "raw",
         )
+        revision_key = current_revision_key if corrected else "raw"
         raw_hash = _raw_hash(view.snapshot.raw_observations)
         plot_data = PrepareGrowthPlotDataService().execute(
             view.snapshot,
@@ -943,6 +947,17 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             options.title or f"growth-plot-{plate_id}",
             styles,
         )
+        st.session_state.growth_plot_csv = export_growth_plot_data_csv(
+            plot_data,
+            view.snapshot.wells,
+            GrowthDataExportContext(
+                plate_id=str(view.snapshot.plate_id),
+                experiment_name=str(view.snapshot.metadata["name"]),
+                plate_name=str(view.snapshot.metadata["plate_name"]),
+                revision_id=revision_key,
+            ),
+            options.title or f"growth-plot-{plate_id}",
+        )
     for issue in st.session_state.get("growth_plot_issues", ()):
         st.warning(issue.message)
     if (figure := st.session_state.get("growth_plot")) is not None and st.session_state.get(
@@ -956,13 +971,22 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             ),
         )
         st.caption("Use the camera button in the plot toolbar to download a high-resolution PNG.")
+        downloads = st.columns(2)
         if pdf_value := st.session_state.get("growth_plot_pdf"):
             pdf = cast(GrowthPdfArtifact, pdf_value)
-            st.download_button(
+            downloads[0].download_button(
                 "Download plot as PDF",
                 data=pdf.content,
                 file_name=pdf.filename,
                 mime="application/pdf",
+            )
+        if csv_value := st.session_state.get("growth_plot_csv"):
+            csv_artifact = cast(GrowthDataCsvArtifact, csv_value)
+            downloads[1].download_button(
+                "Download selected plot data as CSV",
+                data=csv_artifact.content,
+                file_name=csv_artifact.filename,
+                mime="text/csv",
             )
 
 
@@ -1115,6 +1139,7 @@ def _clear_growth_plot() -> None:
         "growth_plot_plate_id",
         "growth_plot_title",
         "growth_plot_pdf",
+        "growth_plot_csv",
         "growth_plot_styles",
         "growth_plate_overview",
         "growth_plate_overview_issues",

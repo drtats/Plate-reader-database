@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -120,11 +122,33 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     _click(app, "Render selected curves")
     styles = app.session_state["growth_plot_styles"]
     figure = app.session_state["growth_plot"]
+    csv_artifact = app.session_state["growth_plot_csv"]
     assert len(figure.data) == len(styles.styles)
     assert {style.position for style in styles.styles} == set(
         app.session_state[f"growth_plot_selection_{app.session_state['selected_plate_id']}"]
     )
     assert figure.data[0].line.color == styles.styles[0].color_hex
+    assert csv_artifact.row_count == sum(len(trace.x) for trace in figure.data)
+    assert csv_artifact.content.startswith(b"\xef\xbb\xbf")
+    csv_rows = list(
+        csv.DictReader(io.StringIO(csv_artifact.content.decode("utf-8-sig"), newline=""))
+    )
+    assert {row["Well"] for row in csv_rows} == {style.position for style in styles.styles}
+    first_style = styles.styles[0]
+    first_series = sorted(
+        (
+            row
+            for row in csv_rows
+            if row["Well"] == first_style.position and row["Channel"] == first_style.channel
+        ),
+        key=lambda row: int(row["Time index"]),
+    )
+    assert [float(row["Plotted value"]) for row in first_series] == [
+        float(custom[0]) for custom in figure.data[0].customdata
+    ]
+    assert any(
+        item.label == "Download selected plot data as CSV" for item in app.get("download_button")
+    )
     assert any("Selected wells:" in item.value for item in app.caption)
 
     _input_named(app, "Experiment name").set_value("Saved Growth name")

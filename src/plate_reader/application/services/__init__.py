@@ -1,5 +1,10 @@
 """Application use cases."""
 
+from plate_reader.application.services.growth_data_export import (
+    GrowthDataCsvArtifact,
+    GrowthDataExportContext,
+    export_growth_plot_data_csv,
+)
 from plate_reader.application.services.growth_display_names import (
     BuildGrowthDisplayNamesService,
     GrowthDisplayNameAction,
@@ -139,6 +144,8 @@ __all__ = [
     "GrowthBackgroundGroupSource",
     "GrowthBackgroundQcGroup",
     "GrowthBackgroundQcReport",
+    "GrowthDataCsvArtifact",
+    "GrowthDataExportContext",
     "GrowthDisplayNameAction",
     "GrowthDisplayNameChange",
     "GrowthDisplayNameOptions",
@@ -212,6 +219,7 @@ __all__ = [
     "combine_growth_selection",
     "default_growth_plot_styles",
     "export_growth_display_name_csv",
+    "export_growth_plot_data_csv",
     "export_growth_plot_pdf",
     "growth_selection_fields",
     "normalize_growth_selection",
