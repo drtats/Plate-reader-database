@@ -13,6 +13,11 @@ from datetime import UTC, datetime
 from plate_reader.application.contracts import AssayType, ExperimentId, PlateId, RevisionId
 from plate_reader.application.ports.repositories import PlateSnapshot, RunSummary
 from plate_reader.infrastructure.database.dbapi import Connection, Cursor
+from plate_reader.infrastructure.database.growth_series import (
+    GrowthSeriesCodecError,
+    decode_plate_growth_series,
+    encode_growth_series,
+)
 from plate_reader.infrastructure.database.transactions import transaction
 
 
@@ -277,20 +282,45 @@ class SqlPlateReaderRepository:
     def insert_raw_observations(self, plate_id: PlateId, rows: Sequence[dict[str, object]]) -> None:
         assay = self._plate_assay(plate_id)
         if assay is AssayType.GROWTH:
+            normalized = [
+                {
+                    "well_id": _required_str(row, "well_id"),
+                    "channel": _required_str(row, "channel"),
+                    "time_index": _required_int(row, "time_index", minimum=0),
+                    "elapsed_microseconds": _required_int(row, "elapsed_microseconds", minimum=0),
+                    "value_raw": _nullable_float(row.get("value_raw")),
+                }
+                for row in rows
+            ]
+            well_positions = {
+                str(row[0]): str(row[1])
+                for row in self.connection.execute(
+                    "SELECT well_id, position FROM wells WHERE plate_id = ?",
+                    (plate_id,),
+                ).fetchall()
+            }
+            try:
+                chunks = encode_growth_series(str(plate_id), normalized, well_positions)
+            except GrowthSeriesCodecError as error:
+                raise InvalidRepositoryValueError(str(error)) from error
             self.connection.executemany(
-                "INSERT INTO growth_measurements "
-                "(plate_id, well_id, channel, time_index, elapsed_microseconds, value_raw) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO growth_series_chunks "
+                "(plate_id, channel, positions_json, timepoints_blob, values_blob, "
+                "timepoint_count, position_count, encoding, content_sha256) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
-                        plate_id,
-                        _required_str(row, "well_id"),
-                        _required_str(row, "channel"),
-                        _required_int(row, "time_index", minimum=0),
-                        _required_int(row, "elapsed_microseconds", minimum=0),
-                        _nullable_float(row.get("value_raw")),
+                        chunk["plate_id"],
+                        chunk["channel"],
+                        chunk["positions_json"],
+                        chunk["timepoints_blob"],
+                        chunk["values_blob"],
+                        chunk["timepoint_count"],
+                        chunk["position_count"],
+                        chunk["encoding"],
+                        chunk["content_sha256"],
                     )
-                    for row in rows
+                    for chunk in chunks
                 ],
             )
             return
@@ -813,10 +843,14 @@ class SqlPlateReaderRepository:
             )
         )
         assay = AssayType(str(metadata["assay_type"]))
-        raw_table = "growth_measurements" if assay is AssayType.GROWTH else "mic_readings"
-        raw = _all_dicts(
-            self.connection.execute(f"SELECT * FROM {raw_table} WHERE plate_id = ?", (plate_id,))
-        )
+        if assay is AssayType.GROWTH:
+            raw = self._load_growth_measurements(plate_id)
+        else:
+            raw = _all_dicts(
+                self.connection.execute(
+                    "SELECT * FROM mic_readings WHERE plate_id = ?", (plate_id,)
+                )
+            )
         revisions = _all_dicts(
             self.connection.execute(
                 "SELECT * FROM analysis_revisions WHERE plate_id = ? ORDER BY created_at",
@@ -1046,14 +1080,46 @@ class SqlPlateReaderRepository:
     ) -> Iterator[tuple[dict[str, object], ...]]:
         if chunk_size < 1:
             raise InvalidRepositoryValueError("chunk_size must be positive")
-        cursor = self.connection.execute(
+        rows = self._load_growth_measurements(plate_id)
+        for offset in range(0, len(rows), chunk_size):
+            yield rows[offset : offset + chunk_size]
+
+    def _load_growth_measurements(self, plate_id: PlateId) -> tuple[dict[str, object], ...]:
+        compact: tuple[dict[str, object], ...] = ()
+        if self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'growth_series_chunks'"
+        ).fetchone():
+            compact_cursor = self.connection.execute(
+                "SELECT plate_id, channel, positions_json, timepoints_blob, values_blob, "
+                "timepoint_count, position_count, encoding, content_sha256 "
+                "FROM growth_series_chunks WHERE plate_id = ? ORDER BY channel",
+                (plate_id,),
+            )
+            compact = _all_dicts(compact_cursor)
+        legacy_cursor = self.connection.execute(
             "SELECT plate_id, well_id, channel, time_index, elapsed_microseconds, value_raw "
             "FROM growth_measurements WHERE plate_id = ? "
             "ORDER BY channel, time_index, well_id",
             (plate_id,),
         )
-        while rows := cursor.fetchmany(chunk_size):
-            yield tuple(_row_dict(cursor, row) for row in rows)
+        legacy = _all_dicts(legacy_cursor)
+        if compact and legacy:
+            raise RuntimeError(f"Plate has both compact and legacy growth data: {plate_id}")
+        if not compact:
+            return legacy
+        position_well_ids = {
+            str(row[0]): str(row[1])
+            for row in self.connection.execute(
+                "SELECT position, well_id FROM wells WHERE plate_id = ?",
+                (plate_id,),
+            ).fetchall()
+        }
+        try:
+            return decode_plate_growth_series(compact, position_well_ids)
+        except GrowthSeriesCodecError as error:
+            raise RuntimeError(
+                f"Stored growth data is invalid for plate {plate_id}: {error}"
+            ) from error
 
     def _plate_assay(self, plate_id: PlateId) -> AssayType:
         row = self.connection.execute(

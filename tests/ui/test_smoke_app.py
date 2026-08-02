@@ -147,11 +147,11 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     assert any(button.label == "Recompute backgrounds and QC" for button in app.button)
     with sqlite3.connect(database_path) as database:
         counts_before = database.execute(
-            "SELECT (SELECT count(*) FROM growth_measurements), "
+            "SELECT (SELECT count(*) FROM growth_series_chunks), "
             "(SELECT count(*) FROM provenance_events), "
             "(SELECT count(*) FROM schema_migrations)"
         ).fetchone()
-    assert counts_before == (13_920, 1, 1)
+    assert counts_before == (1, 1, 2)
 
     input_named(app, "Experiment name").set_value("UI edited experiment")
     input_named(app, "Project").set_value("UI project")
@@ -193,7 +193,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
     click(app, "Save full layout")
     with sqlite3.connect(database_path) as database:
-        assert database.execute("SELECT count(*) FROM growth_measurements").fetchone() == (13_920,)
+        assert database.execute("SELECT count(*) FROM growth_series_chunks").fetchone() == (1,)
     assert next(item for item in app.number_input if item.label == "X maximum").value == 1_400.0
     assert next(item for item in app.number_input if item.label == "Y minimum").value == 0.001
     assert next(item for item in app.number_input if item.label == "Y maximum").value == 1.5
@@ -221,12 +221,12 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     app.run()
     with sqlite3.connect(database_path) as database:
         counts_after = database.execute(
-            "SELECT (SELECT count(*) FROM growth_measurements), "
+            "SELECT (SELECT count(*) FROM growth_series_chunks), "
             "(SELECT count(*) FROM provenance_events), "
             "(SELECT count(*) FROM schema_migrations), "
             "(SELECT count(*) FROM plates)"
         ).fetchone()
-    assert counts_after == (27_840, 9, 1, 2)
+    assert counts_after == (2, 9, 2, 2)
 
 
 def test_mic_ui_import_review_edit_visualize_and_export(

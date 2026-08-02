@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "migrations"
 SAVE_BUDGET_SECONDS = 1.5
 LOAD_BUDGET_SECONDS = 0.25
-FILE_BUDGET_BYTES = 8 * 1024 * 1024
+FILE_BUDGET_BYTES = 1 * 1024 * 1024
 
 
 @pytest.mark.parametrize("backend", tuple(DatabaseBackend), ids=lambda backend: backend.value)
@@ -52,10 +52,14 @@ def test_full_growth_run_stays_within_measured_regression_budget(
     load_started = time.perf_counter()
     snapshot = repository.load_plate(result.plate_id)
     load_seconds = time.perf_counter() - load_started
+    legacy_count = connection.execute("SELECT count(*) FROM growth_measurements").fetchone()
+    chunk_count = connection.execute("SELECT count(*) FROM growth_series_chunks").fetchone()
     connection.close()
 
     assert snapshot is not None
     assert len(snapshot.raw_observations) == 13_920
+    assert legacy_count == (0,)
+    assert chunk_count == (1,)
     assert save_seconds < SAVE_BUDGET_SECONDS
     assert load_seconds < LOAD_BUDGET_SECONDS
     assert path.stat().st_size < FILE_BUDGET_BYTES

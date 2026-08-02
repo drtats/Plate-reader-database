@@ -75,6 +75,9 @@ def test_growth_import_is_atomic_complete_and_idempotent(
             "provenance_events",
         )
     }
+    counts["growth_measurements"] = sum(
+        len(chunk) for chunk in repository.stream_growth_measurements(first.plate_id)
+    )
     assert counts == {
         "users": 1,
         "experiments": 1,

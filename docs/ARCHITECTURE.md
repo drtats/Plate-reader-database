@@ -186,7 +186,10 @@ avoided.
 
 ### Growth module records
 
-- `growth_measurements`: immutable raw time-series values.
+- `growth_series_chunks`: immutable, lossless compressed matrices used by new
+  growth imports (one record per plate/channel).
+- `growth_measurements`: immutable row-based time-series values retained as a
+  backward-compatible read path and as the canonical portable representation.
 - `growth_backgrounds`: background/QC results tied to an analysis revision.
 - `growth_metrics`: optional derived AUC, lag, maximum OD, and growth-rate values
   tied to a revision.

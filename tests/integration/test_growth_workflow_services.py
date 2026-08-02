@@ -369,9 +369,5 @@ def identifier_sequence() -> object:
 
 
 def raw_hash(repository: SqlPlateReaderRepository, plate_id: PlateId) -> str:
-    rows = repository.connection.execute(
-        "SELECT well_id, channel, time_index, elapsed_microseconds, value_raw "
-        "FROM growth_measurements WHERE plate_id = ? ORDER BY well_id, channel, time_index",
-        (plate_id,),
-    ).fetchall()
+    rows = [row for chunk in repository.stream_growth_measurements(plate_id) for row in chunk]
     return hashlib.sha256(repr(rows).encode()).hexdigest()

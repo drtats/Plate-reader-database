@@ -34,7 +34,7 @@ def test_live_turso_repository_import_transaction_and_backup_contract(tmp_path: 
     repository = SqlPlateReaderRepository(connection)
     try:
         assert isinstance(repository, PlateReaderRepository)
-        assert connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (2,)
         if connection.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None:
             pytest.fail("The live contract requires a fresh isolated Turso test database")
 

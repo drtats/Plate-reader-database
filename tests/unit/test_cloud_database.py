@@ -36,7 +36,7 @@ def test_remote_turso_factory_uses_official_driver_and_applies_migrations(
         )
     )
     try:
-        assert connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (2,)
     finally:
         connection.close()
 

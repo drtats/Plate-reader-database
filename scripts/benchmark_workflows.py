@@ -207,8 +207,16 @@ def measure(
 
         counts = {
             table: int(str(connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]))
-            for table in ("experiments", "plates", "wells", "growth_measurements", "mic_readings")
+            for table in ("experiments", "plates", "wells", "mic_readings")
         }
+        counts["growth_measurements"] = int(
+            str(
+                connection.execute(
+                    "SELECT COALESCE(SUM(timepoint_count * position_count), 0) "
+                    "FROM growth_series_chunks"
+                ).fetchone()[0]
+            )
+        )
         connection.close()
         return {
             "backend": backend.value,

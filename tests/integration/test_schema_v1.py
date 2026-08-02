@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "experiments",
     "growth_backgrounds",
     "growth_measurements",
+    "growth_series_chunks",
     "growth_metrics",
     "import_sources",
     "mic_readings",
@@ -87,7 +88,7 @@ def seed_plate(connection: sqlite3.Connection) -> None:
 
 def test_schema_creates_from_empty_and_is_idempotent() -> None:
     connection = sqlite3.connect(":memory:")
-    assert apply_migrations(connection, MIGRATIONS) == (1,)
+    assert apply_migrations(connection, MIGRATIONS) == (1, 2)
     assert apply_migrations(connection, MIGRATIONS) == ()
     tables = {
         row[0]

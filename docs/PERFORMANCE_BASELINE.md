@@ -1,5 +1,20 @@
 # Persistence performance baseline
 
+## Compact-series baseline
+
+Measured on 2026-08-02 after migration 0002. The same 96-well, 145-timepoint
+workload still exposes 13,920 logical measurements, but stores one compressed
+raw record for its single channel.
+
+| Adapter | Save median | Load median | Database size |
+| --- | ---: | ---: | ---: |
+| `pyturso` | 0.047 s | 0.012 s | 397,312 B |
+| `fake-cloud` | 0.049 s | 0.009 s | 397,312 B |
+
+This is about a 94% reduction from the 6.0 MB row-based baseline. The current
+regression budget is 1 MiB. Turso usage must still be checked after deployment,
+but raw writes are now one record per channel rather than one per measurement.
+
 ## Phase 3 baseline
 
 Measured on 2026-08-01 on arm64 macOS 26.2 with Python 3.12.13 and SQLite
@@ -12,8 +27,8 @@ Each result below is five fresh-database repetitions.
 | `pyturso` | 0.267 s | 0.279 s | 0.025 s | 0.027 s | 6,291,456 B |
 | `fake-cloud` | 0.106 s | 0.107 s | 0.019 s | 0.021 s | 6,316,032 B |
 
-The repeatable regression budgets are 1.5 seconds to save, 0.25 seconds to load,
-and 8 MiB for the database. These are intentionally wider than the observed
+The original repeatable regression budgets were 1.5 seconds to save, 0.25 seconds
+to load, and 8 MiB for the database. These were intentionally wider than the observed
 local p95 values to tolerate CI and filesystem variability. A failure is a signal
 to investigate and remeasure; budgets must not be silently raised.
 
@@ -49,9 +64,8 @@ growth measurements, and 3,840 MIC readings.
 The database occupied 124,780,544 bytes, or about 6.239 MB per full growth run
 with shared schema/MIC overhead. A one-run `dbstat` sample attributed about 1.47
 MB to raw rows and about 4.50 MB to the primary-key, elapsed-time uniqueness, and
-load-order indexes. Those indexes enforce two independent time identities and
-make bounded plate loading predictable; the measured workload does not justify
-removing them yet.
+load-order indexes. Those measurements motivated the compact-series migration
+described above.
 
 As of 2026-08-01, Turso's Free plan advertises 5 GB storage, 500 million monthly
 rows read, and 10 million monthly rows written. At the measured local density,

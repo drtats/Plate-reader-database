@@ -154,12 +154,14 @@ def test_commit_is_lossless_auditable_and_idempotent(
         "compound_x",
         1,
     )
-    curve = repository.connection.execute(
-        "SELECT gm.elapsed_microseconds, gm.value_raw FROM growth_measurements gm "
-        "JOIN wells w ON w.well_id = gm.well_id "
-        "WHERE gm.plate_id = ? AND w.position = 'A1' ORDER BY gm.elapsed_microseconds",
-        (imported.plate_id,),
-    ).fetchall()
+    snapshot = repository.load_plate(imported.plate_id)
+    assert snapshot is not None
+    a1_well_id = next(str(well["well_id"]) for well in snapshot.wells if well["position"] == "A1")
+    curve = [
+        (row["elapsed_microseconds"], row["value_raw"])
+        for row in snapshot.raw_observations
+        if row["well_id"] == a1_well_id
+    ]
     assert curve == [
         (0, 0.05),
         (600_000_000, 0.051),
@@ -473,7 +475,7 @@ def id_sequence() -> Callable[[], str]:
 
 
 def table_counts(repository: SqlPlateReaderRepository) -> dict[str, int]:
-    return {
+    counts = {
         table: int(
             str(repository.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
         )
@@ -489,6 +491,14 @@ def table_counts(repository: SqlPlateReaderRepository) -> dict[str, int]:
             "provenance_events",
         )
     }
+    counts["growth_measurements"] = sum(
+        len(chunk)
+        for (plate_id,) in repository.connection.execute(
+            "SELECT plate_id FROM plates WHERE assay_type = 'growth'"
+        ).fetchall()
+        for chunk in repository.stream_growth_measurements(plate_id)
+    )
+    return counts
 
 
 def assert_seeded_samples_match(
@@ -496,6 +506,9 @@ def assert_seeded_samples_match(
 ) -> None:
     positions = [f"{row}{column}" for row in "ABCDEFGH" for column in range(1, 13)]
     selected = random.Random(20260801).sample(positions, 8)
+    snapshot = repository.load_plate(plate_id)
+    assert snapshot is not None
+    positions_by_well = {str(well["well_id"]): str(well["position"]) for well in snapshot.wells}
     with sqlite3.connect(source) as legacy:
         legacy.row_factory = sqlite3.Row
         for position in selected:
@@ -528,13 +541,15 @@ def assert_seeded_samples_match(
                 "WHERE well = ? ORDER BY signal_type, time_min",
                 (position,),
             ).fetchall()
-            target_curve = repository.connection.execute(
-                "SELECT gm.channel, gm.elapsed_microseconds, gm.value_raw "
-                "FROM growth_measurements gm JOIN wells w ON w.well_id = gm.well_id "
-                "WHERE gm.plate_id = ? AND w.position = ? "
-                "ORDER BY gm.channel, gm.elapsed_microseconds",
-                (plate_id, position),
-            ).fetchall()
+            target_curve = sorted(
+                (
+                    str(row["channel"]),
+                    int(row["elapsed_microseconds"]),
+                    row["value_raw"],
+                )
+                for row in snapshot.raw_observations
+                if positions_by_well[str(row["well_id"])] == position
+            )
             assert [
                 (str(row[0]), round(float(row[1]) * 60_000_000), row[2]) for row in source_curve
             ] == list(target_curve)

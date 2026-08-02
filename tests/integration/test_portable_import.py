@@ -258,18 +258,14 @@ def test_forced_portable_import_failure_rolls_back(
 ) -> None:
     path, _plate_id, _revision_id = portable_file
     connection, _repository = destination
-    original = portable_module._insert_dict_rows
 
     def fail_on_measurements(
-        selected_connection: Connection,
-        table: str,
-        rows: list[dict[str, object]],
+        selected_connection: Connection, rows: list[dict[str, object]]
     ) -> None:
-        if table == "growth_measurements":
-            raise RuntimeError("forced portable failure")
-        original(selected_connection, table, rows)
+        del selected_connection, rows
+        raise RuntimeError("forced portable failure")
 
-    monkeypatch.setattr(portable_module, "_insert_dict_rows", fail_on_measurements)
+    monkeypatch.setattr(portable_module, "_insert_import_growth_rows", fail_on_measurements)
     with pytest.raises(RuntimeError, match="forced portable failure"):
         import_portable_file(connection, path, actor_id="importer-user")
     counts = application_counts(connection)
@@ -361,7 +357,15 @@ def application_counts(connection: Connection) -> dict[str, int]:
         "import_sources",
         "provenance_events",
     )
-    return {
+    counts = {
         table: int(connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
         for table in tables
     }
+    counts["growth_measurements"] = sum(
+        len(chunk)
+        for (plate_id,) in connection.execute(
+            "SELECT plate_id FROM plates WHERE assay_type = 'growth'"
+        ).fetchall()
+        for chunk in SqlPlateReaderRepository(connection).stream_growth_measurements(plate_id)
+    )
+    return counts

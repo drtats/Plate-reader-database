@@ -62,7 +62,7 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Reposito
 
 def test_adapter_satisfies_frozen_repository_protocol(harness: RepositoryHarness) -> None:
     assert isinstance(harness.repository, PlateReaderRepository)
-    assert harness.connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (1,)
+    assert harness.connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (2,)
     assert harness.connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
 
 
@@ -151,7 +151,9 @@ def test_metadata_updates_do_not_touch_raw_measurements(harness: RepositoryHarne
         )
     assert updated_at != initial
     assert raw_hash(harness.connection, "plate-growth") == raw_before
-    assert harness.connection.execute("SELECT count(*) FROM growth_measurements").fetchone() == (4,)
+    assert harness.connection.execute("SELECT count(*) FROM growth_series_chunks").fetchone() == (
+        1,
+    )
     with pytest.raises(ConcurrencyConflictError):
         repository.update_plate_metadata(
             PlateId("plate-growth"), initial, {"plate_name": "Stale edit"}
@@ -165,7 +167,7 @@ def test_raw_immutability_and_foreign_keys_are_enforced(harness: RepositoryHarne
     seed_growth(repository)
     with pytest.raises(DATABASE_INTEGRITY_ERRORS, match="immutable"):
         harness.connection.execute(
-            "UPDATE growth_measurements SET value_raw = 9 WHERE plate_id = 'plate-growth'"
+            "UPDATE growth_series_chunks SET channel = 'changed' WHERE plate_id = 'plate-growth'"
         )
     with pytest.raises(DATABASE_INTEGRITY_ERRORS), repository.transaction():
         repository.create_plate(
@@ -316,7 +318,7 @@ def test_pyturso_file_opens_with_standard_sqlite(harness: RepositoryHarness) -> 
     standard = sqlite3.connect(harness.path)
     try:
         assert standard.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert standard.execute("SELECT count(*) FROM growth_measurements").fetchone() == (4,)
+        assert standard.execute("SELECT count(*) FROM growth_series_chunks").fetchone() == (1,)
     finally:
         standard.close()
 
@@ -464,9 +466,9 @@ def revision_values(revision_id: str) -> dict[str, object]:
 
 
 def raw_hash(connection: Connection, plate_id: str) -> str:
-    rows = connection.execute(
-        "SELECT well_id, channel, time_index, elapsed_microseconds, value_raw "
-        "FROM growth_measurements WHERE plate_id = ? ORDER BY well_id, channel, time_index",
-        (plate_id,),
-    ).fetchall()
+    rows = [
+        row
+        for chunk in SqlPlateReaderRepository(connection).stream_growth_measurements(plate_id)
+        for row in chunk
+    ]
     return hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()

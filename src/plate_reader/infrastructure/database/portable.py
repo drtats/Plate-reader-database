@@ -20,10 +20,15 @@ from plate_reader.application.ports.portable import (
 )
 from plate_reader.infrastructure.database.dbapi import Connection
 from plate_reader.infrastructure.database.migrations import apply_migrations
+from plate_reader.infrastructure.database.repository import (
+    InvalidRepositoryValueError,
+    SqlPlateReaderRepository,
+)
 from plate_reader.infrastructure.database.transactions import transaction
 
 PORTABLE_FORMAT_VERSION = 1
 SCHEMA_VERSION = 1
+DATABASE_SCHEMA_VERSION = 2
 PORTABLE_PARSER_VERSION = "portable/1.0.0"
 
 
@@ -419,6 +424,7 @@ def export_portable_runs(
     target = cast(Connection, target_sqlite)
     try:
         apply_migrations(target, migrations_directory)
+        _remove_internal_compact_storage(target)
         with transaction(target):
             _copy_selection(source, target, selection)
             _create_portable_manifest_tables(target)
@@ -632,7 +638,10 @@ def import_portable_file(
     }
     with transaction(destination):
         for table in PORTABLE_DATA_TABLES:
-            _insert_dict_rows(destination, table, transformed[table])
+            if table == "growth_measurements":
+                _insert_import_growth_rows(destination, transformed[table])
+            else:
+                _insert_dict_rows(destination, table, transformed[table])
         imported_plate_ids = tuple(plate_map.values())
         destination.execute(
             "INSERT INTO import_sources "
@@ -689,6 +698,7 @@ def backup_complete_database(
     target = cast(Connection, target_sqlite)
     try:
         apply_migrations(target, migrations_directory)
+        _remove_internal_compact_storage(target)
         if source.in_transaction:
             raise RuntimeError("Complete backup requires an idle source connection")
         source.execute("BEGIN")
@@ -924,6 +934,10 @@ def _copy_selection(source: Connection, target: Connection, selection: _Selectio
         ),
     }
     for table in PORTABLE_DATA_TABLES:
+        if table == "growth_measurements":
+            rows = _logical_growth_rows(source, selection.plate_ids)
+            _insert_rows(target, table, rows)
+            continue
         where, parameters = filters[table]
         rows = _select_rows(source, table, where, parameters)
         _insert_rows(target, table, rows)
@@ -931,13 +945,30 @@ def _copy_selection(source: Connection, target: Connection, selection: _Selectio
 
 def logical_table_hash(connection: Connection, table: str) -> tuple[int, str]:
     columns = TABLE_COLUMNS[table]
-    order = PRIMARY_KEYS[table]
-    cursor = connection.execute(
-        f"SELECT {_column_sql(columns)} FROM {table} ORDER BY {_column_sql(order)}"
-    )
     digest = hashlib.sha256()
     count = 0
-    while rows := cursor.fetchmany(1_000):
+    if table == "growth_measurements":
+        plate_ids = tuple(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT plate_id FROM plates WHERE assay_type = 'growth' ORDER BY plate_id"
+            ).fetchall()
+        )
+        batches: Iterable[Sequence[Sequence[object]]] = (
+            _logical_growth_rows(connection, plate_ids),
+        )
+    else:
+        order = PRIMARY_KEYS[table]
+        cursor = connection.execute(
+            f"SELECT {_column_sql(columns)} FROM {table} ORDER BY {_column_sql(order)}"
+        )
+
+        def cursor_batches() -> Iterator[Sequence[Sequence[object]]]:
+            while rows := cursor.fetchmany(1_000):
+                yield rows
+
+        batches = cursor_batches()
+    for rows in batches:
         for row in rows:
             digest.update(_canonical_json(row).encode())
             digest.update(b"\n")
@@ -977,6 +1008,17 @@ def _copy_table_in_chunks(
     *,
     batch_size: int = 1_000,
 ) -> None:
+    if table == "growth_measurements":
+        plate_ids = tuple(
+            str(row[0])
+            for row in source.execute(
+                "SELECT plate_id FROM plates WHERE assay_type = 'growth' ORDER BY plate_id"
+            ).fetchall()
+        )
+        rows = _logical_growth_rows(source, plate_ids)
+        for offset in range(0, len(rows), batch_size):
+            _insert_rows(target, table, rows[offset : offset + batch_size])
+        return
     cursor = source.execute(
         f"SELECT {_column_sql(TABLE_COLUMNS[table])} FROM {table} "
         f"ORDER BY {_column_sql(PRIMARY_KEYS[table])}"
@@ -1188,8 +1230,45 @@ def _validate_complete_backup(connection: sqlite3.Connection) -> None:
     migration = connection.execute(
         "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
     ).fetchone()
-    if migration != (SCHEMA_VERSION,):
+    if migration not in {(1,), (DATABASE_SCHEMA_VERSION,)}:
         raise PortableValidationError("Backup schema version is unsupported")
+
+
+def _logical_growth_rows(
+    connection: Connection, plate_ids: Sequence[str]
+) -> list[tuple[object, ...]]:
+    repository = SqlPlateReaderRepository(connection)
+    rows: list[tuple[object, ...]] = []
+    for plate_id in plate_ids:
+        for chunk in repository.stream_growth_measurements(plate_id):
+            rows.extend(
+                tuple(row[column] for column in TABLE_COLUMNS["growth_measurements"])
+                for row in chunk
+            )
+    return rows
+
+
+def _insert_import_growth_rows(connection: Connection, rows: Sequence[dict[str, object]]) -> None:
+    """Prefer compact storage while accepting sparse legacy portable artifacts."""
+    repository = SqlPlateReaderRepository(connection)
+    by_plate: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        by_plate.setdefault(str(row["plate_id"]), []).append(row)
+    for plate_id, plate_rows in by_plate.items():
+        try:
+            repository.insert_raw_observations(plate_id, plate_rows)
+        except InvalidRepositoryValueError:
+            _insert_dict_rows(connection, "growth_measurements", plate_rows)
+
+
+def _remove_internal_compact_storage(connection: Connection) -> None:
+    """Keep version-1 portable/backup files readable by older application builds."""
+    connection.execute("DROP TRIGGER prevent_growth_series_chunk_update")
+    connection.execute("DROP TRIGGER prevent_growth_series_chunk_delete")
+    connection.execute("DROP TABLE growth_series_chunks")
+    connection.execute(
+        "DELETE FROM schema_migrations WHERE version = ?", (DATABASE_SCHEMA_VERSION,)
+    )
 
 
 def _column_values(

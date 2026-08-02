@@ -475,13 +475,19 @@ def _legacy_raw_hash(rows: Sequence[Mapping[str, object]]) -> str:
 
 
 def _destination_raw_hash(repository: SqlPlateReaderRepository, plate_id: PlateId) -> str:
-    rows = repository.connection.execute(
-        "SELECT w.position, gm.channel, gm.elapsed_microseconds, gm.value_raw "
-        "FROM growth_measurements gm JOIN wells w ON w.well_id = gm.well_id "
-        "WHERE gm.plate_id = ? ORDER BY w.position, gm.channel, gm.elapsed_microseconds",
-        (plate_id,),
-    ).fetchall()
-    payload = sorted((str(row[0]), str(row[1]), int(row[2]), row[3]) for row in rows)
+    snapshot = repository.load_plate(plate_id)
+    if snapshot is None:
+        raise LegacyGrowthValidationError(f"Imported plate disappeared: {plate_id}")
+    positions = {str(row["well_id"]): str(row["position"]) for row in snapshot.wells}
+    payload = sorted(
+        (
+            positions[str(row["well_id"])],
+            str(row["channel"]),
+            int(row["elapsed_microseconds"]),
+            row["value_raw"],
+        )
+        for row in snapshot.raw_observations
+    )
     return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
 
 
@@ -492,10 +498,8 @@ def _destination_counts(repository: SqlPlateReaderRepository, plate_id: PlateId)
             "SELECT count(*) FROM wells WHERE plate_id = ?",
             plate_id,
         ),
-        "measurements": _query_count(
-            repository,
-            "SELECT count(*) FROM growth_measurements WHERE plate_id = ?",
-            plate_id,
+        "measurements": sum(
+            len(chunk) for chunk in repository.stream_growth_measurements(plate_id)
         ),
         "backgrounds": _query_count(
             repository,
