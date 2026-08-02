@@ -58,6 +58,7 @@ from plate_reader.domain.growth import (
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.growth_selector import render_growth_well_selector
 from plate_reader.ui.option_controls import (
     render_saved_option_controls,
     saved_option_suggestions,
@@ -797,8 +798,12 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         str(well["position"]) for well in view.snapshot.wells if bool(well["plot_selected"])
     )
     default_positions = persisted or positions[:8]
+    selected = render_growth_well_selector(
+        view.snapshot.wells,
+        default_positions,
+        state_key=f"growth_plot_selection_{plate_id}",
+    )
     with st.form(f"growth-plot-options-{plate_id}"):
-        selected = st.multiselect("Wells", positions, default=default_positions)
         corrected = st.toggle(
             "Apply current background revision",
             value=bool(view.backgrounds),
@@ -811,7 +816,11 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         symlog = limits[3].checkbox("Symmetric log scale", value=True)
         title = st.text_input("Plot title")
         save_selection = st.form_submit_button("Save well selection")
-        render = st.form_submit_button("Render selected curves", type="primary")
+        render = st.form_submit_button(
+            "Render selected curves", type="primary", disabled=not selected
+        )
+    if not selected:
+        st.info("Select at least one well before rendering curves.")
     if save_selection:
         try:
             selected_set = set(selected)

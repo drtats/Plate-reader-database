@@ -21,6 +21,24 @@ WORKSPACE_TABS = (
 )
 
 
+def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLATE_READER_ENV", "development")
+
+    app = AppTest.from_file("tests/ui/growth_selector_app.py", default_timeout=30).run()
+
+    assert not app.exception
+    assert {tab.label for tab in app.tabs} == {
+        "Reference plate",
+        "96-well selection",
+        "Selection list",
+        "Metadata filters",
+    }
+    assert _button_labels(app).issuperset(
+        {"Select all", "Clear all", "Invert", "Apply 96-well selection", "Apply selection list"}
+    )
+    assert any(item.label == "Filter fields" for item in app.multiselect)
+
+
 def test_growth_workspace_save_boundaries_and_raw_immutability(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -59,9 +77,20 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     workspace_labels = tuple(tab.label for tab in app.tabs if tab.label in WORKSPACE_TABS)
     assert workspace_labels == WORKSPACE_TABS
     assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
-    assert _button_labels(app).issuperset(
-        {"Save metadata", "Save full layout", "Save well selection"}
+    assert {tab.label for tab in app.tabs}.issuperset(
+        {"Reference plate", "96-well selection", "Selection list", "Metadata filters"}
     )
+    assert _button_labels(app).issuperset(
+        {
+            "Save metadata",
+            "Save full layout",
+            "Save well selection",
+            "Select all",
+            "Clear all",
+            "Invert",
+        }
+    )
+    assert any(item.label == "Filter fields" for item in app.multiselect)
 
     raw_before = _growth_raw_hash(database_path)
     _input_named(app, "Experiment name").set_value("Unsaved Growth name")
@@ -81,6 +110,19 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert _selected_well_count(database_path) == 8
     assert _growth_raw_hash(database_path) == raw_before
 
+    _click(app, "Select all")
+    assert _selected_metric(app) == "96"
+    app.run()
+    assert _selected_metric(app) == "96"
+    assert _selected_well_count(database_path) == 8
+
+    _click(app, "Clear all")
+    assert _selected_metric(app) == "0"
+    _click(app, "Invert")
+    assert _selected_metric(app) == "96"
+    assert _selected_well_count(database_path) == 8
+    assert _growth_raw_hash(database_path) == raw_before
+
 
 def _click(app: AppTest, label: str) -> AppTest:
     next(button for button in app.button if button.label == label).click().run()
@@ -93,6 +135,10 @@ def _input_named(app: AppTest, label: str) -> Any:
 
 def _button_labels(app: AppTest) -> set[str]:
     return {button.label for button in app.button}
+
+
+def _selected_metric(app: AppTest) -> str:
+    return str(next(metric.value for metric in app.metric if metric.label == "Selected wells"))
 
 
 def _plate_count(database_path: Path) -> int:

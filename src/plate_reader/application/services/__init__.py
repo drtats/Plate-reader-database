@@ -26,6 +26,15 @@ from plate_reader.application.services.growth_qc import (
     GrowthBackgroundQcReport,
     SummarizeGrowthBackgroundQcService,
 )
+from plate_reader.application.services.growth_selection import (
+    GrowthSelectionField,
+    GrowthSelectionOperation,
+    GrowthWellFilter,
+    GrowthWellSelectionService,
+    combine_growth_selection,
+    growth_selection_fields,
+    normalize_growth_selection,
+)
 from plate_reader.application.services.growth_workflow import (
     BackgroundRevisionResult,
     ComputeGrowthBackgroundService,
@@ -105,6 +114,10 @@ __all__ = [
     "GrowthPlotPoint",
     "GrowthPreview",
     "GrowthRunView",
+    "GrowthSelectionField",
+    "GrowthSelectionOperation",
+    "GrowthWellFilter",
+    "GrowthWellSelectionService",
     "ImportAuthorizationError",
     "ImportGrowthRunService",
     "ImportMicPlateService",
@@ -147,5 +160,8 @@ __all__ = [
     "UpdateGrowthMetadataService",
     "UpdateMicLayoutService",
     "UpdateMicMetadataService",
+    "combine_growth_selection",
     "export_growth_plot_pdf",
+    "growth_selection_fields",
+    "normalize_growth_selection",
 ]

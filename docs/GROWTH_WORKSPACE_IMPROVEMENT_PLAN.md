@@ -166,15 +166,15 @@ Filter semantics:
 
 ### Tasks
 
-- [ ] Add typed/pure selection operations with physical plate ordering.
-- [ ] Support Strain, Treatment, Concentration, Media, Group, Replicate, Display
+- [x] Add typed/pure selection operations with physical plate ordering.
+- [x] Support Strain, Treatment, Concentration, Media, Group, Replicate, Display
       name, Raw label, and custom columns present in the loaded layout.
-- [ ] Build a Growth-only reusable selector component.
-- [ ] Keep the grid, list, filter controls, and session state synchronized.
-- [ ] Allow staged selection to render a plot immediately.
-- [ ] Preserve the existing `plot_selected` persistence behavior behind an
+- [x] Build a Growth-only reusable selector component.
+- [x] Keep the grid, list, filter controls, and session state synchronized.
+- [x] Allow staged selection to render a plot immediately.
+- [x] Preserve the existing `plot_selected` persistence behavior behind an
       explicit `Save well selection` action.
-- [ ] Never save selection merely because Streamlit reran.
+- [x] Never save selection merely because Streamlit reran.
 
 ### Likely files
 
@@ -187,13 +187,13 @@ Filter semantics:
 
 ### Checks
 
-- [ ] Every result contains unique valid A1-H12 positions in physical order.
-- [ ] Replace/add/remove/keep-only are independently unit tested.
-- [ ] OR-within-field and AND-across-fields are tested.
-- [ ] Custom-column filtering is tested.
-- [ ] Grid and list edits produce identical canonical selections.
-- [ ] Selection persists across ordinary Streamlit reruns.
-- [ ] Saving selection changes only well layout metadata, not observations.
+- [x] Every result contains unique valid A1-H12 positions in physical order.
+- [x] Replace/add/remove/keep-only are independently unit tested.
+- [x] OR-within-field and AND-across-fields are tested.
+- [x] Custom-column filtering is tested.
+- [x] Grid and list edits produce identical canonical selections.
+- [x] Selection persists across ordinary Streamlit reruns.
+- [x] Saving selection changes only well layout metadata, not observations.
 
 ### Gate
 
