@@ -61,7 +61,10 @@ original event IDs, entity IDs, event types, and stored payloads. Browser file
 downloads do not currently create a database audit event.
 
 Use **Dark mode** in the sidebar for a darker interface and plot. The preference
-lasts for the current browser session. For a task-oriented walkthrough and
+lasts for the current browser session and includes the 96-well editors and
+selection lists. In an existing workspace, applying generated or uploaded
+Display names saves those name changes immediately; other staged layout fields
+still require **Save full layout**. For a task-oriented walkthrough and
 diagram, see the [Growth workflow user guide](GROWTH_USER_GUIDE.md).
 
 Both import and saved-run layout editors include **Reusable plate templates**.

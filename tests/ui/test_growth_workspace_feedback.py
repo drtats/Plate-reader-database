@@ -125,6 +125,17 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert any(item.label == "Filter fields" for item in app.multiselect)
     assert any(item.label == "Curve colors" for item in app.selectbox)
 
+    _input_named(app, "Prefix").set_value("saved-")
+    _click(app, "Preview generated names")
+    confirmation = next(item for item in app.checkbox if item.label.startswith("Confirm replacing"))
+    confirmation.set_value(True).run()
+    _click(app, "Apply and save generated names")
+    assert _display_name_count(database_path, "saved-1") == 96
+    app.radio[0].set_value("Growth Run Library").run()
+    app.radio[0].set_value("Growth Workspace").run()
+    assert _display_name_count(database_path, "saved-1") == 96
+    assert set(app.session_state[workspace_layout_key]["Display name"]) == {"saved-1"}
+
     raw_before = _growth_raw_hash(database_path)
     _input_named(app, "Experiment name").set_value("Unsaved Growth name")
     app.run()

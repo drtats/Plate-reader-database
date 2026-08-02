@@ -59,7 +59,8 @@ wells share a label, the legend adds `(A1)`, `(A2)`, and so on to prevent
 ambiguous traces and export columns. Choose curve colors independently.
 
 Use **Dark mode** in the sidebar when desired. It is a browser-session preference
-and does not modify data.
+and does not modify data. It applies to selectors, number inputs, buttons,
+reference tables, 96-well grids, and selection lists.
 
 ## Choose the correct export
 
@@ -80,6 +81,10 @@ Metadata and layout changes are staged until an explicit Save. Activity log then
 records user, time, and exact before/after stored values. Large edits show the
 first changes in the table and retain the complete payload under **Technical
 activity details**.
+
+In an existing workspace, **Apply and save generated names** and **Apply and save
+uploaded names** are explicit exceptions: they immediately save only the changed
+Display names. Other staged layout fields still require **Save full layout**.
 
 Opening a run, changing an unsaved control, and rendering a plot are not logged;
 they do not change stored data. Raw reading edits are not provided. If a source

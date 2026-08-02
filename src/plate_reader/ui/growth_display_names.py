@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import pandas as pd
@@ -72,6 +72,7 @@ def render_growth_display_name_controls(
     *,
     state_key: str,
     selected_positions: Iterable[str] = (),
+    save_preview: Callable[[GrowthDisplayNamePreview], None] | None = None,
 ) -> None:  # pragma: no cover - Streamlit widget composition
     """Stage generated/imported names in the existing shared Layout editor."""
 
@@ -85,10 +86,16 @@ def render_growth_display_name_controls(
     selected = tuple(selected_positions)
 
     with st.expander("Display name builder", expanded=False):
-        st.caption(
-            "Preview names before applying them to the staged Layout. Nothing is written to "
-            "the database until Save full layout (or the final import commit) is pressed."
-        )
+        if save_preview is None:
+            st.caption(
+                "Preview names before applying them to the staged Layout. Nothing is written "
+                "to the database until Save full layout (or the final import commit) is pressed."
+            )
+        else:
+            st.caption(
+                "Preview names first. Applying names here saves those display-name changes "
+                "immediately; other staged Layout fields still require Save full layout."
+            )
         formula_tab, csv_tab = st.tabs(("Build from metadata", "CSV template"))
         with formula_tab:
             _render_formula_builder(
@@ -99,6 +106,7 @@ def render_growth_display_name_controls(
                 state_key,
                 revision,
                 message_key,
+                save_preview,
             )
         with csv_tab:
             _render_csv_builder(
@@ -107,6 +115,7 @@ def render_growth_display_name_controls(
                 state_key,
                 revision,
                 message_key,
+                save_preview,
             )
 
 
@@ -177,6 +186,7 @@ def _render_formula_builder(
     state_key: str,
     revision: int,
     message_key: str,
+    save_preview: Callable[[GrowthDisplayNamePreview], None] | None,
 ) -> None:
     choices = _token_choices(frame)
     by_label = {choice.label: choice.token for choice in choices}
@@ -283,6 +293,7 @@ def _render_formula_builder(
             message_key=message_key,
             source="generated",
             signature=signature,
+            save_preview=save_preview,
         )
 
 
@@ -292,6 +303,7 @@ def _render_csv_builder(
     state_key: str,
     revision: int,
     message_key: str,
+    save_preview: Callable[[GrowthDisplayNamePreview], None] | None,
 ) -> None:
     st.download_button(
         "Download display-name CSV template",
@@ -331,6 +343,7 @@ def _render_csv_builder(
             message_key=message_key,
             source="uploaded",
             signature=signature,
+            save_preview=save_preview,
         )
 
 
@@ -343,6 +356,7 @@ def _render_preview_and_apply(
     message_key: str,
     source: str,
     signature: object,
+    save_preview: Callable[[GrowthDisplayNamePreview], None] | None,
 ) -> None:
     if not isinstance(preview, GrowthDisplayNamePreview):
         st.error("Display-name preview state is invalid; preview again.")
@@ -356,16 +370,29 @@ def _render_preview_and_apply(
         ),
         key=f"{state_key}_{source}_display_name_confirm_{_signature_key(signature)}",
     )
+    action = (
+        f"Apply and save {source} names"
+        if save_preview is not None
+        else f"Apply {source} names to staged layout"
+    )
     if st.button(
-        f"Apply {source} names to staged layout",
+        action,
         type="primary",
         disabled=preview.changed_count == 0 or not confirmation,
         key=f"{state_key}_{source}_display_name_apply_{_signature_key(signature)}",
     ):
-        replace_editor_frame(state_key, apply_growth_display_name_preview(frame, preview))
+        updated = apply_growth_display_name_preview(frame, preview)
+        if save_preview is not None:
+            try:
+                save_preview(preview)
+            except Exception as error:
+                st.error(str(error))
+                return
+        replace_editor_frame(state_key, updated)
         st.session_state.pop(preview_key, None)
+        destination = "and saved" if save_preview is not None else "to the staged layout"
         st.session_state[message_key] = (
-            f"Applied {preview.changed_count} display-name change(s) to the staged layout."
+            f"Applied {preview.changed_count} display-name change(s) {destination}."
         )
         st.rerun()
 

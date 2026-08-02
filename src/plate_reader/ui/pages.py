@@ -39,6 +39,7 @@ from plate_reader.application.services import (
     GrowthBackgroundGroupSource,
     GrowthDataCsvArtifact,
     GrowthDataExportContext,
+    GrowthDisplayNamePreview,
     GrowthPdfArtifact,
     GrowthPdfOptions,
     GrowthPlotColorMode,
@@ -805,6 +806,21 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
     persisted_selection = tuple(
         str(row["Well"]) for row in frame.to_dict(orient="records") if bool(row["Plot"])
     )
+
+    def save_display_names(preview: GrowthDisplayNamePreview) -> None:
+        changes = tuple(
+            WellLayoutChange(position=change.position, display_name=change.proposed_name)
+            for change in preview.changes
+            if change.previous_name != change.proposed_name
+        )
+        if not changes:
+            return
+        saved = UpdateGrowthLayoutService(context.repository).execute(
+            UpdateWellLayout(context.actor, plate_id, source_updated_at, changes)
+        )
+        st.session_state[source_key] = str(saved.metadata["updated_at"])
+        _clear_growth_plot()
+
     render_growth_display_name_controls(
         frame,
         view.snapshot.metadata,
@@ -813,6 +829,7 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
             tuple[str, ...],
             st.session_state.get(f"growth_plot_selection_{plate_id}", persisted_selection),
         ),
+        save_preview=save_display_names,
     )
     render_plate_template_controls(
         context,
