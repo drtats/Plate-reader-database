@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -20,6 +21,7 @@ class GrowthBackgroundHistoryItem:
 @dataclass(frozen=True, slots=True)
 class GrowthActivityItem:
     action: str
+    summary: str
     user: str
     timestamp: str
     details: Mapping[str, object]
@@ -77,6 +79,7 @@ def growth_activity_items(
     return tuple(
         GrowthActivityItem(
             action=_friendly_action(str(record.get("event_type") or "activity_recorded")),
+            summary=_activity_summary(record),
             user=str(record.get("actor_id") or "Unknown user"),
             timestamp=str(record.get("occurred_at") or "Unknown time"),
             details=dict(record),
@@ -92,8 +95,16 @@ def render_growth_background_history(
 ) -> None:
     st.subheader("Background history")
     st.write(
-        "A background revision is a saved, versioned calculation over immutable raw "
-        "measurements and the blank/background-group assignments used at that time."
+        "Background history is the receipt for blank subtraction: a saved, versioned calculation. "
+        "Each revision records "
+        "which blank wells and groups were used to calculate a baseline at every timepoint. "
+        "It never changes the imported raw measurements."
+    )
+    st.caption(
+        "Current means the calculation matches today's plate layout. Stale means blank or "
+        "background-group assignments changed after it was calculated; recompute from "
+        "Overview & QC before using corrected curves. Previous calculations remain visible "
+        "for traceability."
     )
     items = growth_background_history_items(revisions, current_is_stale=current_is_stale)
     if current_is_stale:
@@ -139,8 +150,8 @@ def render_growth_activity_log(records: Sequence[Mapping[str, object]]) -> None:
     else:
         st.markdown(
             _markdown_table(
-                ("Action", "User", "When"),
-                tuple((item.action, item.user, item.timestamp) for item in items),
+                ("Action", "What changed", "User", "When"),
+                tuple((item.action, item.summary, item.user, item.timestamp) for item in items),
             )
         )
     with st.expander("Technical activity details", expanded=False):
@@ -152,6 +163,82 @@ def render_growth_activity_log(records: Sequence[Mapping[str, object]]) -> None:
 
 def _friendly_action(event_type: str) -> str:
     return _ACTIVITY_LABELS.get(event_type, event_type.replace("_", " ").strip().capitalize())
+
+
+_FIELD_LABELS = {
+    "name": "Experiment name",
+    "plate_name": "Plate name",
+    "experiment_date": "Experiment date",
+    "operator_name": "User",
+    "custom_json": "Custom metadata",
+    "display_name": "Display name",
+    "is_blank": "Blank",
+    "background_group": "Background group",
+    "grouping_label": "Group",
+    "plot_selected": "Plot selection",
+    "manual_subtraction": "Global subtraction",
+    "lifecycle_status": "Lifecycle",
+}
+
+
+def _activity_summary(record: Mapping[str, object]) -> str:
+    details = _details_mapping(record.get("details_json"))
+    changes = details.get("changes")
+    if isinstance(changes, list):
+        summaries = [_change_summary(change) for change in changes if isinstance(change, Mapping)]
+        summaries = [summary for summary in summaries if summary]
+        if summaries:
+            visible = "; ".join(summaries[:4])
+            remaining = len(summaries) - 4
+            return f"{visible}; +{remaining} more" if remaining > 0 else visible
+        if str(record.get("event_type")) in {
+            "growth_metadata_updated",
+            "growth_layout_updated",
+        }:
+            return "Saved; no stored values changed"
+    if (positions := details.get("positions")) and isinstance(positions, list):
+        visible = ", ".join(str(item) for item in positions[:6])
+        return f"Saved {len(positions)} well(s): {visible}"
+    if (fields := details.get("plate_fields") or details.get("experiment_fields")) and isinstance(
+        fields, list
+    ):
+        return "Saved " + ", ".join(_field_label(str(item)) for item in fields)
+    return "—"
+
+
+def _change_summary(change: Mapping[str, object]) -> str:
+    field = _field_label(str(change.get("field") or "field"))
+    position = str(change.get("position") or "").strip()
+    prefix = f"{position} {field}" if position else field
+    return f"{prefix}: {_short_value(change.get('before'))} → {_short_value(change.get('after'))}"
+
+
+def _details_mapping(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, Mapping) else {}
+    return {}
+
+
+def _field_label(field: str) -> str:
+    return _FIELD_LABELS.get(field, field.replace("_", " ").capitalize())
+
+
+def _short_value(value: object) -> str:
+    if value is None or value == "":
+        return "(empty)"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, Mapping | list):
+        text = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    else:
+        text = str(value)
+    return text if len(text) <= 40 else f"{text[:37]}…"
 
 
 def _markdown_table(headers: tuple[str, ...], rows: tuple[tuple[str, ...], ...]) -> str:

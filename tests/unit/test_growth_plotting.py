@@ -58,6 +58,36 @@ def test_raw_plot_data_does_not_apply_background_or_manual_subtraction() -> None
     assert result.issues == ()
 
 
+def test_plot_label_can_use_standard_or_custom_well_metadata() -> None:
+    snapshot = growth_snapshot()
+    well = dict(snapshot.wells[0], strain="strain-x", custom_json='{"Batch":"B7"}')
+    snapshot = PlateSnapshot(
+        snapshot.plate_id,
+        snapshot.metadata,
+        (well,),
+        snapshot.raw_observations,
+        snapshot.revisions,
+    )
+
+    strain = PrepareGrowthPlotDataService().execute(
+        snapshot, (), ("A1",), corrected=False, label_field="strain"
+    )
+    custom = PrepareGrowthPlotDataService().execute(
+        snapshot, (), ("A1",), corrected=False, label_field="custom:Batch"
+    )
+
+    assert strain.points[0].label == "strain-x"
+    assert custom.points[0].label == "B7"
+
+
+def test_empty_selected_plot_label_falls_back_to_display_name() -> None:
+    result = PrepareGrowthPlotDataService().execute(
+        growth_snapshot(), (), ("A1",), corrected=False, label_field="strain"
+    )
+
+    assert result.points[0].label == "sample A1"
+
+
 def growth_snapshot(*, manual_subtraction: float = 0.0) -> PlateSnapshot:
     return PlateSnapshot(
         plate_id=PlateId("growth-plot"),
@@ -68,6 +98,7 @@ def growth_snapshot(*, manual_subtraction: float = 0.0) -> PlateSnapshot:
                 "position": "A1",
                 "display_name": "sample A1",
                 "raw_label": "raw A1",
+                "strain": None,
                 "is_blank": 0,
                 "background_group": "plate",
             },

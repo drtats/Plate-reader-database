@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +49,7 @@ class PrepareGrowthPlotDataService:
         selected_positions: tuple[str, ...],
         *,
         corrected: bool,
+        label_field: str = "display_name",
     ) -> GrowthPlotData:
         selected = set(selected_positions)
         wells_by_id = {str(well["well_id"]): well for well in snapshot.wells}
@@ -62,7 +65,7 @@ class PrepareGrowthPlotDataService:
             if str(wells_by_id[str(row["well_id"])]["position"]) in selected
         )
         labels = {
-            str(well["position"]): _display_label(well)
+            str(well["position"]): _display_label(well, label_field)
             for well in snapshot.wells
             if str(well["position"]) in selected
         }
@@ -141,12 +144,30 @@ class PrepareGrowthPlotDataService:
         )
 
 
-def _display_label(well: dict[str, Any]) -> str:
+def _display_label(well: dict[str, Any], field: str) -> str:
+    if field.startswith("custom:"):
+        value = _custom_values(well).get(field.removeprefix("custom:"))
+    elif field in well:
+        value = well.get(field)
+    else:
+        raise ValueError(f"Unknown Growth plot label field: {field}")
+    if value is not None and str(value).strip():
+        return str(value).strip()
     for key in ("display_name", "raw_label", "position"):
         value = well.get(key)
         if value is not None and str(value).strip():
             return str(value).strip()
     raise ValueError("Well has no displayable label")
+
+
+def _custom_values(well: Mapping[str, object]) -> Mapping[str, object]:
+    value = well.get("custom_json")
+    if value is None or value == "":
+        return {}
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, Mapping):
+        raise ValueError("Growth plot label custom metadata must be a JSON object")
+    return {str(key): item for key, item in parsed.items()}
 
 
 def _int(value: object) -> int:

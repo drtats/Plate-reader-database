@@ -6,8 +6,9 @@ import hashlib
 import json
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol
 
 from plate_reader.application.contracts import (
@@ -198,6 +199,12 @@ class UpdateGrowthMetadataService:
         if not experiment_changes and not plate_changes and command.tags is None:
             raise ValueError("At least one metadata field must be changed")
         experiment_id = ExperimentId(str(snapshot.metadata["experiment_id"]))
+        audit_changes = _metadata_audit_changes(
+            snapshot,
+            experiment_changes,
+            plate_changes,
+            command.tags,
+        )
         with self.repository.transaction():
             if experiment_changes:
                 self.repository.update_experiment_metadata(
@@ -220,6 +227,7 @@ class UpdateGrowthMetadataService:
                         "experiment_fields": sorted(experiment_changes),
                         "plate_fields": sorted(plate_changes),
                         "tags_replaced": command.tags is not None,
+                        "changes": audit_changes,
                     },
                 }
             )
@@ -232,13 +240,14 @@ class UpdateGrowthLayoutService:
 
     def execute(self, command: UpdateWellLayout) -> PlateSnapshot:
         actor_id = require_role(self.repository, command.actor, {Role.EDITOR, Role.ADMIN})
-        _growth_snapshot(self.repository, command.plate_id)
+        snapshot = _growth_snapshot(self.repository, command.plate_id)
         changes = [
             {key: value for key, value in _record_values(change).items() if value is not None}
             for change in command.changes
         ]
         if not changes:
             raise ValueError("At least one well layout change is required")
+        audit_changes = _layout_audit_changes(snapshot, changes)
         with self.repository.transaction():
             self.repository.update_plate_metadata(command.plate_id, command.expected_updated_at, {})
             self.repository.update_well_layout(command.plate_id, changes)
@@ -248,7 +257,10 @@ class UpdateGrowthLayoutService:
                     "event_type": "growth_layout_updated",
                     "entity_type": "plate",
                     "entity_id": command.plate_id,
-                    "details_json": {"positions": [change["position"] for change in changes]},
+                    "details_json": {
+                        "positions": [change["position"] for change in changes],
+                        "changes": audit_changes,
+                    },
                 }
             )
         return _growth_snapshot(self.repository, command.plate_id)
@@ -455,6 +467,84 @@ def _record_values(record: WellLayoutChange) -> dict[str, object]:
         "inoculum_unit": record.inoculum_unit,
         "custom_json": record.custom_fields,
     }
+
+
+def _metadata_audit_changes(
+    snapshot: PlateSnapshot,
+    experiment_changes: Mapping[str, object],
+    plate_changes: Mapping[str, object],
+    tags: Sequence[str] | None,
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for scope, changes in (("experiment", experiment_changes), ("plate", plate_changes)):
+        for field, after in changes.items():
+            before_key = f"{scope}_custom_json" if field == "custom_json" else field
+            before = snapshot.metadata.get(before_key)
+            _append_audit_change(result, scope, field, before, after)
+    if tags is not None:
+        _append_audit_change(result, "experiment", "tags", snapshot.metadata.get("tags", ()), tags)
+    return result
+
+
+def _layout_audit_changes(
+    snapshot: PlateSnapshot,
+    changes: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    wells = {str(well["position"]): well for well in snapshot.wells}
+    result: list[dict[str, object]] = []
+    for change in changes:
+        position = str(change["position"])
+        well = wells.get(position)
+        if well is None:
+            continue
+        for field, after in change.items():
+            if field == "position":
+                continue
+            before = well.get(field)
+            _append_audit_change(result, "well", field, before, after, position=position)
+    return result
+
+
+def _append_audit_change(
+    result: list[dict[str, object]],
+    scope: str,
+    field: str,
+    before: object,
+    after: object,
+    *,
+    position: str | None = None,
+) -> None:
+    normalized_before = _audit_value(before, field)
+    normalized_after = _audit_value(after, field)
+    if normalized_before == normalized_after:
+        return
+    item: dict[str, object] = {
+        "scope": scope,
+        "field": field,
+        "before": normalized_before,
+        "after": normalized_after,
+    }
+    if position is not None:
+        item["position"] = position
+    result.append(item)
+
+
+def _audit_value(value: object, field: str) -> object:
+    if field == "custom_json" and isinstance(value, str):
+        with suppress(ValueError, json.JSONDecodeError):
+            value = _json_mapping(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _audit_value(item, "")
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, tuple | list):
+        return [_audit_value(item, "") for item in value]
+    if field in {"is_blank", "plot_selected"} and value is not None:
+        return bool(value)
+    if isinstance(value, Enum):
+        return str(value.value)
+    return value
 
 
 def _json_mapping(value: object) -> dict[str, object]:

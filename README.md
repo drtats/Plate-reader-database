@@ -40,6 +40,8 @@ Start here:
 11. [Administrator runbook](docs/operations/ADMIN_RUNBOOK.md)
 12. [Schema guide](docs/SCHEMA_GUIDE.md)
 13. [Troubleshooting](docs/operations/TROUBLESHOOTING.md)
+14. [Streamlit Community Cloud and Turso setup](docs/STREAMLIT_TURSO_SETUP.md)
+15. [Growth workflow user guide](docs/GROWTH_USER_GUIDE.md)
 
 ## Local development
 

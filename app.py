@@ -15,6 +15,7 @@ from plate_reader.ui.cloud import load_cloud_credentials, oidc_provider
 from plate_reader.ui.context import app_context
 from plate_reader.ui.pages import render_growth_wizard, render_run_library, render_workspace
 from plate_reader.ui.portable_pages import render_portable_import
+from plate_reader.ui.theme import render_theme_control
 
 configure_arrow_memory_pool()
 
@@ -28,6 +29,7 @@ st.set_page_config(
 def main() -> None:
     """Render the local application without putting SQL in the presentation layer."""
 
+    render_theme_control()
     st.title("Plate Reader Database")
     st.caption("Growth-curve data platform")
 

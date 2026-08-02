@@ -4,6 +4,7 @@ from plate_reader.application.services.growth_data_export import (
     GrowthDataCsvArtifact,
     GrowthDataExportContext,
     export_growth_plot_data_csv,
+    export_growth_plot_wide_csv,
 )
 from plate_reader.application.services.growth_display_names import (
     BuildGrowthDisplayNamesService,
@@ -221,6 +222,7 @@ __all__ = [
     "export_growth_display_name_csv",
     "export_growth_plot_data_csv",
     "export_growth_plot_pdf",
+    "export_growth_plot_wide_csv",
     "growth_selection_fields",
     "normalize_growth_selection",
     "preview_growth_display_name_csv",

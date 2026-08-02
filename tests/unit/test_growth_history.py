@@ -69,3 +69,19 @@ def test_activity_log_has_friendly_actions_and_lossless_details() -> None:
     assert items[0].timestamp == "2026-08-01T11:00:00Z"
     assert dict(items[0].details) == custom
     assert dict(items[1].details) == imported
+
+
+def test_activity_log_summarizes_exact_before_and_after_values() -> None:
+    record = {
+        "event_type": "growth_layout_updated",
+        "actor_id": "user-1",
+        "occurred_at": "2026-08-01T12:00:00Z",
+        "details_json": (
+            '{"changes":[{"scope":"well","position":"A1",'
+            '"field":"display_name","before":"old","after":"control"}]}'
+        ),
+    }
+
+    item = growth_activity_items((record,))[0]
+
+    assert item.summary == "A1 Display name: old → control"

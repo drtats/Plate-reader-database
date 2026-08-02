@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import date
@@ -284,6 +285,33 @@ def test_metadata_layout_background_search_load_and_export(
         "growth_layout_updated",
         "growth_background_computed",
     ]
+    metadata_event = next(
+        row for row in view.provenance if row["event_type"] == "growth_metadata_updated"
+    )
+    metadata_details = json.loads(str(metadata_event["details_json"]))
+    assert {
+        (change["scope"], change["field"], change["before"], change["after"])
+        for change in metadata_details["changes"]
+        if change["field"] in {"name", "plate_name"}
+    } == {
+        ("experiment", "name", "Workflow experiment", "Updated experiment"),
+        ("plate", "plate_name", "Workflow plate", "Updated plate"),
+    }
+    layout_event = next(
+        row for row in view.provenance if row["event_type"] == "growth_layout_updated"
+    )
+    layout_details = json.loads(str(layout_event["details_json"]))
+    assert any(
+        change
+        == {
+            "scope": "well",
+            "field": "strain",
+            "before": None,
+            "after": "strain-b",
+            "position": "B1",
+        }
+        for change in layout_details["changes"]
+    )
 
     artifact = ExportGrowthRunService(
         repository,

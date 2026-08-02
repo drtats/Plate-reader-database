@@ -28,6 +28,7 @@ class GrowthPlotOptions:
     y_min: float = 0.001
     y_max: float = 1.5
     symlog: bool = True
+    dark_mode: bool = False
 
     def __post_init__(self) -> None:
         values = (self.x_max, self.y_min, self.y_max)
@@ -99,7 +100,10 @@ def growth_curve_figure(
                 ),
             )
         )
-    figure.update_layout(title=options.title or None)
+    figure.update_layout(
+        title=options.title or None,
+        template="plotly_dark" if options.dark_mode else "plotly_white",
+    )
     figure.update_xaxes(range=(0, options.x_max), title="Time (minutes)")
     if options.symlog:
         ticks = _symlog_ticks(options.y_min, options.y_max)

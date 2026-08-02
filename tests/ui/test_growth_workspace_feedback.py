@@ -50,6 +50,11 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(database_path))
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
+    dark_mode = next(item for item in app.toggle if item.label == "Dark mode")
+    dark_mode.set_value(True).run()
+    assert app.session_state["dark_mode"] is True
+    assert any("plate-reader-dark-mode" in item.value for item in app.markdown)
+
     app.radio[0].set_value("New Growth Run").run()
     assert app.session_state["growth_wizard_step"] == 1
 
@@ -130,6 +135,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     styles = app.session_state["growth_plot_styles"]
     figure = app.session_state["growth_plot"]
     csv_artifact = app.session_state["growth_plot_csv"]
+    wide_csv_artifact = app.session_state["growth_plot_wide_csv"]
     assert len(figure.data) == len(styles.styles)
     assert {style.position for style in styles.styles} == set(
         app.session_state[f"growth_plot_selection_{app.session_state['selected_plate_id']}"]
@@ -137,6 +143,12 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert figure.data[0].line.color == styles.styles[0].color_hex
     assert csv_artifact.row_count == sum(len(trace.x) for trace in figure.data)
     assert csv_artifact.content.startswith(b"\xef\xbb\xbf")
+    wide_rows = list(
+        csv.reader(io.StringIO(wide_csv_artifact.content.decode("utf-8-sig"), newline=""))
+    )
+    assert wide_rows[0][0] == "Time (minutes)"
+    assert wide_rows[0][1:] == [style.legend_label for style in styles.styles]
+    assert any(item.label == "Curve label" for item in app.selectbox)
     csv_rows = list(
         csv.DictReader(io.StringIO(csv_artifact.content.decode("utf-8-sig"), newline=""))
     )
@@ -154,8 +166,9 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
         float(custom[0]) for custom in figure.data[0].customdata
     ]
     assert any(
-        item.label == "Download selected plot data as CSV" for item in app.get("download_button")
+        item.label == "Download database data (long CSV)" for item in app.get("download_button")
     )
+    assert any(item.label == "Download plot data (wide CSV)" for item in app.get("download_button"))
     assert any("Selected wells:" in item.value for item in app.caption)
 
     _input_named(app, "Experiment name").set_value("Saved Growth name")

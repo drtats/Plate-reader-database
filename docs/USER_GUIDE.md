@@ -40,9 +40,11 @@ Use the reusable selector in **Plotting** to stage wells with the 8x12 plate,
 selection list, or metadata add/remove filters. Saving the selection changes the
 default for later sessions; rendering does not require saving it. Curve colors
 can follow plate order, plotted-series order, or any available metadata/custom
-field. PNG, vector PDF, and the selected-data CSV all correspond to the visible
-plot. The Excel-friendly long CSV includes exact time identities, raw and plotted
-values, correction state, revision identity, and well metadata.
+field. Choose **Curve label** to name traces from Display name or another saved
+well field. PNG, vector PDF, and both CSVs correspond to the visible plot. The
+database-oriented long CSV includes exact time identities, raw and plotted
+values, correction state, revision identity, and well metadata. The plot-oriented
+wide CSV puts time first and one visible curve in each remaining column.
 
 **Background history** explains each saved background calculation. “Current ·
 ready” means its input still matches the saved blank and group assignments;
@@ -52,10 +54,15 @@ are read-only, and their identifiers, hashes, parameters, and versions remain in
 the technical-details expander.
 
 **Activity log** is the append-only audit trail for the run. Its main table puts
-the action, user, and timestamp first for saved events such as imports, edits,
-and background recalculations. Open the technical-details expander to see the
+the action, before/after edit summary, user, and timestamp first for saved events
+such as imports, metadata/layout edits, and background recalculations. Viewing a
+run and rendering plots are intentionally not logged. Open the technical-details expander to see the
 original event IDs, entity IDs, event types, and stored payloads. Browser file
 downloads do not currently create a database audit event.
+
+Use **Dark mode** in the sidebar for a darker interface and plot. The preference
+lasts for the current browser session. For a task-oriented walkthrough and
+diagram, see the [Growth workflow user guide](GROWTH_USER_GUIDE.md).
 
 Both import and saved-run layout editors include **Reusable plate templates**.
 Any signed-in user can apply a Growth template to the staged 96-well layout;

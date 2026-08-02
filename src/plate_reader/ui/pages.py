@@ -55,6 +55,7 @@ from plate_reader.application.services import (
     UpdateGrowthMetadataService,
     export_growth_plot_data_csv,
     export_growth_plot_pdf,
+    export_growth_plot_wide_csv,
     growth_selection_fields,
 )
 from plate_reader.domain.growth import (
@@ -870,6 +871,14 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             for field in growth_selection_fields(view.snapshot.wells)
         }
     )
+    label_choices = {
+        "Display name": "display_name",
+        **{
+            field.label: field.key
+            for field in growth_selection_fields(view.snapshot.wells)
+            if field.key != "display_name"
+        },
+    }
     with st.form(f"growth-plot-options-{plate_id}"):
         corrected = st.toggle(
             "Apply current background revision",
@@ -882,6 +891,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         y_max = limits[2].number_input("Y maximum", value=1.5, format="%.4f")
         symlog = limits[3].checkbox("Symmetric log scale", value=True)
         title = st.text_input("Plot title")
+        label_choice = st.selectbox("Curve label", tuple(label_choices))
         color_choice = st.selectbox("Curve colors", tuple(color_choices))
         save_selection = st.form_submit_button("Save well selection")
         render = st.form_submit_button(
@@ -926,6 +936,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             view.backgrounds,
             tuple(selected),
             corrected=corrected,
+            label_field=label_choices[label_choice],
         )
         options = GrowthPlotOptions(
             title=title.strip(),
@@ -933,6 +944,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             y_min=float(y_min),
             y_max=float(y_max),
             symlog=symlog,
+            dark_mode=bool(st.session_state.get("dark_mode", False)),
         )
         styles = BuildGrowthPlotStylesService().execute(
             plot_data,
@@ -973,6 +985,11 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             ),
             options.title or f"growth-plot-{plate_id}",
         )
+        st.session_state.growth_plot_wide_csv = export_growth_plot_wide_csv(
+            plot_data,
+            styles,
+            options.title or f"growth-plot-{plate_id}",
+        )
     for issue in st.session_state.get("growth_plot_issues", ()):
         st.warning(issue.message)
     if (figure := st.session_state.get("growth_plot")) is not None and st.session_state.get(
@@ -986,7 +1003,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             ),
         )
         st.caption("Use the camera button in the plot toolbar to download a high-resolution PNG.")
-        downloads = st.columns(2)
+        downloads = st.columns(3)
         if pdf_value := st.session_state.get("growth_plot_pdf"):
             pdf = cast(GrowthPdfArtifact, pdf_value)
             downloads[0].download_button(
@@ -998,9 +1015,17 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         if csv_value := st.session_state.get("growth_plot_csv"):
             csv_artifact = cast(GrowthDataCsvArtifact, csv_value)
             downloads[1].download_button(
-                "Download selected plot data as CSV",
+                "Download database data (long CSV)",
                 data=csv_artifact.content,
                 file_name=csv_artifact.filename,
+                mime="text/csv",
+            )
+        if wide_csv_value := st.session_state.get("growth_plot_wide_csv"):
+            wide_csv = cast(GrowthDataCsvArtifact, wide_csv_value)
+            downloads[2].download_button(
+                "Download plot data (wide CSV)",
+                data=wide_csv.content,
+                file_name=wide_csv.filename,
                 mime="text/csv",
             )
 
@@ -1141,6 +1166,7 @@ def _clear_growth_plot() -> None:
         "growth_plot_title",
         "growth_plot_pdf",
         "growth_plot_csv",
+        "growth_plot_wide_csv",
         "growth_plot_styles",
         "growth_plate_overview",
         "growth_plate_overview_issues",

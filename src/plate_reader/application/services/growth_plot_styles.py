@@ -87,6 +87,12 @@ class BuildGrowthPlotStylesService:
             ordered = tuple(sorted(series, key=_physical_series_key))
 
         channels = {channel for _position, channel, _label in series}
+        positions_by_label: dict[str, set[str]] = {}
+        for position, _channel, label in series:
+            positions_by_label.setdefault(label, set()).add(position)
+        duplicate_labels = {
+            label for label, positions in positions_by_label.items() if len(positions) > 1
+        }
         label_by_key = {(position, channel): label for position, channel, label in series}
         return GrowthPlotStyles(
             tuple(
@@ -98,6 +104,7 @@ class BuildGrowthPlotStylesService:
                         label_by_key[(position, channel)],
                         channel,
                         include_channel=len(channels) > 1,
+                        include_position=label_by_key[(position, channel)] in duplicate_labels,
                     ),
                     color_by_series[(position, channel, label_by_key[(position, channel)])],
                     group_by_series[(position, channel, label_by_key[(position, channel)])],
@@ -114,6 +121,9 @@ def default_growth_plot_styles(plot_data: GrowthPlotData) -> GrowthPlotStyles:
     series = _series_in_first_appearance(plot_data)
     colors = _rainbow_colors(len(series))
     channels = {channel for _position, channel, _label in series}
+    positions_by_label: dict[str, set[str]] = {}
+    for position, _channel, label in series:
+        positions_by_label.setdefault(label, set()).add(position)
     return GrowthPlotStyles(
         tuple(
             GrowthSeriesStyle(
@@ -124,6 +134,7 @@ def default_growth_plot_styles(plot_data: GrowthPlotData) -> GrowthPlotStyles:
                     label,
                     channel,
                     include_channel=len(channels) > 1,
+                    include_position=len(positions_by_label[label]) > 1,
                 ),
                 colors[index],
                 f"series-{index + 1}",
@@ -194,8 +205,9 @@ def _legend_label(
     channel: str,
     *,
     include_channel: bool,
+    include_position: bool,
 ) -> str:
-    base = position if label == position else f"{label} ({position})"
+    base = f"{label} ({position})" if include_position else label
     return f"{base} · {channel}" if include_channel else base
 
 

@@ -10,6 +10,13 @@ from plate_reader.application.services import (
     GrowthPlotData,
     GrowthPlotPoint,
     export_growth_plot_data_csv,
+    export_growth_plot_wide_csv,
+)
+from plate_reader.application.services.growth_plot_styles import (
+    GrowthPlotColorMode,
+    GrowthPlotColorOptions,
+    GrowthPlotStyles,
+    GrowthSeriesStyle,
 )
 
 
@@ -18,7 +25,7 @@ def test_selected_plot_csv_preserves_points_metadata_and_excel_quoting() -> None
         (
             GrowthPlotPoint(
                 "A2",
-                "sample, two",
+                "strain-a",
                 10.0,
                 "od600",
                 0.123456789012345,
@@ -30,7 +37,7 @@ def test_selected_plot_csv_preserves_points_metadata_and_excel_quoting() -> None
             ),
             GrowthPlotPoint(
                 "A2",
-                "sample, two",
+                "strain-a",
                 10.0,
                 "gfp",
                 2.5,
@@ -120,3 +127,34 @@ def test_plot_csv_handles_empty_selection_and_rejects_mismatched_layout() -> Non
         )
     with pytest.raises(ValueError, match="revision identity"):
         GrowthDataExportContext("plate-1", "Experiment", "Plate", "")
+
+
+def test_wide_plot_csv_has_time_then_one_column_per_visible_series() -> None:
+    plotted = GrowthPlotData(
+        (
+            GrowthPlotPoint("A1", "control", 0.0, "od600", 0.1, 0.1, None, False),
+            GrowthPlotPoint("A2", "sample", 0.0, "od600", 0.2, 0.2, None, False),
+            GrowthPlotPoint("A1", "control", 10.0, "od600", 0.3, 0.3, None, False),
+            GrowthPlotPoint("A2", "sample", 10.0, "od600", 0.4, 0.4, None, False),
+        ),
+        (),
+        False,
+    )
+    styles = GrowthPlotStyles(
+        (
+            GrowthSeriesStyle("A1", "od600", "control", "#000000", "A1"),
+            GrowthSeriesStyle("A2", "od600", "sample", "#ffffff", "A2"),
+        ),
+        GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
+    )
+
+    artifact = export_growth_plot_wide_csv(plotted, styles, "My Growth Plot")
+    rows = list(csv.reader(io.StringIO(artifact.content.decode("utf-8-sig"))))
+
+    assert artifact.filename == "my-growth-plot-wide.csv"
+    assert artifact.row_count == 2
+    assert rows == [
+        ["Time (minutes)", "control", "sample"],
+        ["0.0", "0.1", "0.2"],
+        ["10.0", "0.3", "0.4"],
+    ]

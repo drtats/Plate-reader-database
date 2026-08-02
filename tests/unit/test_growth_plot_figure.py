@@ -40,7 +40,7 @@ def test_growth_figure_applies_limits_symlog_labels_and_title() -> None:
     assert figure.layout.title.text == "Growth comparison"
     assert tuple(figure.layout.xaxis.range) == (0, 60)
     assert figure.layout.yaxis.title.text == "OD (symmetric log)"
-    assert figure.data[0].name == "control (A1)"
+    assert figure.data[0].name == "control"
     assert list(figure.data[0].customdata[0]) == [-0.01, "od600", "corrected"]
 
 
