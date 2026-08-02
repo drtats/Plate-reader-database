@@ -17,10 +17,13 @@ def test_remote_turso_factory_uses_official_driver_and_applies_migrations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
+    statements: list[str] = []
 
     def connect(**kwargs: object) -> sqlite3.Connection:
         captured.update(kwargs)
-        return sqlite3.connect(":memory:", isolation_level=None)
+        connection = sqlite3.connect(":memory:", isolation_level=None)
+        connection.set_trace_callback(statements.append)
+        return connection
 
     monkeypatch.setattr(connections, "_connect_libsql", connect)
     root = Path(__file__).resolve().parents[2]
@@ -43,6 +46,8 @@ def test_remote_turso_factory_uses_official_driver_and_applies_migrations(
         "isolation_level": None,
         "_check_same_thread": False,
     }
+    assert "PRAGMA foreign_keys = ON" in statements
+    assert "PRAGMA busy_timeout = 10000" not in statements
 
 
 @pytest.mark.parametrize(

@@ -77,15 +77,16 @@ def connect_turso_database(config: TursoDatabaseConfig, *, migrate: bool = True)
             _check_same_thread=False,
         ),
     )
-    configure_connection(connection)
+    configure_connection(connection, enable_busy_timeout=False)
     if migrate:
         apply_migrations(connection, config.migrations_directory)
     return connection
 
 
-def configure_connection(connection: Connection) -> None:
+def configure_connection(connection: Connection, *, enable_busy_timeout: bool = True) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 10000")
+    if enable_busy_timeout:
+        connection.execute("PRAGMA busy_timeout = 10000")
 
 
 def _validated_turso_url(value: str) -> str:
