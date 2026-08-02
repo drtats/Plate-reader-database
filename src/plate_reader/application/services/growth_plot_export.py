@@ -74,7 +74,7 @@ def _pdf_plot_commands(
 
     commands = [
         "1 1 1 rg 0 0 792 612 re f",
-        "0 0 0 RG 0.8 w",
+        "0 0 0 rg 0 0 0 RG 0.8 w",
         f"{left:.2f} {bottom:.2f} {width:.2f} {height:.2f} re S",
         _pdf_text(left, page_height - 38, options.title.strip() or "Growth curves", 16),
         _pdf_text(left + width / 2 - 32, 28, "Time (minutes)", 10),

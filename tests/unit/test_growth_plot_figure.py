@@ -57,6 +57,25 @@ def test_growth_figure_supports_linear_scale_and_empty_selection() -> None:
         GrowthPlotOptions(y_min=1, y_max=1)
 
 
+def test_growth_figure_has_explicit_export_safe_dark_colors() -> None:
+    data = GrowthPlotData(
+        (GrowthPlotPoint("A1", "control", 0.0, "od600", 0.1, 0.1, None, False),),
+        (),
+        False,
+    )
+
+    figure = growth_curve_figure.__wrapped__(
+        data,
+        GrowthPlotOptions(x_max=10, y_min=0, y_max=1, symlog=False, dark_mode=True),
+        "raw",
+        "revision",
+    )
+
+    assert figure.layout.paper_bgcolor == "#0e1117"
+    assert figure.layout.font.color == "#f0f2f6"
+    assert figure.layout.xaxis.color == "#f0f2f6"
+
+
 def test_growth_figure_uses_shared_styles_and_keeps_channels_separate() -> None:
     data = GrowthPlotData(
         (

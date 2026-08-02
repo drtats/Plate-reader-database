@@ -37,6 +37,7 @@ def test_growth_pdf_is_valid_vector_artifact_with_safe_name_and_escaped_title() 
     assert artifact.content.endswith(b"%%EOF\n")
     assert b"/Type /Page" in artifact.content
     assert b"Growth \\(A\\) \\\\" in artifact.content
+    assert b"0 0 0 rg 0 0 0 RG" in artifact.content
     xref_offset = int(artifact.content.rsplit(b"startxref\n", 1)[1].splitlines()[0])
     assert artifact.content[xref_offset:].startswith(b"xref\n")
 

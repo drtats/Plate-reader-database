@@ -100,11 +100,23 @@ def growth_curve_figure(
                 ),
             )
         )
+    background = "#0e1117" if options.dark_mode else "#ffffff"
+    text_color = "#f0f2f6" if options.dark_mode else "#1f2933"
+    grid_color = "#39424e" if options.dark_mode else "#e5e7eb"
     figure.update_layout(
         title=options.title or None,
         template="plotly_dark" if options.dark_mode else "plotly_white",
+        paper_bgcolor=background,
+        plot_bgcolor=background,
+        font={"color": text_color},
+        legend={"font": {"color": text_color}},
     )
-    figure.update_xaxes(range=(0, options.x_max), title="Time (minutes)")
+    figure.update_xaxes(
+        range=(0, options.x_max),
+        title="Time (minutes)",
+        color=text_color,
+        gridcolor=grid_color,
+    )
     if options.symlog:
         ticks = _symlog_ticks(options.y_min, options.y_max)
         figure.update_yaxes(
@@ -113,9 +125,16 @@ def growth_curve_figure(
             tickvals=[_symlog(value) for value in ticks],
             ticktext=[f"{value:g}" for value in ticks],
             title="OD (symmetric log)",
+            color=text_color,
+            gridcolor=grid_color,
         )
     else:
-        figure.update_yaxes(range=(options.y_min, options.y_max), title="OD")
+        figure.update_yaxes(
+            range=(options.y_min, options.y_max),
+            title="OD",
+            color=text_color,
+            gridcolor=grid_color,
+        )
     return figure
 
 
