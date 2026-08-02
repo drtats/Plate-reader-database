@@ -66,6 +66,16 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert app.session_state["growth_metadata"]["experiment_name"] == ("Characterized Growth run")
     assert _plate_count(database_path) == 0
     assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
+    assert any(item.label == "Fields in display-name order" for item in app.multiselect)
+    assert any(item.label == "Apply formula to" for item in app.selectbox)
+    assert any(item.label == "Display-name CSV" for item in app.get("file_uploader"))
+    assert any(
+        item.label == "Download display-name CSV template" for item in app.get("download_button")
+    )
+
+    _click(app, "Preview generated names")
+    _click(app, "Apply generated names to staged layout")
+    assert set(app.session_state["growth_layout_frame"]["Display name"]) == {"1"}
 
     _click(app, "Accept layout and continue")
     assert app.session_state["growth_wizard_step"] == 5
@@ -74,6 +84,9 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
 
     _click(app, "Commit growth run")
     assert _plate_count(database_path) == 1
+    assert _display_name_count(database_path, "1") == 96
+    workspace_layout_key = f"workspace_growth_layout_{app.session_state['selected_plate_id']}"
+    assert set(app.session_state[workspace_layout_key]["Display name"]) == {"1"}
     workspace_labels = tuple(tab.label for tab in app.tabs if tab.label in WORKSPACE_TABS)
     assert workspace_labels == WORKSPACE_TABS
     assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
@@ -160,6 +173,15 @@ def _experiment_name(database_path: Path) -> str:
 def _selected_well_count(database_path: Path) -> int:
     with sqlite3.connect(database_path) as database:
         row = database.execute("SELECT sum(plot_selected) FROM wells").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _display_name_count(database_path: Path, display_name: str) -> int:
+    with sqlite3.connect(database_path) as database:
+        row = database.execute(
+            "SELECT count(*) FROM wells WHERE display_name = ?", (display_name,)
+        ).fetchone()
     assert row is not None
     return int(row[0])
 

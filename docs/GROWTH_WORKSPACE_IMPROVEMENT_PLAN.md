@@ -256,12 +256,12 @@ Applying the preview updates only the staged Layout DataFrame. The existing
 
 ### Tasks
 
-- [ ] Add pure deterministic display-name composition.
-- [ ] Add CSV generation, parsing, validation, and change preview.
-- [ ] Add a `Display name builder` expander or dialog inside the existing Growth
+- [x] Add pure deterministic display-name composition.
+- [x] Add CSV generation, parsing, validation, and change preview.
+- [x] Add a `Display name builder` expander or dialog inside the existing Growth
       Layout tab.
-- [ ] Reuse the shared staged Layout frame and Phase 1 selection.
-- [ ] Synchronize results into both the existing 8x12 Display name view and the
+- [x] Reuse the shared staged Layout frame and Phase 1 selection.
+- [x] Synchronize results into both the existing 8x12 Display name view and the
       full table.
 
 ### Likely files
@@ -275,14 +275,14 @@ Applying the preview updates only the staged Layout DataFrame. The existing
 
 ### Checks
 
-- [ ] Field order changes output predictably.
-- [ ] Empty values do not produce repeated separators.
-- [ ] Numeric formatting is locale-independent and stable.
-- [ ] Selected-only application leaves other wells byte-for-byte unchanged.
-- [ ] Partial CSV does not erase unlisted wells.
-- [ ] Invalid/duplicate wells fail before staged state changes.
-- [ ] Saving names leaves raw observation count/hash unchanged.
-- [ ] Both Layout views show the same names after apply and after reload.
+- [x] Field order changes output predictably.
+- [x] Empty values do not produce repeated separators.
+- [x] Numeric formatting is locale-independent and stable.
+- [x] Selected-only application leaves other wells byte-for-byte unchanged.
+- [x] Partial CSV does not erase unlisted wells.
+- [x] Invalid/duplicate wells fail before staged state changes.
+- [x] Saving names leaves raw observation count/hash unchanged.
+- [x] Both Layout views show the same names after apply and after reload.
 
 ### Suggested commit
 

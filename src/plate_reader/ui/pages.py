@@ -58,6 +58,7 @@ from plate_reader.domain.growth import (
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.growth_display_names import render_growth_display_name_controls
 from plate_reader.ui.growth_selector import render_growth_well_selector
 from plate_reader.ui.option_controls import (
     render_saved_option_controls,
@@ -375,6 +376,14 @@ def wizard_layout(context: AppContext) -> None:
         state_key="growth_layout_frame",
         assay="growth",
         suggestions=saved_option_suggestions(context, AssayType.GROWTH),
+    )
+    render_growth_display_name_controls(
+        frame,
+        cast(dict[str, object], st.session_state.growth_metadata),
+        state_key="growth_layout_frame",
+        selected_positions=tuple(
+            str(row["Well"]) for row in frame.to_dict(orient="records") if bool(row["Plot"])
+        ),
     )
     render_plate_template_controls(
         context,
@@ -763,6 +772,18 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
         state_key=state_key,
         assay="growth",
         suggestions=saved_option_suggestions(context, AssayType.GROWTH),
+    )
+    persisted_selection = tuple(
+        str(row["Well"]) for row in frame.to_dict(orient="records") if bool(row["Plot"])
+    )
+    render_growth_display_name_controls(
+        frame,
+        view.snapshot.metadata,
+        state_key=state_key,
+        selected_positions=cast(
+            tuple[str, ...],
+            st.session_state.get(f"growth_plot_selection_{plate_id}", persisted_selection),
+        ),
     )
     render_plate_template_controls(
         context,
