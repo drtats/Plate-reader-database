@@ -35,8 +35,8 @@ def test_smoke_app_renders_in_fake_cloud_mode(
         "Growth Run Library",
         "New Growth Run",
         "Growth Workspace",
-        "Instructions",
         "Import Portable Data",
+        "Instructions",
     ]
 
     navigation_radio(app).set_value("Instructions").run()

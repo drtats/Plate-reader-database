@@ -92,7 +92,6 @@ def main() -> None:
         "Growth Run Library",
         "New Growth Run",
         "Growth Workspace",
-        "Instructions",
     ]
     if (
         config.runtime.environment == "test"
@@ -102,6 +101,7 @@ def main() -> None:
             ("MIC Plate Library", "New MIC Plate", "MIC Workspace", "MIC Results")
         )
     navigation_options.append("Import Portable Data")
+    navigation_options.append("Instructions")
     if (
         pending_navigation := st.session_state.pop("pending_navigation", None)
     ) and pending_navigation in navigation_options:
