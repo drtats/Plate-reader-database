@@ -17,9 +17,9 @@ WORKSPACE_TABS = (
     "Metadata",
     "Layout",
     "Plotting",
-    "Revisions",
+    "Background history",
     "Export",
-    "Provenance",
+    "Activity log",
 )
 
 
@@ -100,6 +100,13 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
         {"Heatmap channel", "Heatmap timepoint", "Heatmap values"}
     )
     assert any("Heatmap: od600" in item.value and "raw" in item.value for item in app.caption)
+    assert {item.value for item in app.subheader}.issuperset({"Background history", "Activity log"})
+    assert {item.label for item in app.expander}.issuperset(
+        {"Technical background revision details", "Technical activity details"}
+    )
+    assert any("saved, versioned calculation" in item.value for item in app.markdown)
+    assert any("append-only audit log" in item.value for item in app.markdown)
+    assert sum(button.label == "Recompute backgrounds and QC" for button in app.button) == 1
     assert _button_labels(app).issuperset(
         {
             "Save metadata",

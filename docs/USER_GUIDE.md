@@ -22,17 +22,38 @@ Background subtraction creates a versioned analysis revision. Select a bounded
 set of wells before rendering curves. Export produces a checksummed standard
 SQLite artifact containing the selected plate and current revisions.
 
-**Overview & QC** shows the final-OD heatmap immediately. After a background
-revision exists, it also shows group/channel CV summaries and detailed stored
-timepoint statistics. Open **96-well curve overview** and render it when the full
-8x12 small-multiple view is needed; it is lazy and cached so routine reruns do not
-rebuild all 96 curves.
+**Overview & QC** shows a selectable channel/timepoint heatmap. Choose raw or
+background-corrected values; the caption states the exact channel, time index,
+elapsed time, and correction state. After a background revision exists, the tab
+also shows group/channel CV summaries and detailed stored timepoint statistics.
+Open **96-well curve overview** and render it when the full 8x12 small-multiple
+view is needed; it is lazy and cached so routine reruns do not rebuild all 96
+curves.
 
-Editors and administrators can open **Background assignment and recompute** to
+Editors and administrators can open **Time-course background correction** to
 copy Media, Strain, Group, or Treatment across all background-group assignments,
 then calculate a new immutable revision. If blank assignments or groups change,
 the prior revision is marked stale and is not used for corrected plots until it
 is recomputed.
+
+Use the reusable selector in **Plotting** to stage wells with the 8x12 plate,
+selection list, or metadata add/remove filters. Saving the selection changes the
+default for later sessions; rendering does not require saving it. Curve colors
+can follow plate order, plotted-series order, or any available metadata/custom
+field. PNG, vector PDF, and the selected-data CSV all correspond to the visible
+plot. The Excel-friendly long CSV includes exact time identities, raw and plotted
+values, correction state, revision identity, and well metadata.
+
+**Background history** explains each saved background calculation. “Current ·
+ready” means its input still matches the saved blank and group assignments;
+“Current · stale” means those assignments changed and corrected plots use raw
+fallback values until recomputation from **Overview & QC**. Historical records
+are read-only, and their identifiers, hashes, parameters, and versions remain in
+the technical-details expander.
+
+**Activity log** is the append-only audit trail for the run. Its main table puts
+the action, user, and timestamp first. Open the technical-details expander to see
+the original event IDs, entity IDs, event types, and stored payloads.
 
 Both import and saved-run layout editors include **Reusable plate templates**.
 Any signed-in user can apply a Growth template to the staged 96-well layout;

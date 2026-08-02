@@ -66,6 +66,10 @@ from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.growth_display_names import render_growth_display_name_controls
+from plate_reader.ui.growth_history import (
+    render_growth_activity_log,
+    render_growth_background_history,
+)
 from plate_reader.ui.growth_overview import render_growth_heatmap
 from plate_reader.ui.growth_selector import render_growth_well_selector
 from plate_reader.ui.option_controls import (
@@ -501,7 +505,15 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
     if message := st.session_state.pop("commit_message", None):
         st.success(message)
     tabs = st.tabs(
-        ("Overview & QC", "Metadata", "Layout", "Plotting", "Revisions", "Export", "Provenance")
+        (
+            "Overview & QC",
+            "Metadata",
+            "Layout",
+            "Plotting",
+            "Background history",
+            "Export",
+            "Activity log",
+        )
     )
     with tabs[0]:
         render_overview(context, plate_id, view)
@@ -512,11 +524,14 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
     with tabs[3]:
         render_plotting(context, plate_id, view)
     with tabs[4]:
-        render_revisions(context, plate_id, view)
+        render_growth_background_history(
+            view.snapshot.revisions,
+            current_is_stale=view.background_is_stale,
+        )
     with tabs[5]:
         render_export(context, migrations, plate_id, view)
     with tabs[6]:
-        render_records(view.provenance, empty_message="No provenance events are recorded.")
+        render_growth_activity_log(view.provenance)
 
 
 def render_overview(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
@@ -990,22 +1005,6 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             )
 
 
-def render_revisions(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
-    render_records(view.snapshot.revisions, empty_message="No analysis revisions yet.")
-    if st.button("Compute new background revision", type="primary"):
-        try:
-            result = ComputeGrowthBackgroundService(context.repository).execute(
-                ComputeGrowthBackgroundRevision(context.actor, plate_id, GROWTH_BACKGROUND_VERSION)
-            )
-            st.success(
-                f"Revision saved with {result.background_count} background rows and "
-                f"{len(result.issues)} warning(s)."
-            )
-            st.rerun()
-        except Exception as error:
-            render_exception(error)
-
-
 def render_export(
     context: AppContext, migrations: Path, plate_id: PlateId, view: GrowthRunView
 ) -> None:
@@ -1055,6 +1054,8 @@ def render_exception(error: Exception) -> None:
 
 
 def render_records(records: tuple[dict[str, object], ...], *, empty_message: str) -> None:
+    """Keep the generic technical-record renderer used outside Growth history."""
+
     if not records:
         st.caption(empty_message)
         return

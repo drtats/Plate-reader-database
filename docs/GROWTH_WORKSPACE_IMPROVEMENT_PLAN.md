@@ -485,10 +485,10 @@ Goal: make existing audit concepts understandable without changing persistence.
 
 ### Tasks
 
-- [ ] Add focused presentation functions for background history and activity log.
-- [ ] Change labels/captions without changing revision or provenance schemas.
-- [ ] Document the two concepts in `docs/USER_GUIDE.md`.
-- [ ] Update UAT instructions for the completed Growth workflow.
+- [x] Add focused presentation functions for background history and activity log.
+- [x] Change labels/captions without changing revision or provenance schemas.
+- [x] Document the two concepts in `docs/USER_GUIDE.md`.
+- [x] Update UAT instructions for the completed Growth workflow.
 
 ### Likely files
 
@@ -499,12 +499,12 @@ Goal: make existing audit concepts understandable without changing persistence.
 
 ### Checks
 
-- [ ] Current and stale background states are understandable without exposing only
+- [x] Current and stale background states are understandable without exposing only
       hashes/IDs.
-- [ ] Historical revisions remain read-only and complete.
-- [ ] Activity records remain complete and auditable.
-- [ ] Friendly formatting does not discard technical detail.
-- [ ] No repository or schema change is introduced.
+- [x] Historical revisions remain read-only and complete.
+- [x] Activity records remain complete and auditable.
+- [x] Friendly formatting does not discard technical detail.
+- [x] No repository or schema change is introduced.
 
 ### Suggested commit
 

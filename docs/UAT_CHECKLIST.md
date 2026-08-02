@@ -3,6 +3,33 @@
 Run only on copied or anonymized data. Record tester, app version, adapter,
 browser/OS, date, and evidence for each item.
 
+## Growth workspace feedback workflow
+
+- [ ] Start the app by double-clicking `Start Plate Reader.command` and import an
+      anonymized Growth CSV.
+- [ ] Complete rich metadata and confirm Layout keeps synchronized **96-well
+      plate** and **Full well table** views.
+- [ ] Build display names from ordered metadata fields; preview before applying.
+- [ ] Download, edit in Excel, and upload a partial display-name CSV; save and
+      confirm names in both Layout views after reload.
+- [ ] Select wells physically and with metadata add/remove filters without
+      reopening Layout.
+- [ ] Inspect earliest, middle, and final heatmap timepoints for a channel; compare
+      raw and background-corrected values.
+- [ ] Render rainbow and categorical plots; verify repeated display names remain
+      separate physical-well curves.
+- [ ] Download PNG, PDF, and selected-data CSV. Confirm the CSV contains exactly
+      the visible selected series, channels, and correction state.
+- [ ] Read **Background history** and **Activity log**, then open both technical
+      detail expanders and confirm IDs/payloads remain available.
+- [ ] Restart the app and confirm saved metadata, layout, display names, and
+      default plot selection persist.
+
+Portable import and MIC are outside this Growth feedback UAT and should not be
+changed merely to make these checks pass.
+
+## Full pilot
+
 - [ ] Import representative plate-reader exports with and without explicit time.
 - [ ] Confirm layout, metadata, blank groups, sampled curves, and background QC.
 - [ ] Edit metadata/layout in two sessions and observe safe conflict handling.
