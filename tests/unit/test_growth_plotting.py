@@ -24,6 +24,8 @@ def test_plot_data_applies_background_and_saved_manual_subtraction() -> None:
     assert result.points[0].background_mean == 0.1
     assert result.points[0].correction_applied is True
     assert result.points[0].label == "sample A1"
+    assert result.points[0].time_index == 0
+    assert result.points[0].elapsed_microseconds == 0
     assert result.issues == ()
 
 

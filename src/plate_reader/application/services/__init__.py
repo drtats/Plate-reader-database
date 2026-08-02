@@ -12,6 +12,15 @@ from plate_reader.application.services.growth_display_names import (
     export_growth_display_name_csv,
     preview_growth_display_name_csv,
 )
+from plate_reader.application.services.growth_heatmap import (
+    BuildGrowthHeatmapCatalogService,
+    GrowthHeatmapCatalog,
+    GrowthHeatmapCell,
+    GrowthHeatmapChannel,
+    GrowthHeatmapData,
+    GrowthHeatmapTimepoint,
+    PrepareGrowthHeatmapDataService,
+)
 from plate_reader.application.services.growth_import import (
     GrowthImportResult,
     ImportAuthorizationError,
@@ -111,6 +120,7 @@ __all__ = [
     "BackgroundRevisionResult",
     "BuildGrowthBackgroundGroupsService",
     "BuildGrowthDisplayNamesService",
+    "BuildGrowthHeatmapCatalogService",
     "ComputeGrowthBackgroundService",
     "ComputeMicRevisionService",
     "DeleteOptionService",
@@ -127,6 +137,11 @@ __all__ = [
     "GrowthDisplayNameScope",
     "GrowthDisplayNameToken",
     "GrowthDisplayNumberFormat",
+    "GrowthHeatmapCatalog",
+    "GrowthHeatmapCell",
+    "GrowthHeatmapChannel",
+    "GrowthHeatmapData",
+    "GrowthHeatmapTimepoint",
     "GrowthImportResult",
     "GrowthPdfArtifact",
     "GrowthPdfOptions",
@@ -157,6 +172,7 @@ __all__ = [
     "OidcClaims",
     "PlateTemplate",
     "PortableArtifact",
+    "PrepareGrowthHeatmapDataService",
     "PrepareGrowthPlotDataService",
     "PreviewGrowthRunService",
     "PreviewMicPlateService",

@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from plate_reader.application.services import GrowthPlotData, GrowthPlotPoint
+from plate_reader.application.services import GrowthHeatmapData, GrowthPlotData, GrowthPlotPoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +202,77 @@ def _symlog_ticks(minimum: float, maximum: float) -> tuple[float, ...]:
     )
     ticks = tuple(value for value in candidates if minimum <= value <= maximum)
     return ticks or (minimum, maximum)
+
+
+@st.cache_data(show_spinner=False)
+def growth_heatmap_figure(
+    data: GrowthHeatmapData,
+    raw_hash: str,
+    revision_key: str,
+    channel: str,
+    time_index: int,
+    elapsed_microseconds: int,
+) -> go.Figure:
+    """Render one exact channel/timepoint slice in physical plate order."""
+
+    del raw_hash, revision_key
+    if (
+        channel != data.channel
+        or time_index != data.timepoint.time_index
+        or elapsed_microseconds != data.timepoint.elapsed_microseconds
+    ):
+        raise ValueError("Growth heatmap cache identity does not match prepared data")
+    by_position = {cell.position: cell for cell in data.cells}
+    matrix: list[list[float | None]] = []
+    custom: list[list[tuple[object, ...]]] = []
+    for row in "ABCDEFGH":
+        matrix_row: list[float | None] = []
+        custom_row: list[tuple[object, ...]] = []
+        for column in range(1, 13):
+            position = f"{row}{column}"
+            cell = by_position.get(position)
+            matrix_row.append(cell.value if cell is not None else None)
+            custom_row.append(
+                (
+                    position,
+                    cell.label if cell is not None else position,
+                    cell.value_raw if cell is not None else None,
+                    cell.background_mean if cell is not None else None,
+                    (
+                        "corrected"
+                        if cell is not None and cell.correction_applied
+                        else "raw fallback"
+                        if cell is not None and data.correction_requested
+                        else "raw"
+                    ),
+                )
+            )
+        matrix.append(matrix_row)
+        custom.append(custom_row)
+    state = "Background corrected" if data.correction_requested else "Raw"
+    figure = px.imshow(
+        matrix,
+        x=list(range(1, 13)),
+        y=list("ABCDEFGH"),
+        labels={"x": "Column", "y": "Row", "color": f"{state} OD"},
+        text_auto=".3f",
+        aspect="auto",
+        color_continuous_scale="Viridis",
+    )
+    figure.update_traces(
+        customdata=custom,
+        hovertemplate=(
+            "Well: %{customdata[0]}<br>Name: %{customdata[1]}<br>"
+            "Plotted OD: %{z:.4f}<br>Raw OD: %{customdata[2]}<br>"
+            "Background mean: %{customdata[3]}<br>State: %{customdata[4]}<extra></extra>"
+        ),
+    )
+    figure.update_layout(
+        title=(
+            f"Growth heatmap · {data.channel} · {data.timepoint.elapsed_minutes:g} min · {state}"
+        )
+    )
+    return figure
 
 
 @st.cache_data(show_spinner=False)

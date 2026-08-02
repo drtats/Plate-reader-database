@@ -93,6 +93,11 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert {tab.label for tab in app.tabs}.issuperset(
         {"Reference plate", "96-well selection", "Selection list", "Metadata filters"}
     )
+    assert any(item.label == "Time-course background correction" for item in app.expander)
+    assert {item.label for item in app.selectbox}.issuperset(
+        {"Heatmap channel", "Heatmap timepoint", "Heatmap values"}
+    )
+    assert any("Heatmap: od600" in item.value and "raw" in item.value for item in app.caption)
     assert _button_labels(app).issuperset(
         {
             "Save metadata",

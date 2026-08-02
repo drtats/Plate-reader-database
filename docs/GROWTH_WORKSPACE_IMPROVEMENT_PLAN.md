@@ -326,11 +326,11 @@ revision exists or the current revision is stale. Do not remove the backend.
 
 ### Tasks
 
-- [ ] Add a typed heatmap DTO/preparation service.
-- [ ] Make channel and timepoint identity explicit in cache keys.
-- [ ] Update the Growth Overview controls and hover labels.
-- [ ] Preserve current background QC summary and detailed timepoint table.
-- [ ] Preserve the lazy 96-well curve overview.
+- [x] Add a typed heatmap DTO/preparation service.
+- [x] Make channel and timepoint identity explicit in cache keys.
+- [x] Update the Growth Overview controls and hover labels.
+- [x] Preserve current background QC summary and detailed timepoint table.
+- [x] Preserve the lazy 96-well curve overview.
 
 ### Likely files
 
@@ -344,13 +344,13 @@ revision exists or the current revision is stale. Do not remove the backend.
 
 ### Checks
 
-- [ ] Earliest, middle, and final timepoints return expected cells.
-- [ ] Multi-channel data cannot overwrite or mix cells.
-- [ ] Raw cells match immutable observations exactly.
-- [ ] Corrected cells match prepared Growth plot values at the same channel and
+- [x] Earliest, middle, and final timepoints return expected cells.
+- [x] Multi-channel data cannot overwrite or mix cells.
+- [x] Raw cells match immutable observations exactly.
+- [x] Corrected cells match prepared Growth plot values at the same channel and
       timepoint.
-- [ ] Missing/stale background cases warn and fall back consistently.
-- [ ] Changing only the UI timepoint does not query/write the database again.
+- [x] Missing/stale background cases warn and fall back consistently.
+- [x] Changing only the UI timepoint does not query/write the database again.
 
 ### Suggested commit
 

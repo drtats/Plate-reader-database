@@ -59,6 +59,7 @@ from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.growth_display_names import render_growth_display_name_controls
+from plate_reader.ui.growth_overview import render_growth_heatmap
 from plate_reader.ui.growth_selector import render_growth_well_selector
 from plate_reader.ui.option_controls import (
     render_saved_option_controls,
@@ -72,7 +73,6 @@ from plate_reader.ui.plate_editor import (
 )
 from plate_reader.ui.plotting import (
     GrowthPlotOptions,
-    endpoint_heatmap,
     growth_curve_figure,
     growth_plate_overview_figure,
     plot_download_config,
@@ -525,9 +525,13 @@ def render_overview(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         st.warning(str(warning))
     if context.actor.role in {Role.EDITOR, Role.ADMIN}:
         with st.expander(
-            "Background assignment and recompute",
+            "Time-course background correction",
             expanded=current_background_revision(snapshot) is None or view.background_is_stale,
         ):
+            st.caption(
+                "Blank wells are summarized within each background group at every timepoint. "
+                "The matching timepoint background is subtracted from sample wells."
+            )
             labels = {
                 GrowthBackgroundGroupSource.MEDIUM: "Media",
                 GrowthBackgroundGroupSource.STRAIN: "Strain",
@@ -634,9 +638,11 @@ def render_overview(context: AppContext, plate_id: PlateId, view: GrowthRunView)
                 hide_index=True,
                 width="stretch",
             )
-    st.plotly_chart(
-        endpoint_heatmap(snapshot.raw_observations, snapshot.wells, raw_hash),
-        width="stretch",
+    render_growth_heatmap(
+        snapshot,
+        view.backgrounds,
+        raw_hash,
+        current_background_revision(snapshot) or "raw",
     )
     with st.expander("96-well curve overview", expanded=False):
         corrected = st.toggle(

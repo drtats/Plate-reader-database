@@ -26,6 +26,8 @@ class GrowthPlotPoint:
     value_raw: float
     background_mean: float | None
     correction_applied: bool
+    time_index: int = 0
+    elapsed_microseconds: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,8 @@ class PrepareGrowthPlotDataService:
                         measurement.value_raw,
                         None,
                         False,
+                        measurement.time_index,
+                        measurement.elapsed_microseconds,
                     )
                     for measurement in measurements
                 ),
@@ -127,6 +131,8 @@ class PrepareGrowthPlotDataService:
                     item.measurement.value_raw,
                     item.background_mean,
                     item.corrected_value is not None,
+                    item.measurement.time_index,
+                    item.measurement.elapsed_microseconds,
                 )
                 for item in correction.measurements
             ),
