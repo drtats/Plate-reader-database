@@ -107,16 +107,16 @@ Goal: prevent another accidental feature loss or UI-direction change.
 
 ### Tasks
 
-- [ ] Record current Growth workspace tabs, labels, save boundaries, and session
+- [x] Record current Growth workspace tabs, labels, save boundaries, and session
       keys in focused characterization tests.
-- [ ] Confirm the shared Layout editor still exposes both `96-well plate` and
+- [x] Confirm the shared Layout editor still exposes both `96-well plate` and
       `Full well table` views.
-- [ ] Confirm raw count/hash invariants for metadata, layout, and saved plot
+- [x] Confirm raw count/hash invariants for metadata, layout, and saved plot
       selection updates.
-- [ ] Add a focused Growth-feedback UI test file rather than expanding one giant
+- [x] Add a focused Growth-feedback UI test file rather than expanding one giant
       smoke test indefinitely.
-- [ ] Capture current baseline screenshots only if they materially help detect a
-      UI replacement; tests and acceptance behavior remain authoritative.
+- [x] Evaluate baseline screenshots. No new screenshot is needed because focused
+      interaction tests directly freeze the tab/editor/save behavior.
 
 ### Likely files
 
@@ -126,9 +126,9 @@ Goal: prevent another accidental feature loss or UI-direction change.
 
 ### Gate
 
-- [ ] Existing full test suite remains green.
-- [ ] Tests prove that both Layout views and explicit save boundaries exist.
-- [ ] Tests prove that metadata/layout changes do not alter raw observations.
+- [x] Existing full test suite remains green (334 passed, 2 skipped).
+- [x] Tests prove that both Layout views and explicit save boundaries exist.
+- [x] Tests prove that metadata/layout changes do not alter raw observations.
 
 ### Suggested commit
 
@@ -611,4 +611,3 @@ Stop rather than guessing if implementation would require:
 - modifying portable import or MIC behavior;
 - removing an existing Growth capability;
 - introducing a new application framework or hosted service.
-

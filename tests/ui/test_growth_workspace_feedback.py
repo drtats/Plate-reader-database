@@ -1,0 +1,127 @@
+"""Characterization tests for the user-approved Growth workspace direction."""
+
+from __future__ import annotations
+
+import hashlib
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+from streamlit.testing.v1 import AppTest
+
+WORKSPACE_TABS = (
+    "Overview & QC",
+    "Metadata",
+    "Layout",
+    "Plotting",
+    "Revisions",
+    "Export",
+    "Provenance",
+)
+
+
+def test_growth_workspace_save_boundaries_and_raw_immutability(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database_path = tmp_path / "growth-feedback.sqlite"
+    monkeypatch.setenv("PLATE_READER_ENV", "test")
+    monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "fake-cloud")
+    monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(database_path))
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+
+    app.radio[0].set_value("New Growth Run").run()
+    assert app.session_state["growth_wizard_step"] == 1
+
+    _click(app, "Use synthetic 24-hour demo")
+    assert app.session_state["growth_wizard_step"] == 2
+    assert _plate_count(database_path) == 0
+
+    _click(app, "Validate and continue")
+    assert app.session_state["growth_wizard_step"] == 3
+    assert "growth_preview" in app.session_state
+    assert _plate_count(database_path) == 0
+
+    _input_named(app, "Experiment name").set_value("Characterized Growth run")
+    _click(app, "Save metadata and continue")
+    assert app.session_state["growth_wizard_step"] == 4
+    assert app.session_state["growth_metadata"]["experiment_name"] == ("Characterized Growth run")
+    assert _plate_count(database_path) == 0
+    assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
+
+    _click(app, "Accept layout and continue")
+    assert app.session_state["growth_wizard_step"] == 5
+    assert len(app.session_state["growth_layout_changes"]) == 96
+    assert _plate_count(database_path) == 0
+
+    _click(app, "Commit growth run")
+    assert _plate_count(database_path) == 1
+    workspace_labels = tuple(tab.label for tab in app.tabs if tab.label in WORKSPACE_TABS)
+    assert workspace_labels == WORKSPACE_TABS
+    assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
+    assert _button_labels(app).issuperset(
+        {"Save metadata", "Save full layout", "Save well selection"}
+    )
+
+    raw_before = _growth_raw_hash(database_path)
+    _input_named(app, "Experiment name").set_value("Unsaved Growth name")
+    app.run()
+    assert _experiment_name(database_path) == "Characterized Growth run"
+    assert _growth_raw_hash(database_path) == raw_before
+
+    _input_named(app, "Experiment name").set_value("Saved Growth name")
+    _click(app, "Save metadata")
+    assert _experiment_name(database_path) == "Saved Growth name"
+    assert _growth_raw_hash(database_path) == raw_before
+
+    _click(app, "Save full layout")
+    assert _growth_raw_hash(database_path) == raw_before
+
+    _click(app, "Save well selection")
+    assert _selected_well_count(database_path) == 8
+    assert _growth_raw_hash(database_path) == raw_before
+
+
+def _click(app: AppTest, label: str) -> AppTest:
+    next(button for button in app.button if button.label == label).click().run()
+    return app
+
+
+def _input_named(app: AppTest, label: str) -> Any:
+    return next(item for item in app.text_input if item.label == label)
+
+
+def _button_labels(app: AppTest) -> set[str]:
+    return {button.label for button in app.button}
+
+
+def _plate_count(database_path: Path) -> int:
+    if not database_path.exists():
+        return 0
+    with sqlite3.connect(database_path) as database:
+        row = database.execute("SELECT count(*) FROM plates").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _experiment_name(database_path: Path) -> str:
+    with sqlite3.connect(database_path) as database:
+        row = database.execute("SELECT name FROM experiments").fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def _selected_well_count(database_path: Path) -> int:
+    with sqlite3.connect(database_path) as database:
+        row = database.execute("SELECT sum(plot_selected) FROM wells").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _growth_raw_hash(database_path: Path) -> str:
+    with sqlite3.connect(database_path) as database:
+        rows = database.execute(
+            "SELECT well_id, channel, time_index, elapsed_microseconds, value_raw "
+            "FROM growth_measurements ORDER BY well_id, channel, time_index"
+        ).fetchall()
+    return hashlib.sha256(repr(rows).encode()).hexdigest()
