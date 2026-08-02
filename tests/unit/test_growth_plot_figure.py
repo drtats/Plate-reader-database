@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from plate_reader.application.services import GrowthPlotData, GrowthPlotPoint
+from plate_reader.application.services import (
+    GrowthPlotColorMode,
+    GrowthPlotColorOptions,
+    GrowthPlotData,
+    GrowthPlotPoint,
+    GrowthPlotStyles,
+    GrowthSeriesStyle,
+)
 from plate_reader.ui.plotting import (
     GrowthPlotOptions,
     growth_curve_figure,
@@ -48,6 +55,41 @@ def test_growth_figure_supports_linear_scale_and_empty_selection() -> None:
         GrowthPlotOptions(x_max=0)
     with pytest.raises(ValueError, match="Y minimum"):
         GrowthPlotOptions(y_min=1, y_max=1)
+
+
+def test_growth_figure_uses_shared_styles_and_keeps_channels_separate() -> None:
+    data = GrowthPlotData(
+        (
+            GrowthPlotPoint("A1", "sample", 0.0, "od600", 0.1, 0.1, None, False),
+            GrowthPlotPoint("A1", "sample", 0.0, "gfp", 1.0, 1.0, None, False),
+            GrowthPlotPoint("A1", "sample", 10.0, "od600", 0.2, 0.2, None, False),
+            GrowthPlotPoint("A1", "sample", 10.0, "gfp", 2.0, 2.0, None, False),
+        ),
+        (),
+        False,
+    )
+    styles = GrowthPlotStyles(
+        (
+            GrowthSeriesStyle("A1", "gfp", "sample (A1) · gfp", "#ff0000", "gfp"),
+            GrowthSeriesStyle("A1", "od600", "sample (A1) · od600", "#00ff00", "od"),
+        ),
+        GrowthPlotColorOptions(GrowthPlotColorMode.CATEGORICAL, "channel"),
+    )
+
+    figure = growth_curve_figure.__wrapped__(
+        data,
+        GrowthPlotOptions(x_max=10, y_min=0, y_max=3, symlog=False),
+        "raw",
+        "revision",
+        styles,
+    )
+
+    assert [trace.name for trace in figure.data] == [
+        "sample (A1) · gfp",
+        "sample (A1) · od600",
+    ]
+    assert [trace.line.color for trace in figure.data] == ["#ff0000", "#00ff00"]
+    assert [list(trace.y) for trace in figure.data] == [[1.0, 2.0], [0.1, 0.2]]
 
 
 def test_plot_download_uses_safe_stable_png_filename() -> None:

@@ -4,8 +4,12 @@ import pytest
 
 from plate_reader.application.services import (
     GrowthPdfOptions,
+    GrowthPlotColorMode,
+    GrowthPlotColorOptions,
     GrowthPlotData,
     GrowthPlotPoint,
+    GrowthPlotStyles,
+    GrowthSeriesStyle,
     export_growth_plot_pdf,
 )
 
@@ -68,3 +72,33 @@ def test_growth_pdf_handles_linear_many_curves_and_rejects_invalid_input() -> No
         GrowthPdfOptions(y_min=1, y_max=1)
     with pytest.raises(ValueError, match="finite"):
         GrowthPdfOptions(x_max=float("inf"))
+
+
+def test_growth_pdf_uses_the_same_explicit_series_colors_and_labels() -> None:
+    data = GrowthPlotData(
+        (
+            GrowthPlotPoint("A1", "duplicate", 0.0, "od600", 0.1, 0.1, None, False),
+            GrowthPlotPoint("A2", "duplicate", 0.0, "od600", 0.2, 0.2, None, False),
+        ),
+        (),
+        False,
+    )
+    styles = GrowthPlotStyles(
+        (
+            GrowthSeriesStyle("A1", "od600", "duplicate (A1)", "#ff0000", "one"),
+            GrowthSeriesStyle("A2", "od600", "duplicate (A2)", "#00ff00", "two"),
+        ),
+        GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
+    )
+
+    artifact = export_growth_plot_pdf(
+        data,
+        GrowthPdfOptions(x_max=10, y_min=0, y_max=1, symlog=False),
+        "shared-styles",
+        styles,
+    )
+
+    assert b"1.000 0.000 0.000 RG" in artifact.content
+    assert b"0.000 1.000 0.000 RG" in artifact.content
+    assert rb"duplicate \(A1\)" in artifact.content
+    assert rb"duplicate \(A2\)" in artifact.content

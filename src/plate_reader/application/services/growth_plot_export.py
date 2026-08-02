@@ -5,6 +5,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from plate_reader.application.services.growth_plot_styles import (
+    GrowthPlotStyles,
+    GrowthSeriesStyle,
+    default_growth_plot_styles,
+)
 from plate_reader.application.services.growth_plotting import GrowthPlotData, GrowthPlotPoint
 
 
@@ -36,17 +41,22 @@ def export_growth_plot_pdf(
     plot_data: GrowthPlotData,
     options: GrowthPdfOptions,
     filename_source: str,
+    styles: GrowthPlotStyles | None = None,
 ) -> GrowthPdfArtifact:
     """Render prepared curves into a landscape, vector-only PDF artifact."""
 
     if not plot_data.points:
         raise ValueError("At least one Growth plot point is required for PDF export")
-    commands = _pdf_plot_commands(plot_data, options)
+    commands = _pdf_plot_commands(plot_data, options, styles)
     filename = f"{_safe_filename(filename_source) or 'growth-plot'}.pdf"
     return GrowthPdfArtifact(filename, _assemble_pdf(commands))
 
 
-def _pdf_plot_commands(plot_data: GrowthPlotData, options: GrowthPdfOptions) -> bytes:
+def _pdf_plot_commands(
+    plot_data: GrowthPlotData,
+    options: GrowthPdfOptions,
+    styles: GrowthPlotStyles | None,
+) -> bytes:
     page_height = 612.0
     left, bottom, width, height = 62.0, 68.0, 558.0, 462.0
     y_transform = _symlog if options.symlog else float
@@ -89,20 +99,10 @@ def _pdf_plot_commands(plot_data: GrowthPlotData, options: GrowthPdfOptions) -> 
                 _pdf_text(22, y - 3, f"{y_value:.3g}", 8),
             )
         )
-    curves = _curves(plot_data.points)
+    curves = _curves(plot_data, styles or default_growth_plot_styles(plot_data))
     commands.append(f"q {left:.2f} {bottom:.2f} {width:.2f} {height:.2f} re W n")
-    palette = (
-        (0.12, 0.47, 0.71),
-        (1.0, 0.50, 0.05),
-        (0.17, 0.63, 0.17),
-        (0.84, 0.15, 0.16),
-        (0.58, 0.40, 0.74),
-        (0.55, 0.34, 0.29),
-        (0.89, 0.47, 0.76),
-        (0.50, 0.50, 0.50),
-    )
-    for index, (_label, points) in enumerate(curves):
-        color = palette[index % len(palette)]
+    for style, points in curves:
+        color = _hex_rgb(style.color_hex)
         path = []
         for point_index, point in enumerate(points):
             operator = "m" if point_index == 0 else "l"
@@ -116,14 +116,14 @@ def _pdf_plot_commands(plot_data: GrowthPlotData, options: GrowthPdfOptions) -> 
     commands.append("Q")
     legend_x, legend_y = 636.0, 520.0
     shown_curves = curves[:28]
-    for index, (label, _points) in enumerate(shown_curves):
-        color = palette[index % len(palette)]
+    for index, (style, _points) in enumerate(shown_curves):
+        color = _hex_rgb(style.color_hex)
         y = legend_y - index * 16
         commands.extend(
             (
                 f"{color[0]:.3f} {color[1]:.3f} {color[2]:.3f} RG 1.5 w "
                 f"{legend_x:.2f} {y:.2f} m {legend_x + 15:.2f} {y:.2f} l S",
-                _pdf_text(legend_x + 20, y - 3, label[:24], 7),
+                _pdf_text(legend_x + 20, y - 3, style.legend_label[:24], 7),
             )
         )
     if len(curves) > len(shown_curves):
@@ -136,18 +136,39 @@ def _pdf_plot_commands(plot_data: GrowthPlotData, options: GrowthPdfOptions) -> 
 
 
 def _curves(
-    points: tuple[GrowthPlotPoint, ...],
-) -> tuple[tuple[str, tuple[GrowthPlotPoint, ...]], ...]:
-    grouped: dict[tuple[str, str, str], list[GrowthPlotPoint]] = {}
-    for point in points:
-        grouped.setdefault((point.position, point.label, point.channel), []).append(point)
+    plot_data: GrowthPlotData,
+    styles: GrowthPlotStyles,
+) -> tuple[tuple[GrowthSeriesStyle, tuple[GrowthPlotPoint, ...]], ...]:
+    grouped: dict[tuple[str, str], list[GrowthPlotPoint]] = {}
+    for point in plot_data.points:
+        grouped.setdefault((point.position, point.channel), []).append(point)
+    style_keys = {(style.position, style.channel) for style in styles.styles}
+    if len(style_keys) != len(styles.styles) or style_keys != set(grouped):
+        raise ValueError("Growth PDF styles do not match prepared series")
     return tuple(
         (
-            position if label == position else f"{label} ({position})",
-            tuple(sorted(values, key=lambda point: point.elapsed_minutes)),
+            style,
+            tuple(
+                sorted(
+                    grouped[(style.position, style.channel)],
+                    key=lambda point: (point.time_index, point.elapsed_microseconds),
+                )
+            ),
         )
-        for (position, label, _channel), values in grouped.items()
+        for style in styles.styles
     )
+
+
+def _hex_rgb(value: str) -> tuple[float, float, float]:
+    if len(value) != 7 or not value.startswith("#"):
+        raise ValueError(f"Invalid Growth series color: {value}")
+    try:
+        red = int(value[1:3], 16) / 255
+        green = int(value[3:5], 16) / 255
+        blue = int(value[5:7], 16) / 255
+    except ValueError as error:
+        raise ValueError(f"Invalid Growth series color: {value}") from error
+    return red, green, blue
 
 
 def _assemble_pdf(content: bytes) -> bytes:

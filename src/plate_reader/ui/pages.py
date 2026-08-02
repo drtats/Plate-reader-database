@@ -33,11 +33,14 @@ from plate_reader.application.demo import synthetic_growth_csv
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services import (
     BuildGrowthBackgroundGroupsService,
+    BuildGrowthPlotStylesService,
     ComputeGrowthBackgroundService,
     ExportGrowthRunService,
     GrowthBackgroundGroupSource,
     GrowthPdfArtifact,
     GrowthPdfOptions,
+    GrowthPlotColorMode,
+    GrowthPlotColorOptions,
     GrowthRunView,
     ImportGrowthRunService,
     LoadGrowthRunService,
@@ -49,6 +52,7 @@ from plate_reader.application.services import (
     UpdateGrowthLayoutService,
     UpdateGrowthMetadataService,
     export_growth_plot_pdf,
+    growth_selection_fields,
 )
 from plate_reader.domain.growth import (
     GROWTH_BACKGROUND_VERSION,
@@ -830,6 +834,24 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         default_positions,
         state_key=f"growth_plot_selection_{plate_id}",
     )
+    selected_summary = ", ".join(selected[:16])
+    if len(selected) > 16:
+        selected_summary = f"{selected_summary}, +{len(selected) - 16} more"
+    st.caption(f"Selected wells: {selected_summary or 'none'}")
+    color_choices: dict[str, GrowthPlotColorOptions] = {
+        "Rainbow · plate order": GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
+        "Rainbow · plotted-series order": GrowthPlotColorOptions(
+            GrowthPlotColorMode.RAINBOW_SERIES_ORDER
+        ),
+    }
+    color_choices.update(
+        {
+            f"Metadata · {field.label}": GrowthPlotColorOptions(
+                GrowthPlotColorMode.CATEGORICAL, field.key
+            )
+            for field in growth_selection_fields(view.snapshot.wells)
+        }
+    )
     with st.form(f"growth-plot-options-{plate_id}"):
         corrected = st.toggle(
             "Apply current background revision",
@@ -842,6 +864,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         y_max = limits[2].number_input("Y maximum", value=1.5, format="%.4f")
         symlog = limits[3].checkbox("Symmetric log scale", value=True)
         title = st.text_input("Plot title")
+        color_choice = st.selectbox("Curve colors", tuple(color_choices))
         save_selection = st.form_submit_button("Save well selection")
         render = st.form_submit_button(
             "Render selected curves", type="primary", disabled=not selected
@@ -892,15 +915,22 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             y_max=float(y_max),
             symlog=symlog,
         )
+        styles = BuildGrowthPlotStylesService().execute(
+            plot_data,
+            view.snapshot.wells,
+            color_choices[color_choice],
+        )
         st.session_state.growth_plot = growth_curve_figure(
             plot_data,
             options,
             raw_hash,
             revision_key,
+            styles,
         )
         st.session_state.growth_plot_issues = plot_data.issues
         st.session_state.growth_plot_title = options.title
         st.session_state.growth_plot_plate_id = str(view.snapshot.plate_id)
+        st.session_state.growth_plot_styles = styles
         st.session_state.growth_plot_pdf = export_growth_plot_pdf(
             plot_data,
             GrowthPdfOptions(
@@ -911,6 +941,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
                 symlog=options.symlog,
             ),
             options.title or f"growth-plot-{plate_id}",
+            styles,
         )
     for issue in st.session_state.get("growth_plot_issues", ()):
         st.warning(issue.message)
@@ -1084,6 +1115,7 @@ def _clear_growth_plot() -> None:
         "growth_plot_plate_id",
         "growth_plot_title",
         "growth_plot_pdf",
+        "growth_plot_styles",
         "growth_plate_overview",
         "growth_plate_overview_issues",
         "growth_plate_overview_plate_id",

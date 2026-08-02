@@ -12,7 +12,13 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from plate_reader.application.services import GrowthHeatmapData, GrowthPlotData, GrowthPlotPoint
+from plate_reader.application.services import (
+    GrowthHeatmapData,
+    GrowthPlotData,
+    GrowthPlotPoint,
+    GrowthPlotStyles,
+    default_growth_plot_styles,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,40 +53,52 @@ def growth_curve_figure(
     options: GrowthPlotOptions,
     raw_hash: str,
     revision_key: str,
+    styles: GrowthPlotStyles | None = None,
 ) -> go.Figure:
     del raw_hash, revision_key
-    records = [
-        {
-            "Time (minutes)": point.elapsed_minutes,
-            "OD": point.value,
-            "Plot value": _symlog(point.value) if options.symlog else point.value,
-            "Curve": (
-                point.position
-                if point.label == point.position
-                else f"{point.label} ({point.position})"
-            ),
-            "Channel": point.channel,
-            "Correction": (
-                "corrected"
-                if point.correction_applied
-                else "raw fallback"
-                if plot_data.correction_requested
-                else "raw"
-            ),
-        }
-        for point in plot_data.points
-    ]
-    frame = pd.DataFrame.from_records(records)
-    if frame.empty:
+    if not plot_data.points:
         return go.Figure().update_layout(title="No wells selected")
-    figure = px.line(
-        frame,
-        x="Time (minutes)",
-        y="Plot value",
-        color="Curve",
-        hover_data={"OD": ":.5g", "Channel": True, "Correction": True, "Plot value": False},
-        render_mode="webgl",
-    )
+    selected_styles = styles or default_growth_plot_styles(plot_data)
+    by_series: dict[tuple[str, str], list[GrowthPlotPoint]] = {}
+    for point in plot_data.points:
+        by_series.setdefault((point.position, point.channel), []).append(point)
+    style_keys = {(style.position, style.channel) for style in selected_styles.styles}
+    if len(style_keys) != len(selected_styles.styles) or style_keys != set(by_series):
+        raise ValueError("Growth plot styles do not match prepared series")
+    figure = go.Figure()
+    for style in selected_styles.styles:
+        points = sorted(
+            by_series[(style.position, style.channel)],
+            key=lambda point: (point.time_index, point.elapsed_microseconds),
+        )
+        figure.add_trace(
+            go.Scattergl(
+                x=[point.elapsed_minutes for point in points],
+                y=[_symlog(point.value) if options.symlog else point.value for point in points],
+                customdata=[
+                    (
+                        point.value,
+                        point.channel,
+                        (
+                            "corrected"
+                            if point.correction_applied
+                            else "raw fallback"
+                            if plot_data.correction_requested
+                            else "raw"
+                        ),
+                    )
+                    for point in points
+                ],
+                mode="lines",
+                name=style.legend_label,
+                line={"color": style.color_hex},
+                hovertemplate=(
+                    "Time: %{x:.4g} min<br>OD: %{customdata[0]:.5g}<br>"
+                    "Channel: %{customdata[1]}<br>Correction: %{customdata[2]}"
+                    "<extra>%{fullData.name}</extra>"
+                ),
+            )
+        )
     figure.update_layout(title=options.title or None)
     figure.update_xaxes(range=(0, options.x_max), title="Time (minutes)")
     if options.symlog:

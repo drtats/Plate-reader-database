@@ -362,11 +362,11 @@ Goal: make detailed curve selection efficient and visual interpretation stable.
 
 ### Tasks
 
-- [ ] Replace the Plotting tab's well multiselect with the Phase 1 selector.
-- [ ] Keep staged selection distinct from explicitly saved default selection.
-- [ ] Show selected-well count and a compact selected-well summary.
-- [ ] Retain raw/corrected toggle, axes, symmetric-log option, title, PNG, and PDF.
-- [ ] Add color modes:
+- [x] Replace the Plotting tab's well multiselect with the Phase 1 selector.
+- [x] Keep staged selection distinct from explicitly saved default selection.
+- [x] Show selected-well count and a compact selected-well summary.
+- [x] Retain raw/corrected toggle, axes, symmetric-log option, title, PNG, and PDF.
+- [x] Add color modes:
   - rainbow by physical plate order;
   - rainbow by plotted-series order;
   - categorical by Strain;
@@ -374,12 +374,12 @@ Goal: make detailed curve selection efficient and visual interpretation stable.
   - categorical by Media;
   - categorical by Group;
   - categorical by another available categorical/custom column.
-- [ ] Make categorical mode assign the same color to the same category.
-- [ ] Keep repeated display names distinct by including physical well in the
+- [x] Make categorical mode assign the same color to the same category.
+- [x] Keep repeated display names distinct by including physical well in the
       series identity.
-- [ ] Produce one deterministic series/color mapping and reuse it in Plotly and
+- [x] Produce one deterministic series/color mapping and reuse it in Plotly and
       the vector PDF so screen and download agree.
-- [ ] Continue using WebGL and avoid eager rendering of all 96 curves.
+- [x] Continue using WebGL and avoid eager rendering of all 96 curves.
 
 ### Likely files
 
@@ -394,13 +394,14 @@ Goal: make detailed curve selection efficient and visual interpretation stable.
 
 ### Checks
 
-- [ ] The plotted position set exactly equals the staged selector set.
-- [ ] Add/remove filter combinations work without reopening Layout.
-- [ ] Colors and legend order are stable across reruns.
-- [ ] Plotly and PDF use the same series colors.
-- [ ] Repeated display names do not merge curves.
-- [ ] Empty selection produces guidance instead of an exception.
-- [ ] A 96-well selection remains within the recorded performance baseline.
+- [x] The plotted position set exactly equals the staged selector set.
+- [x] Add/remove filter combinations work without reopening Layout.
+- [x] Colors and legend order are stable across reruns.
+- [x] Plotly and PDF use the same series colors.
+- [x] Repeated display names do not merge curves.
+- [x] Empty selection produces guidance instead of an exception.
+- [x] A 96-well selection remains within the recorded performance baseline
+      (13,920-point style plus Plotly build: 0.139 s on the baseline machine).
 
 ### Suggested commit
 

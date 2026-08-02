@@ -109,12 +109,23 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
         }
     )
     assert any(item.label == "Filter fields" for item in app.multiselect)
+    assert any(item.label == "Curve colors" for item in app.selectbox)
 
     raw_before = _growth_raw_hash(database_path)
     _input_named(app, "Experiment name").set_value("Unsaved Growth name")
     app.run()
     assert _experiment_name(database_path) == "Characterized Growth run"
     assert _growth_raw_hash(database_path) == raw_before
+
+    _click(app, "Render selected curves")
+    styles = app.session_state["growth_plot_styles"]
+    figure = app.session_state["growth_plot"]
+    assert len(figure.data) == len(styles.styles)
+    assert {style.position for style in styles.styles} == set(
+        app.session_state[f"growth_plot_selection_{app.session_state['selected_plate_id']}"]
+    )
+    assert figure.data[0].line.color == styles.styles[0].color_hex
+    assert any("Selected wells:" in item.value for item in app.caption)
 
     _input_named(app, "Experiment name").set_value("Saved Growth name")
     _click(app, "Save metadata")
@@ -136,6 +147,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
 
     _click(app, "Clear all")
     assert _selected_metric(app) == "0"
+    assert any("Select at least one well" in item.value for item in app.info)
     _click(app, "Invert")
     assert _selected_metric(app) == "96"
     assert _selected_well_count(database_path) == 8
