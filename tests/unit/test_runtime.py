@@ -95,3 +95,28 @@ def test_local_development_role_is_validated(
     monkeypatch.setenv("PLATE_READER_DEV_ROLE", "owner")
     with pytest.raises(ValueError, match="DEV_ROLE"):
         load_local_app_config(tmp_path)
+
+
+def test_hosted_cloud_identity_requires_audit_email(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PLATE_READER_ENV", "production")
+    monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "cloud")
+    monkeypatch.setenv("PLATE_READER_CLOUD_IDENTITY_MODE", "hosted")
+
+    with pytest.raises(ValueError, match="HOSTED_USER_EMAIL"):
+        load_local_app_config(tmp_path)
+
+    monkeypatch.setenv("PLATE_READER_HOSTED_USER_EMAIL", "Owner@Example.com")
+    monkeypatch.setenv("PLATE_READER_HOSTED_USER_ROLE", "editor")
+    config = load_local_app_config(tmp_path)
+
+    assert config.cloud_identity_mode == "hosted"
+    assert config.hosted_user_email == "owner@example.com"
+    assert config.hosted_user_role == "editor"
+
+
+def test_cloud_identity_mode_is_validated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PLATE_READER_CLOUD_IDENTITY_MODE", "password")
+    with pytest.raises(ValueError, match="CLOUD_IDENTITY_MODE"):
+        load_local_app_config(tmp_path)

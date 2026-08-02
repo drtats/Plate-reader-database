@@ -9,6 +9,7 @@ from typing import Literal, cast
 
 EnvironmentName = Literal["development", "test", "production"]
 StorageMode = Literal["local", "fake-cloud", "cloud", "sync"]
+CloudIdentityMode = Literal["oidc", "hosted"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,9 @@ class LocalAppConfig:
     development_user_email: str
     development_user_role: str
     writes_enabled: bool
+    cloud_identity_mode: CloudIdentityMode = "oidc"
+    hosted_user_email: str = ""
+    hosted_user_role: str = "admin"
 
 
 def _read_choice(name: str, default: str, allowed: set[str]) -> str:
@@ -81,10 +85,29 @@ def load_local_app_config(project_root: Path) -> LocalAppConfig:
     writes_enabled_text = os.getenv("PLATE_READER_WRITES_ENABLED", "true").strip().casefold()
     if writes_enabled_text not in {"true", "false"}:
         raise ValueError("PLATE_READER_WRITES_ENABLED must be true or false")
+    cloud_identity_mode = cast(
+        CloudIdentityMode,
+        _read_choice("PLATE_READER_CLOUD_IDENTITY_MODE", "oidc", {"hosted", "oidc"}),
+    )
+    hosted_user_email = os.getenv("PLATE_READER_HOSTED_USER_EMAIL", "").strip().casefold()
+    hosted_user_role = _read_choice(
+        "PLATE_READER_HOSTED_USER_ROLE", "admin", {"viewer", "editor", "admin"}
+    )
+    if (
+        runtime.storage_mode == "cloud"
+        and cloud_identity_mode == "hosted"
+        and "@" not in hosted_user_email
+    ):
+        raise ValueError(
+            "PLATE_READER_HOSTED_USER_EMAIL must be an email address in hosted cloud mode"
+        )
     return LocalAppConfig(
         runtime,
         database_path,
         development_user_email,
         development_user_role,
         writes_enabled_text == "true",
+        cloud_identity_mode,
+        hosted_user_email,
+        hosted_user_role,
     )

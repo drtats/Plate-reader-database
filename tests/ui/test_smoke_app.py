@@ -9,6 +9,14 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from plate_reader.infrastructure.database import (
+    DatabaseBackend,
+    DatabaseConfig,
+    SqlPlateReaderRepository,
+    connect_database,
+)
+from plate_reader.ui import context as context_module
+
 
 def test_smoke_app_renders_in_fake_cloud_mode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -61,6 +69,52 @@ def test_cloud_mode_stops_at_login_before_loading_credentials(
     assert any("Sign in" in item.value for item in app.info)
     assert any(button.label == "Sign in" for button in app.button)
     assert not app.error
+
+
+def test_hosted_cloud_mode_uses_fixed_identity_without_oidc_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    connection = connect_database(
+        DatabaseConfig(
+            tmp_path / "hosted-cloud-ui.sqlite",
+            DatabaseBackend.FAKE_CLOUD,
+            root / "migrations",
+        )
+    )
+    repository = SqlPlateReaderRepository(connection)
+    with repository.transaction():
+        repository.upsert_user(
+            {
+                "email": "owner@example.com",
+                "display_name": "owner",
+                "role": "admin",
+                "is_active": True,
+            }
+        )
+    monkeypatch.setattr(
+        context_module, "_cached_cloud_repository", lambda *args, **kwargs: repository
+    )
+    monkeypatch.setenv("PLATE_READER_ENV", "production")
+    monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "cloud")
+    monkeypatch.setenv("PLATE_READER_CLOUD_IDENTITY_MODE", "hosted")
+    monkeypatch.setenv("PLATE_READER_HOSTED_USER_EMAIL", "owner@example.com")
+    monkeypatch.setenv("PLATE_READER_HOSTED_USER_ROLE", "admin")
+    monkeypatch.setenv("TURSO_DATABASE_URL", "libsql://database.turso.io")
+    monkeypatch.setenv("TURSO_AUTH_TOKEN", "test-token")
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+
+    assert not app.exception
+    assert not app.error
+    assert [metric.value for metric in app.metric[:3]] == [
+        "0.1.0",
+        "production",
+        "cloud",
+    ]
+    assert any("Hosted audit identity: owner@example.com" in item.value for item in app.caption)
+    assert not any(button.label == "Sign in" for button in app.button)
+    connection.close()
 
 
 def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(

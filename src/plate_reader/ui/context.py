@@ -44,16 +44,26 @@ def app_context(
     if config.runtime.storage_mode == "cloud":
         if cloud_credentials is None:
             raise ValueError("Turso credentials are required in cloud mode")
-        if oidc_claims is None:
+        if config.cloud_identity_mode == "oidc" and oidc_claims is None:
             raise ValueError("An authenticated OIDC identity is required in cloud mode")
         repository = _cached_cloud_repository(
             cloud_credentials.database_url,
             str(migrations),
+            hosted_user_email=(
+                config.hosted_user_email if config.cloud_identity_mode == "hosted" else ""
+            ),
+            hosted_user_role=(
+                config.hosted_user_role if config.cloud_identity_mode == "hosted" else ""
+            ),
             _auth_token=cloud_credentials.auth_token,
         )
-        actor = ResolveAuthenticatedActorService(repository).execute(
-            OidcClaims.from_mapping(oidc_claims, require_expiration=True)
-        )
+        if config.cloud_identity_mode == "hosted":
+            actor = _hosted_actor(repository, config)
+        else:
+            assert oidc_claims is not None
+            actor = ResolveAuthenticatedActorService(repository).execute(
+                OidcClaims.from_mapping(oidc_claims, require_expiration=True)
+            )
         if not config.writes_enabled:
             actor = Actor(actor.user_id, actor.email, Role.VIEWER)
         return AppContext(repository, actor)
@@ -73,6 +83,16 @@ def app_context(
         config.development_user_role,
         config.writes_enabled,
     )
+
+
+def _hosted_actor(repository: SqlPlateReaderRepository, config: LocalAppConfig) -> Actor:
+    """Resolve the one audit identity trusted behind a host-managed access gate."""
+
+    email = config.hosted_user_email
+    stored = repository.user_by_email(email)
+    if stored is None or not bool(stored["is_active"]):
+        raise ValueError("Hosted audit identity could not be initialized")
+    return Actor(UserId(str(stored["user_id"])), email, Role(str(stored["role"])))
 
 
 @st.cache_resource(show_spinner="Opening the plate-reader database…")
@@ -108,9 +128,22 @@ def _cached_cloud_repository(
     database_url: str,
     migrations_directory: str,
     *,
+    hosted_user_email: str = "",
+    hosted_user_role: str = "",
     _auth_token: str,
 ) -> SqlPlateReaderRepository:
     connection = connect_turso_database(
         TursoDatabaseConfig(database_url, _auth_token, Path(migrations_directory))
     )
-    return SqlPlateReaderRepository(connection)
+    repository = SqlPlateReaderRepository(connection)
+    if hosted_user_email:
+        with repository.transaction():
+            repository.upsert_user(
+                {
+                    "email": hosted_user_email,
+                    "display_name": hosted_user_email.split("@", maxsplit=1)[0],
+                    "role": hosted_user_role,
+                    "is_active": True,
+                }
+            )
+    return repository

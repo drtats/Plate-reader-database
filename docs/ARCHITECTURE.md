@@ -265,12 +265,16 @@ remote contract and failure checks in Phase 5.
 
 ## 8. Authentication and authorization
 
-Cloud deployment uses Streamlit OIDC (`st.login`, `st.user`, `st.logout`) with
-Google or Microsoft as the identity provider. Authentication identifies the user;
-the application `users` table supplies roles such as `viewer`, `editor`, and
-`admin`.
+Cloud deployment supports two explicit identity modes. OIDC mode uses Streamlit
+OIDC (`st.login`, `st.user`, `st.logout`) with Google or Microsoft; the
+application `users` table supplies per-user roles. Hosted-access mode relies on
+the private Streamlit Community Cloud email gate and uses one secret-configured
+audit identity because Community Cloud does not expose viewer emails to the app.
+Hosted-access mode is limited to deployments where shared attribution is
+acceptable; its configured role applies to every allowed viewer.
 
-- Anonymous users cannot reach data pages.
+- Anonymous users cannot reach data pages: OIDC enforces this inside the app,
+  while hosted-access mode requires a private host-level access list.
 - Viewers cannot write.
 - Editors can create and edit but cannot manage users or destructive operations.
 - Admins manage roles, soft deletion, restores, and migrations.

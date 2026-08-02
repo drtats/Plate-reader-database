@@ -319,7 +319,8 @@ exit gate by itself.
       existing ports (ADR 0010 corrects the earlier TypeScript package name).
 - [ ] Run the same repository contract tests against an isolated remote test DB.
 - [x] Add explicit remote migration command and deployment runbook.
-- [ ] Configure Google or Microsoft OIDC through Streamlit secrets.
+- [ ] Configure either private hosted access with one audit identity or Google /
+      Microsoft OIDC with distinct identities through Streamlit secrets.
 - [x] Implement `viewer`, `editor`, and `admin` authorization checks.
 - [x] Record actor identity for writes and provenance.
 - [x] Add cloud-safe connection caching and query-result caching with explicit

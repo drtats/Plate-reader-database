@@ -36,7 +36,7 @@ def main() -> None:
     try:
         root = Path(__file__).resolve().parent
         config = load_local_app_config(root)
-        if config.runtime.storage_mode == "cloud":
+        if config.runtime.storage_mode == "cloud" and config.cloud_identity_mode == "oidc":
             if not getattr(st.user, "is_logged_in", False):
                 st.info("Sign in with the laboratory identity provider to continue.")
                 if st.button("Sign in"):
@@ -47,6 +47,12 @@ def main() -> None:
                 root / "migrations",
                 cloud_credentials=load_cloud_credentials(),
                 oidc_claims=st.user.to_dict(),
+            )
+        elif config.runtime.storage_mode == "cloud":
+            context = app_context(
+                config,
+                root / "migrations",
+                cloud_credentials=load_cloud_credentials(),
             )
         else:
             context = app_context(config, root / "migrations")
@@ -73,9 +79,12 @@ def main() -> None:
         st.warning("Read-only rollback mode is active. Write services are disabled.")
 
     if config.runtime.storage_mode == "cloud":
-        st.sidebar.caption(f"Signed in as {context.actor.email}")
-        if st.sidebar.button("Sign out"):
-            st.logout()
+        if config.cloud_identity_mode == "hosted":
+            st.sidebar.caption(f"Hosted audit identity: {context.actor.email}")
+        else:
+            st.sidebar.caption(f"Signed in as {context.actor.email}")
+            if st.sidebar.button("Sign out"):
+                st.logout()
     else:
         st.sidebar.caption(f"Signed in for development as {context.actor.email}")
     navigation_options = [

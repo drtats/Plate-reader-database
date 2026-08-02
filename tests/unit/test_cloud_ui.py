@@ -155,3 +155,104 @@ def test_cloud_context_rejects_missing_secrets_or_identity(tmp_path: Path) -> No
             Path("migrations"),
             cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
         )
+
+
+def test_hosted_cloud_context_uses_configured_shared_audit_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    connection = connect_database(
+        DatabaseConfig(
+            tmp_path / "hosted-cloud.sqlite",
+            DatabaseBackend.FAKE_CLOUD,
+            root / "migrations",
+        )
+    )
+    repository = SqlPlateReaderRepository(connection)
+    with repository.transaction():
+        repository.upsert_user(
+            {
+                "email": "owner@example.com",
+                "display_name": "owner",
+                "role": Role.ADMIN,
+                "is_active": True,
+            }
+        )
+    captured: dict[str, object] = {}
+
+    def cloud_repository(*args: object, **kwargs: object) -> SqlPlateReaderRepository:
+        captured.update(kwargs)
+        return repository
+
+    monkeypatch.setattr(context_module, "_cached_cloud_repository", cloud_repository)
+    config = LocalAppConfig(
+        RuntimeInfo("production", "cloud"),
+        tmp_path / "unused.sqlite",
+        "developer@example.invalid",
+        "editor",
+        True,
+        "hosted",
+        "owner@example.com",
+        "admin",
+    )
+
+    context = app_context(
+        config,
+        root / "migrations",
+        cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
+    )
+
+    assert context.actor.email == "owner@example.com"
+    assert context.actor.role is Role.ADMIN
+    stored = repository.user_by_email("owner@example.com")
+    assert stored is not None
+    assert stored["role"] == "admin"
+    assert captured["hosted_user_email"] == "owner@example.com"
+    assert captured["hosted_user_role"] == "admin"
+    connection.close()
+
+
+def test_cached_cloud_connection_initializes_hosted_identity_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    connection = connect_database(
+        DatabaseConfig(
+            tmp_path / "hosted-initialization.sqlite",
+            DatabaseBackend.FAKE_CLOUD,
+            root / "migrations",
+        )
+    )
+    connection_count = 0
+
+    def connect(_config: object) -> object:
+        nonlocal connection_count
+        connection_count += 1
+        return connection
+
+    monkeypatch.setattr(context_module, "connect_turso_database", connect)
+    context_module._cached_cloud_repository.clear()
+    try:
+        first = context_module._cached_cloud_repository(
+            "libsql://hosted-initialization.turso.io",
+            str(root / "migrations"),
+            hosted_user_email="owner@example.com",
+            hosted_user_role="admin",
+            _auth_token="token",
+        )
+        second = context_module._cached_cloud_repository(
+            "libsql://hosted-initialization.turso.io",
+            str(root / "migrations"),
+            hosted_user_email="owner@example.com",
+            hosted_user_role="admin",
+            _auth_token="token",
+        )
+
+        assert first is second
+        assert connection_count == 1
+        stored = first.user_by_email("owner@example.com")
+        assert stored is not None
+        assert stored["role"] == "admin"
+    finally:
+        context_module._cached_cloud_repository.clear()
+        connection.close()
