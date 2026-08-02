@@ -38,10 +38,10 @@ def encode_growth_series(
                 position = well_positions[well_id]
             except KeyError as error:
                 raise GrowthSeriesCodecError(f"Unknown well ID: {well_id}") from error
-            time_index = int(row["time_index"])
-            elapsed = int(row["elapsed_microseconds"])
+            time_index = _integer(row["time_index"], "time_index")
+            elapsed = _integer(row["elapsed_microseconds"], "elapsed_microseconds")
             value_object = row.get("value_raw")
-            value = None if value_object is None else float(value_object)
+            value = _nullable_number(value_object, "value_raw")
             series = by_position.setdefault(position, {})
             if time_index in series:
                 raise GrowthSeriesCodecError(
@@ -94,8 +94,8 @@ def decode_growth_series(
         raise GrowthSeriesCodecError(f"Unsupported growth encoding: {chunk['encoding']}")
     channel = str(chunk["channel"])
     positions_json = str(chunk["positions_json"])
-    timepoints_blob = bytes(chunk["timepoints_blob"])
-    values_blob = bytes(chunk["values_blob"])
+    timepoints_blob = _blob(chunk["timepoints_blob"], "timepoints_blob")
+    values_blob = _blob(chunk["values_blob"], "values_blob")
     expected = str(chunk["content_sha256"])
     if _content_hash(channel, positions_json, timepoints_blob, values_blob) != expected:
         raise GrowthSeriesCodecError("Compact growth-series checksum mismatch")
@@ -107,7 +107,9 @@ def decode_growth_series(
     positions = tuple(loaded_positions)
     axis = _decode_timepoints(timepoints_blob)
     values = _decode_values(values_blob, len(positions) * len(axis))
-    if len(axis) != int(chunk["timepoint_count"]) or len(positions) != int(chunk["position_count"]):
+    if len(axis) != _integer(chunk["timepoint_count"], "timepoint_count") or len(
+        positions
+    ) != _integer(chunk["position_count"], "position_count"):
         raise GrowthSeriesCodecError("Compact growth-series dimensions do not match metadata")
 
     plate_id = str(chunk["plate_id"])
@@ -141,7 +143,12 @@ def decode_plate_growth_series(
     rows = [row for chunk in chunks for row in decode_growth_series(chunk, position_well_ids)]
     return tuple(
         sorted(
-            rows, key=lambda row: (str(row["channel"]), int(row["time_index"]), str(row["well_id"]))
+            rows,
+            key=lambda row: (
+                str(row["channel"]),
+                _integer(row["time_index"], "time_index"),
+                str(row["well_id"]),
+            ),
         )
     )
 
@@ -220,3 +227,23 @@ def _position_sort_key(position: str) -> tuple[str, int]:
     prefix = position.rstrip("0123456789")
     suffix = position[len(prefix) :]
     return prefix, int(suffix) if suffix else 0
+
+
+def _integer(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GrowthSeriesCodecError(f"{field} must be an integer")
+    return value
+
+
+def _nullable_number(value: object, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise GrowthSeriesCodecError(f"{field} must be numeric or null")
+    return float(value)
+
+
+def _blob(value: object, field: str) -> bytes:
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise GrowthSeriesCodecError(f"{field} must contain bytes")
+    return bytes(value)

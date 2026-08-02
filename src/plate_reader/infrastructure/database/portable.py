@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from plate_reader.application.contracts import PlateId
 from plate_reader.application.ports.portable import (
     PortableImportPreviewData,
     PortableImportResultData,
@@ -1240,7 +1241,7 @@ def _logical_growth_rows(
     repository = SqlPlateReaderRepository(connection)
     rows: list[tuple[object, ...]] = []
     for plate_id in plate_ids:
-        for chunk in repository.stream_growth_measurements(plate_id):
+        for chunk in repository.stream_growth_measurements(PlateId(plate_id)):
             rows.extend(
                 tuple(row[column] for column in TABLE_COLUMNS["growth_measurements"])
                 for row in chunk
@@ -1256,7 +1257,7 @@ def _insert_import_growth_rows(connection: Connection, rows: Sequence[dict[str, 
         by_plate.setdefault(str(row["plate_id"]), []).append(row)
     for plate_id, plate_rows in by_plate.items():
         try:
-            repository.insert_raw_observations(plate_id, plate_rows)
+            repository.insert_raw_observations(PlateId(plate_id), plate_rows)
         except InvalidRepositoryValueError:
             _insert_dict_rows(connection, "growth_measurements", plate_rows)
 

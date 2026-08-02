@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from plate_reader.application.contracts import (
     Actor,
@@ -483,7 +484,7 @@ def _destination_raw_hash(repository: SqlPlateReaderRepository, plate_id: PlateI
         (
             positions[str(row["well_id"])],
             str(row["channel"]),
-            int(row["elapsed_microseconds"]),
+            cast(int, row["elapsed_microseconds"]),
             row["value_raw"],
         )
         for row in snapshot.raw_observations
