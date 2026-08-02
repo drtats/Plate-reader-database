@@ -18,6 +18,8 @@ schema, portable-format, and scientific compatibility impact.
   standalone database selection, and frozen launcher/server/backup smoke tests.
 - Added operational performance budgets, upload limits, security/operations/user
   documentation, and explicit deferral of real Turso/OIDC and automatic sync.
+- Prevented native PyArrow allocator crashes when the dual-view plate editor
+  opens on macOS ARM.
 
 Compatibility: schema v1; portable format v1; growth normalization/background
 and MIC endpoint algorithm versions remain 1.0.0. No legacy source was modified.

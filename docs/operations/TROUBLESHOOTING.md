@@ -19,6 +19,17 @@ executable bundle.
 - A source hash error means the bytes changed between preview and commit; preview
   the source again.
 
+## The app closes after saving metadata
+
+If Terminal reports `Segmentation fault: 11` while Step 4 opens, update to a
+version containing ADR-0020 and restart with `Start Plate Reader.command`. The
+launcher and application now force Arrow's system memory pool before rendering
+the 8x12 and 96-row editors. This is a native Arrow allocator failure, not a
+database error. During a new import, Step 3 only stages metadata in the browser
+session, so restart the import; no plate is committed until Step 5. In the
+saved-run workspace, an explicit metadata save may already have committed before
+a later crash.
+
 ## A save reports a concurrency conflict
 
 Another session saved the plate after it was loaded. Reload, compare the latest

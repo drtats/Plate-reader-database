@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from plate_reader.application.contracts import MicWellLayoutChange, WellLayoutChange
+from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.domain.common.plate import PLATE_96
 from plate_reader.domain.mic import MicWell
 
@@ -412,6 +413,7 @@ def render_plate_editor(
 ) -> pd.DataFrame:  # pragma: no cover - Streamlit widget composition
     """Render the legacy dual-view editor and return its canonical session frame."""
 
+    configure_arrow_memory_pool()
     revision_key = f"{state_key}_revision"
     if state_key not in st.session_state:
         st.session_state[state_key] = normalize_layout_frame(initial_frame)
@@ -708,6 +710,6 @@ def _is_missing(value: object) -> bool:
 
 
 def _is_streamlit_test() -> bool:  # pragma: no cover - AppTest compatibility
-    """Avoid a PyArrow crash in Streamlit's in-process AppTest runner."""
+    """Keep broad workflow smoke tests focused; dedicated tests exercise both editors."""
 
     return os.environ.get("PLATE_READER_ENV", "").casefold() == "test"

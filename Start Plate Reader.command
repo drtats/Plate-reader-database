@@ -8,6 +8,7 @@ cd "$PROJECT_DIR"
 export PLATE_READER_ENV="development"
 export PLATE_READER_STORAGE_MODE="fake-cloud"
 export PLATE_READER_DATABASE_PATH=".data/plate-reader.sqlite"
+export ARROW_DEFAULT_MEMORY_POOL="system"
 
 echo "Starting Plate Reader Database…"
 echo "Project: $PROJECT_DIR"

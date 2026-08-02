@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.3,<3",
     "pandas>=2.3,<3",
     "plotly>=6.3,<7",
+    "pyarrow>=25,<26",
     "pydantic>=2.11,<3",
     "pyturso>=0.7,<0.8",
     "streamlit[auth]>=1.54,<1.55",
@@ -51,7 +52,7 @@ show_error_codes = true
 pretty = true
 
 [[tool.mypy.overrides]]
-module = ["libsql", "pandas", "plotly", "plotly.*"]
+module = ["libsql", "pandas", "plotly", "plotly.*", "pyarrow"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -8,6 +8,7 @@ import streamlit as st
 
 from plate_reader import __version__
 from plate_reader.application.services import AuthenticationError
+from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.runtime import load_local_app_config
 from plate_reader.ui.cloud import load_cloud_credentials, oidc_provider
 from plate_reader.ui.context import app_context
@@ -19,6 +20,8 @@ from plate_reader.ui.mic_pages import (
 )
 from plate_reader.ui.pages import render_growth_wizard, render_run_library, render_workspace
 from plate_reader.ui.portable_pages import render_portable_import
+
+configure_arrow_memory_pool()
 
 st.set_page_config(
     page_title="Plate Reader Database",
