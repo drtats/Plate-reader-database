@@ -530,15 +530,15 @@ bash -n "Start Plate Reader.command"
 
 Required assertions:
 
-- [ ] full suite and coverage threshold pass;
-- [ ] real dual-view Arrow regression passes;
-- [ ] raw observation count and hash remain unchanged through metadata, layout,
+- [x] full suite and coverage threshold pass;
+- [x] real dual-view Arrow regression passes;
+- [x] raw observation count and hash remain unchanged through metadata, layout,
       naming, selection, plotting, and CSV export;
-- [ ] local and fake-cloud repository behavior remains equivalent;
-- [ ] no MIC or portable-import snapshot/test changed merely to accommodate this
+- [x] local and fake-cloud repository behavior remains equivalent;
+- [x] no MIC or portable-import snapshot/test changed merely to accommodate this
       work;
-- [ ] no new eager 96-curve render is introduced;
-- [ ] no secrets or real laboratory data are tracked.
+- [x] no new eager 96-curve render is introduced;
+- [x] no secrets or real laboratory data are tracked.
 
 ### Manual Growth UAT
 

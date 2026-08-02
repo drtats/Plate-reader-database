@@ -52,8 +52,10 @@ are read-only, and their identifiers, hashes, parameters, and versions remain in
 the technical-details expander.
 
 **Activity log** is the append-only audit trail for the run. Its main table puts
-the action, user, and timestamp first. Open the technical-details expander to see
-the original event IDs, entity IDs, event types, and stored payloads.
+the action, user, and timestamp first for saved events such as imports, edits,
+and background recalculations. Open the technical-details expander to see the
+original event IDs, entity IDs, event types, and stored payloads. Browser file
+downloads do not currently create a database audit event.
 
 Both import and saved-run layout editors include **Reusable plate templates**.
 Any signed-in user can apply a Growth template to the staged 96-well layout;

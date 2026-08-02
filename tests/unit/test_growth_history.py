@@ -38,7 +38,7 @@ def test_background_history_is_friendly_and_preserves_every_technical_field() ->
         "Previous calculation",
     ]
     assert items[0].calculated_by == "user-2"
-    assert items[0].method == "growth_background v1.1"
+    assert items[0].method == "Time-course background · 1.1"
     assert dict(items[0].details) == current
     assert dict(items[1].details) == previous
 

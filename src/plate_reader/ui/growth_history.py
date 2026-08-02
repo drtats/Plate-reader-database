@@ -60,8 +60,8 @@ def growth_background_history_items(
                 calculated_by=str(revision.get("created_by") or "Unknown user"),
                 calculated_at=str(revision.get("created_at") or "Unknown time"),
                 method=(
-                    f"{revision.get('algorithm_name') or 'Unknown method'} "
-                    f"v{revision.get('algorithm_version') or '?'}"
+                    "Time-course background · "
+                    f"{revision.get('algorithm_version') or 'unknown version'}"
                 ),
                 details=dict(revision),
             )
@@ -129,8 +129,9 @@ def render_growth_background_history(
 def render_growth_activity_log(records: Sequence[Mapping[str, object]]) -> None:
     st.subheader("Activity log")
     st.write(
-        "This append-only audit log records who imported, edited, recalculated, or exported "
-        "data and when. Technical IDs and stored payloads remain available below."
+        "This append-only audit log records saved actions such as imports, edits, and "
+        "background recalculations, with the user and time. Technical IDs and stored "
+        "payloads remain available below."
     )
     items = growth_activity_items(records)
     if not items:
