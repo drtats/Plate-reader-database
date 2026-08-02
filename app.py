@@ -13,6 +13,7 @@ from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.runtime import load_local_app_config
 from plate_reader.ui.cloud import load_cloud_credentials, oidc_provider
 from plate_reader.ui.context import app_context
+from plate_reader.ui.instructions import render_instructions
 from plate_reader.ui.pages import render_growth_wizard, render_run_library, render_workspace
 from plate_reader.ui.portable_pages import render_portable_import
 from plate_reader.ui.theme import render_theme_control
@@ -91,6 +92,7 @@ def main() -> None:
         "Growth Run Library",
         "New Growth Run",
         "Growth Workspace",
+        "Instructions",
     ]
     if (
         config.runtime.environment == "test"
@@ -111,7 +113,9 @@ def main() -> None:
         navigation_options,
         key="navigation",
     )
-    if navigation == "Growth Run Library":
+    if navigation == "Instructions":
+        render_instructions()
+    elif navigation == "Growth Run Library":
         render_run_library(context)
     elif navigation == "New Growth Run":
         render_growth_wizard(

@@ -35,8 +35,13 @@ def test_smoke_app_renders_in_fake_cloud_mode(
         "Growth Run Library",
         "New Growth Run",
         "Growth Workspace",
+        "Instructions",
         "Import Portable Data",
     ]
+
+    navigation_radio(app).set_value("Instructions").run()
+    assert app.header[0].value == "Instructions"
+    assert not app.exception
 
 
 def test_real_dual_view_plate_editor_component_renders(
