@@ -16,6 +16,7 @@ from plate_reader.infrastructure.database import (
     connect_database,
 )
 from plate_reader.ui import context as context_module
+from plate_reader.ui import pages as pages_module
 
 
 def test_smoke_app_renders_in_fake_cloud_mode(
@@ -130,6 +131,13 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     monkeypatch.setenv("PLATE_READER_STORAGE_MODE", "fake-cloud")
     monkeypatch.setenv("PLATE_READER_DATABASE_PATH", str(database_path))
     app = AppTest.from_file("app.py", default_timeout=30).run()
+    monkeypatch.setattr(
+        pages_module,
+        "export_growth_plot_pdf",
+        lambda _figure, filename: pages_module.GrowthPdfArtifact(
+            filename=f"{filename}.pdf", content=b"%PDF-1.4 test"
+        ),
+    )
 
     navigation_radio(app).set_value("New Growth Run").run()
     click(app, "Use synthetic 24-hour demo")

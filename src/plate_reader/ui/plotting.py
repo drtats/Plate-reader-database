@@ -14,6 +14,7 @@ from plotly.subplots import make_subplots
 
 from plate_reader.application.services import (
     GrowthHeatmapData,
+    GrowthPdfArtifact,
     GrowthPlotData,
     GrowthPlotPoint,
     GrowthPlotStyles,
@@ -219,6 +220,27 @@ def plot_download_config(
             "scale": 2,
         },
     }
+
+
+def export_growth_plot_pdf(figure: go.Figure, filename_source: str) -> GrowthPdfArtifact:
+    """Export the exact Plotly figure shown in the Growth Workspace as a PDF.
+
+    This deliberately exports the existing figure rather than reconstructing a
+    second chart, so the downloaded PDF preserves the active theme, layout,
+    labels, colors, axes, and legend.
+    """
+
+    filename = _safe_export_filename(filename_source)
+    content = figure.to_image(format="pdf", width=1_200, height=750)
+    return GrowthPdfArtifact(filename=f"{filename}.pdf", content=content)
+
+
+def _safe_export_filename(filename_source: str) -> str:
+    filename = "-".join(filename_source.strip().lower().split())
+    safe_filename = "".join(
+        character for character in filename if character.isalnum() or character in "-_"
+    )
+    return safe_filename or "growth-plot"
 
 
 def _symlog(value: float, *, linear_threshold: float = 0.01) -> float:

@@ -41,7 +41,6 @@ from plate_reader.application.services import (
     GrowthDataExportContext,
     GrowthDisplayNamePreview,
     GrowthPdfArtifact,
-    GrowthPdfOptions,
     GrowthPlotColorMode,
     GrowthPlotColorOptions,
     GrowthPlotLabelOptions,
@@ -56,7 +55,6 @@ from plate_reader.application.services import (
     UpdateGrowthLayoutService,
     UpdateGrowthMetadataService,
     export_growth_plot_data_csv,
-    export_growth_plot_pdf,
     export_growth_plot_wide_csv,
     growth_selection_fields,
 )
@@ -87,6 +85,7 @@ from plate_reader.ui.plate_editor import (
 )
 from plate_reader.ui.plotting import (
     GrowthPlotOptions,
+    export_growth_plot_pdf,
     growth_curve_figure,
     growth_plate_overview_figure,
     plot_download_config,
@@ -1034,18 +1033,22 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         st.session_state.growth_plot_title = options.title
         st.session_state.growth_plot_plate_id = str(view.snapshot.plate_id)
         st.session_state.growth_plot_styles = styles
-        st.session_state.growth_plot_pdf = export_growth_plot_pdf(
-            plot_data,
-            GrowthPdfOptions(
-                title=options.title,
-                x_max=options.x_max,
-                y_min=options.y_min,
-                y_max=options.y_max,
-                symlog=options.symlog,
-            ),
-            options.title or f"growth-plot-{plate_id}",
-            styles,
-        )
+        # Kaleido wraps browser-launch failures in implementation-specific
+        # exceptions, so a narrow exception tuple would let a failed export
+        # break the otherwise usable Growth Workspace.
+        try:
+            st.session_state.growth_plot_pdf = export_growth_plot_pdf(
+                st.session_state.growth_plot,
+                options.title or f"growth-plot-{plate_id}",
+            )
+            st.session_state.pop("growth_plot_pdf_error", None)
+        except Exception:
+            LOGGER.exception("Could not export Growth Plotly PDF")
+            st.session_state.pop("growth_plot_pdf", None)
+            st.session_state.growth_plot_pdf_error = (
+                "The server could not start Plotly's PDF export engine. "
+                "Redeploy with the Kaleido and Chromium dependencies, then try again."
+            )
         st.session_state.growth_plot_csv = export_growth_plot_data_csv(
             plot_data,
             view.snapshot.wells,
@@ -1064,6 +1067,8 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         )
     for issue in st.session_state.get("growth_plot_issues", ()):
         st.warning(issue.message)
+    if pdf_error := st.session_state.get("growth_plot_pdf_error"):
+        st.warning(f"Plot PDF is unavailable: {pdf_error}")
     if (figure := st.session_state.get("growth_plot")) is not None and st.session_state.get(
         "growth_plot_plate_id"
     ) == str(view.snapshot.plate_id):
@@ -1237,6 +1242,7 @@ def _clear_growth_plot() -> None:
         "growth_plot_plate_id",
         "growth_plot_title",
         "growth_plot_pdf",
+        "growth_plot_pdf_error",
         "growth_plot_csv",
         "growth_plot_wide_csv",
         "growth_plot_styles",

@@ -12,6 +12,7 @@ from plate_reader.application.services import (
 )
 from plate_reader.ui.plotting import (
     GrowthPlotOptions,
+    export_growth_plot_pdf,
     growth_curve_figure,
     growth_plate_overview_figure,
     plot_download_config,
@@ -122,6 +123,34 @@ def test_plot_download_uses_safe_stable_png_filename() -> None:
         "height": 750,
         "scale": 2,
     }
+
+
+def test_plotly_pdf_export_uses_the_existing_figure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    figure = growth_curve_figure.__wrapped__(
+        GrowthPlotData(
+            (GrowthPlotPoint("A1", "sample", 0.0, "od600", 0.1, 0.1, None, False),),
+            (),
+            False,
+        ),
+        GrowthPlotOptions(title="Growth plot", x_max=10, y_min=0, y_max=1, symlog=False),
+        "raw",
+        "revision",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_to_image(**kwargs: object) -> bytes:
+        captured.update(kwargs)
+        return b"%PDF-1.4 plotly"
+
+    monkeypatch.setattr(figure, "to_image", fake_to_image)
+
+    artifact = export_growth_plot_pdf(figure, "Growth: plot / A")
+
+    assert artifact.filename == "growth-plot--a.pdf"
+    assert artifact.content == b"%PDF-1.4 plotly"
+    assert captured == {"format": "pdf", "width": 1_200, "height": 750}
 
 
 def test_growth_plate_overview_uses_all_physical_subplots_and_cached_inputs() -> None:
