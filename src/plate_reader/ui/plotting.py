@@ -223,15 +223,16 @@ def plot_download_config(
 
 
 def export_growth_plot_pdf(figure: go.Figure, filename_source: str) -> GrowthPdfArtifact:
-    """Export the exact Plotly figure shown in the Growth Workspace as a PDF.
+    """Export the displayed Plotly figure as a readable, print-sized PDF.
 
-    This deliberately exports the existing figure rather than reconstructing a
-    second chart, so the downloaded PDF preserves the active theme, layout,
-    labels, colors, axes, and legend.
+    The data, traces, colors, theme, labels, axis limits, and legend come
+    directly from the displayed figure. A PDF-specific copy only enlarges its
+    typography and margins so browser-sized text remains readable on a page.
     """
 
     filename = _safe_export_filename(filename_source)
-    content = figure.to_image(format="pdf", width=1_200, height=750)
+    pdf_figure = _print_sized_growth_figure(figure)
+    content = pdf_figure.to_image(format="pdf", width=1_000, height=650)
     return GrowthPdfArtifact(filename=f"{filename}.pdf", content=content)
 
 
@@ -241,6 +242,27 @@ def _safe_export_filename(filename_source: str) -> str:
         character for character in filename if character.isalnum() or character in "-_"
     )
     return safe_filename or "growth-plot"
+
+
+def _print_sized_growth_figure(figure: go.Figure) -> go.Figure:
+    """Copy a responsive workspace figure and make its text page-readable."""
+
+    pdf_figure = go.Figure(figure)
+    font = pdf_figure.layout.font.to_plotly_json()
+    font["size"] = max(int(font.get("size", 12)), 18)
+    title_font = pdf_figure.layout.title.font.to_plotly_json()
+    title_font["size"] = max(int(title_font.get("size", 17)), 28)
+    legend_font = pdf_figure.layout.legend.font.to_plotly_json()
+    legend_font["size"] = max(int(legend_font.get("size", 12)), 16)
+    pdf_figure.update_layout(
+        font=font,
+        title_font=title_font,
+        legend={"font": legend_font},
+        margin={"l": 95, "r": 45, "t": 90, "b": 85},
+    )
+    pdf_figure.update_xaxes(tickfont={"size": 15}, title_font={"size": 21})
+    pdf_figure.update_yaxes(tickfont={"size": 15}, title_font={"size": 21})
+    return pdf_figure
 
 
 def _symlog(value: float, *, linear_threshold: float = 0.01) -> float:

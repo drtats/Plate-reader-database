@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import plotly.graph_objects as go
 import pytest
 
 from plate_reader.application.services import (
@@ -140,17 +141,30 @@ def test_plotly_pdf_export_uses_the_existing_figure(
     )
     captured: dict[str, object] = {}
 
-    def fake_to_image(**kwargs: object) -> bytes:
+    def fake_to_image(exported_figure: go.Figure, **kwargs: object) -> bytes:
+        captured["figure"] = exported_figure
         captured.update(kwargs)
         return b"%PDF-1.4 plotly"
 
-    monkeypatch.setattr(figure, "to_image", fake_to_image)
+    monkeypatch.setattr(go.Figure, "to_image", fake_to_image)
 
     artifact = export_growth_plot_pdf(figure, "Growth: plot / A")
 
     assert artifact.filename == "growth-plot--a.pdf"
     assert artifact.content == b"%PDF-1.4 plotly"
-    assert captured == {"format": "pdf", "width": 1_200, "height": 750}
+    assert captured["format"] == "pdf"
+    assert captured["width"] == 1_000
+    assert captured["height"] == 650
+    exported_figure = captured["figure"]
+    assert isinstance(exported_figure, go.Figure)
+    assert exported_figure is not figure
+    assert exported_figure.data[0].name == figure.data[0].name
+    assert exported_figure.layout.paper_bgcolor == figure.layout.paper_bgcolor
+    assert exported_figure.layout.font.size == 18
+    assert exported_figure.layout.title.font.size == 28
+    assert exported_figure.layout.legend.font.size == 16
+    assert exported_figure.layout.xaxis.tickfont.size == 15
+    assert exported_figure.layout.yaxis.title.font.size == 21
 
 
 def test_growth_plate_overview_uses_all_physical_subplots_and_cached_inputs() -> None:
