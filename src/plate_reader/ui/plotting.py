@@ -249,19 +249,19 @@ def _print_sized_growth_figure(figure: go.Figure) -> go.Figure:
 
     pdf_figure = go.Figure(figure)
     font = pdf_figure.layout.font.to_plotly_json()
-    font["size"] = max(int(font.get("size", 12)), 18)
+    font["size"] = max(int(font.get("size", 12)), 24)
     title_font = pdf_figure.layout.title.font.to_plotly_json()
-    title_font["size"] = max(int(title_font.get("size", 17)), 28)
+    title_font["size"] = max(int(title_font.get("size", 17)), 38)
     legend_font = pdf_figure.layout.legend.font.to_plotly_json()
-    legend_font["size"] = max(int(legend_font.get("size", 12)), 16)
+    legend_font["size"] = max(int(legend_font.get("size", 12)), 22)
     pdf_figure.update_layout(
         font=font,
         title_font=title_font,
         legend={"font": legend_font},
-        margin={"l": 95, "r": 45, "t": 90, "b": 85},
+        margin={"l": 125, "r": 60, "t": 115, "b": 110},
     )
-    pdf_figure.update_xaxes(tickfont={"size": 15}, title_font={"size": 21})
-    pdf_figure.update_yaxes(tickfont={"size": 15}, title_font={"size": 21})
+    pdf_figure.update_xaxes(tickfont={"size": 20}, title_font={"size": 28})
+    pdf_figure.update_yaxes(tickfont={"size": 20}, title_font={"size": 28})
     return pdf_figure
 
 

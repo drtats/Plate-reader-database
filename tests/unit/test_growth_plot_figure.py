@@ -160,11 +160,11 @@ def test_plotly_pdf_export_uses_the_existing_figure(
     assert exported_figure is not figure
     assert exported_figure.data[0].name == figure.data[0].name
     assert exported_figure.layout.paper_bgcolor == figure.layout.paper_bgcolor
-    assert exported_figure.layout.font.size == 18
-    assert exported_figure.layout.title.font.size == 28
-    assert exported_figure.layout.legend.font.size == 16
-    assert exported_figure.layout.xaxis.tickfont.size == 15
-    assert exported_figure.layout.yaxis.title.font.size == 21
+    assert exported_figure.layout.font.size == 24
+    assert exported_figure.layout.title.font.size == 38
+    assert exported_figure.layout.legend.font.size == 22
+    assert exported_figure.layout.xaxis.tickfont.size == 20
+    assert exported_figure.layout.yaxis.title.font.size == 28
 
 
 def test_growth_plate_overview_uses_all_physical_subplots_and_cached_inputs() -> None:
