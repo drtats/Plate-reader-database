@@ -46,16 +46,15 @@ def app_context(
             raise ValueError("Turso credentials are required in cloud mode")
         if config.cloud_identity_mode == "oidc" and oidc_claims is None:
             raise ValueError("An authenticated OIDC identity is required in cloud mode")
-        repository = _cached_cloud_repository(
-            cloud_credentials.database_url,
-            str(migrations),
+        repository = _healthy_cloud_repository(
+            cloud_credentials,
+            migrations,
             hosted_user_email=(
                 config.hosted_user_email if config.cloud_identity_mode == "hosted" else ""
             ),
             hosted_user_role=(
                 config.hosted_user_role if config.cloud_identity_mode == "hosted" else ""
             ),
-            _auth_token=cloud_credentials.auth_token,
         )
         if config.cloud_identity_mode == "hosted":
             actor = _hosted_actor(repository, config)
@@ -93,6 +92,41 @@ def _hosted_actor(repository: SqlPlateReaderRepository, config: LocalAppConfig) 
     if stored is None or not bool(stored["is_active"]):
         raise ValueError("Hosted audit identity could not be initialized")
     return Actor(UserId(str(stored["user_id"])), email, Role(str(stored["role"])))
+
+
+def _healthy_cloud_repository(
+    credentials: CloudCredentials,
+    migrations: Path,
+    *,
+    hosted_user_email: str,
+    hosted_user_role: str,
+) -> SqlPlateReaderRepository:
+    """Return a live Turso connection, replacing an expired Hrana stream once."""
+
+    def open_cached() -> SqlPlateReaderRepository:
+        return _cached_cloud_repository(
+            credentials.database_url,
+            str(migrations),
+            hosted_user_email=hosted_user_email,
+            hosted_user_role=hosted_user_role,
+            _auth_token=credentials.auth_token,
+        )
+
+    repository = open_cached()
+    try:
+        repository.connection.execute("SELECT 1")
+    except Exception as error:
+        if not _is_expired_hrana_stream(error):
+            raise
+        _cached_cloud_repository.clear()
+        repository = open_cached()
+        repository.connection.execute("SELECT 1")
+    return repository
+
+
+def _is_expired_hrana_stream(error: Exception) -> bool:
+    message = str(error).casefold()
+    return "hrana" in message and "stream not found" in message
 
 
 @st.cache_resource(show_spinner="Opening the plate-reader database…")

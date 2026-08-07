@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -256,3 +257,81 @@ def test_cached_cloud_connection_initializes_hosted_identity_once(
     finally:
         context_module._cached_cloud_repository.clear()
         connection.close()
+
+
+def test_cloud_repository_reconnects_once_after_an_expired_hrana_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    class StaleConnection:
+        def execute(self, _statement: str) -> None:
+            raise ValueError("Hrana: api error: stream not found: stream-id")
+
+    stale = type("Repository", (), {"connection": StaleConnection()})()
+    fresh_connection = sqlite3.connect(":memory:", isolation_level=None)
+    fresh = type("Repository", (), {"connection": fresh_connection})()
+
+    class CachedFactory:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.clear_calls = 0
+
+        def __call__(self, *_args: object, **_kwargs: object) -> object:
+            self.calls += 1
+            return stale if self.calls == 1 else fresh
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+
+    factory = CachedFactory()
+    monkeypatch.setattr(context_module, "_cached_cloud_repository", factory)
+
+    try:
+        repository = context_module._healthy_cloud_repository(
+            CloudCredentials("libsql://database.turso.io", "token"),
+            root / "migrations",
+            hosted_user_email="",
+            hosted_user_role="",
+        )
+    finally:
+        fresh_connection.close()
+
+    assert repository is fresh
+    assert factory.calls == 2
+    assert factory.clear_calls == 1
+
+
+def test_cloud_repository_does_not_retry_other_connection_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    class BrokenConnection:
+        def execute(self, _statement: str) -> None:
+            raise ValueError("Turso authentication failed")
+
+    broken = type("Repository", (), {"connection": BrokenConnection()})()
+
+    class CachedFactory:
+        def __init__(self) -> None:
+            self.clear_calls = 0
+
+        def __call__(self, *_args: object, **_kwargs: object) -> object:
+            return broken
+
+        def clear(self) -> None:
+            self.clear_calls += 1
+
+    factory = CachedFactory()
+    monkeypatch.setattr(context_module, "_cached_cloud_repository", factory)
+
+    with pytest.raises(ValueError, match="authentication"):
+        context_module._healthy_cloud_repository(
+            CloudCredentials("libsql://database.turso.io", "token"),
+            root / "migrations",
+            hosted_user_email="",
+            hosted_user_role="",
+        )
+
+    assert factory.clear_calls == 0
