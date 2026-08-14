@@ -7,8 +7,8 @@ schema, portable-format, and scientific compatibility impact.
 
 - Made Growth plotting use live 96-well grid or list selections directly, without
   separate Apply buttons, while keeping selection persistence as an optional save.
-- Moved the Growth reference plate out of the selection tabs so it remains visible
-  above every selection method.
+- Moved the Growth reference plate out of the selection tabs into a collapsible
+  viewer below the row/column shortcuts, with selectable layout-field labels.
 
 ## 0.1.0 - 2026-08-01
 

@@ -34,7 +34,14 @@ def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch)
         "Selection list",
         "Metadata filters",
     }
-    assert any(item.value == "#### Reference plate" for item in app.markdown)
+    assert [item.label for item in app.expander] == [
+        "Row and column shortcuts",
+        "Reference plate",
+    ]
+    reference_field = next(item for item in app.selectbox if item.label == "Show in 96-well layout")
+    assert {"Display name", "Strain", "Concentration"}.issubset(reference_field.options)
+    reference_field.set_value("Strain").run()
+    assert any("strain-a" in item.value for item in app.markdown)
     assert _button_labels(app).issuperset({"Select all", "Clear all", "Invert"})
     assert "Apply 96-well selection" not in _button_labels(app)
     assert "Apply selection list" not in _button_labels(app)
@@ -118,7 +125,8 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert {tab.label for tab in app.tabs}.issuperset(
         {"96-well selection", "Selection list", "Metadata filters"}
     )
-    assert any(item.value == "#### Reference plate" for item in app.markdown)
+    assert any(item.label == "Reference plate" for item in app.expander)
+    assert any(item.label == "Show in 96-well layout" for item in app.selectbox)
     assert any(item.label == "Time-course background correction" for item in app.expander)
     assert {item.label for item in app.selectbox}.issuperset(
         {"Heatmap channel", "Heatmap timepoint", "Heatmap values"}

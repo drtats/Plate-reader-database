@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterable, Mapping, Sequence
 
@@ -25,6 +26,23 @@ _OPERATION_LABELS = {
     GrowthSelectionOperation.REMOVE: "Remove matches",
     GrowthSelectionOperation.KEEP_ONLY: "Keep only matches",
 }
+_REFERENCE_FIELDS = (
+    ("position", "Well position"),
+    ("display_name", "Display name"),
+    ("raw_label", "Raw label"),
+    ("strain", "Strain"),
+    ("medium", "Media"),
+    ("treatment", "Treatment"),
+    ("concentration", "Concentration"),
+    ("concentration_unit", "Concentration unit"),
+    ("replicate", "Replicate"),
+    ("background_group", "Background group"),
+    ("grouping_label", "Group"),
+    ("inoculum_size", "Inoculum size"),
+    ("inoculum_unit", "Inoculum unit"),
+    ("is_blank", "Blank"),
+    ("notes", "Notes"),
+)
 
 
 def render_growth_well_selector(
@@ -86,14 +104,35 @@ def render_growth_well_selector(
             _store_selection(
                 state_key,
                 combine_growth_selection(selected, matches, shortcut_operation),
-            )
-
-    st.markdown("#### Reference plate")
-    st.caption("Reference labels stay visible above every well-selection method.")
-    st.markdown(
-        growth_selection_reference(wells).to_html(border=0),
-        unsafe_allow_html=True,
     )
+
+    reference_fields = reference_plate_fields(wells)
+    reference_keys_by_label = {label: key for key, label in reference_fields}
+    reference_key = f"{state_key}_reference_field"
+    default_label = next(
+        (
+            label
+            for preferred in ("display_name", "raw_label", "position")
+            for key, label in reference_fields
+            if key == preferred
+        ),
+        "Well position",
+    )
+    if st.session_state.get(reference_key) not in reference_keys_by_label:
+        st.session_state[reference_key] = default_label
+    reference_label = st.selectbox(
+        "Show in 96-well layout",
+        tuple(reference_keys_by_label),
+        key=reference_key,
+    )
+    with st.expander("Reference plate", expanded=False):
+        st.markdown(
+            growth_selection_reference(
+                wells,
+                field_key=reference_keys_by_label[reference_label],
+            ).to_html(border=0),
+            unsafe_allow_html=True,
+        )
 
     if not _is_streamlit_test():
         _sync_direct_selection_widgets(state_key, selected, all_positions)
@@ -250,12 +289,48 @@ def growth_selection_from_list(frame: pd.DataFrame) -> tuple[str, ...]:
     return _normalize_positions(positions)
 
 
-def growth_selection_reference(wells: Sequence[Mapping[str, object]]) -> pd.DataFrame:
+def reference_plate_fields(
+    wells: Sequence[Mapping[str, object]],
+) -> tuple[tuple[str, str], ...]:
+    """Return meaningful layout fields that can label a reference plate."""
+
     by_position = _wells_by_position(wells)
+    ordered_wells = tuple(by_position[position.label] for position in PLATE_96.positions())
+    available = [
+        (key, label)
+        for key, label in _REFERENCE_FIELDS
+        if key == "position"
+        or any(_reference_text(_reference_value(well, key)) != "—" for well in ordered_wells)
+    ]
+    available.extend(
+        (field.key, field.label)
+        for field in growth_selection_fields(wells)
+        if field.key.startswith("custom:")
+    )
+    return tuple(available)
+
+
+def growth_selection_reference(
+    wells: Sequence[Mapping[str, object]],
+    *,
+    field_key: str = "display_name",
+) -> pd.DataFrame:
+    """Build an 8x12 reference plate labeled by one layout field."""
+
+    by_position = _wells_by_position(wells)
+    available_keys = {key for key, _label in reference_plate_fields(wells)}
+    if field_key not in available_keys:
+        raise ValueError(f"Unknown or empty Growth reference field: {field_key}")
     return pd.DataFrame(
         [
             [
-                _well_label(by_position[f"{row}{column}"], f"{row}{column}")
+                _reference_text(
+                    _reference_value(
+                        by_position[f"{row}{column}"],
+                        field_key,
+                        position=f"{row}{column}",
+                    )
+                )
                 for column in range(1, 13)
             ]
             for row in "ABCDEFGH"
@@ -302,7 +377,6 @@ def _store_grid_widget_selection(state_key: str, all_positions: Sequence[str]) -
 def _store_list_widget_selection(state_key: str) -> None:
     st.session_state[state_key] = tuple(st.session_state[_selection_list_key(state_key)])
     st.session_state[_direct_sync_key(state_key)] = True
-    st.rerun()
 
 
 def _grid_checkbox_key(state_key: str, position: str) -> str:
@@ -335,6 +409,46 @@ def _well_label(well: Mapping[str, object], position: str) -> str:
         if value:
             return value
     return position
+
+
+def _reference_value(
+    well: Mapping[str, object],
+    field_key: str,
+    *,
+    position: str = "",
+) -> object:
+    if field_key == "position":
+        return position or well.get("position")
+    if not field_key.startswith("custom:"):
+        return well.get(field_key)
+    custom = well.get("custom_json")
+    if custom is None or custom == "":
+        return None
+    if isinstance(custom, Mapping):
+        values = custom
+    elif isinstance(custom, str):
+        try:
+            parsed = json.loads(custom)
+        except json.JSONDecodeError as error:
+            raise ValueError("Growth custom metadata must be valid JSON") from error
+        if not isinstance(parsed, dict):
+            raise ValueError("Growth custom metadata must be a JSON object")
+        values = parsed
+    else:
+        raise ValueError("Growth custom metadata must be a JSON object")
+    return values.get(field_key.removeprefix("custom:"))
+
+
+def _reference_text(value: object) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    if pd.isna(value):
+        return "—"
+    return str(value).strip() or "—"
 
 
 def _boolean(value: object) -> bool:

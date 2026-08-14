@@ -11,6 +11,7 @@ wells = tuple(
         "display_name": f"Sample {position.label}",
         "raw_label": f"raw-{position.label}",
         "strain": "strain-a" if position.row_index < 4 else "strain-b",
+        "concentration": float(position.column_index + 1),
         "medium": "M9",
         "custom_json": '{"Oxygen":"low"}',
     }
