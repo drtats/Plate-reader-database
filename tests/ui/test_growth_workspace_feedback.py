@@ -30,15 +30,33 @@ def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch)
 
     assert not app.exception
     assert {tab.label for tab in app.tabs} == {
-        "Reference plate",
         "96-well selection",
         "Selection list",
         "Metadata filters",
     }
-    assert _button_labels(app).issuperset(
-        {"Select all", "Clear all", "Invert", "Apply 96-well selection", "Apply selection list"}
-    )
+    assert any(item.value == "#### Reference plate" for item in app.markdown)
+    assert _button_labels(app).issuperset({"Select all", "Clear all", "Invert"})
+    assert "Apply 96-well selection" not in _button_labels(app)
+    assert "Apply selection list" not in _button_labels(app)
     assert any(item.label == "Filter fields" for item in app.multiselect)
+
+    next(item for item in app.checkbox if item.label == "A1").set_value(False).run()
+    assert app.session_state["component_growth_selection"] == tuple(
+        f"A{column}" for column in range(2, 9)
+    )
+    assert _selected_metric(app) == "7"
+    _click(app, "Render selected curves")
+    assert app.session_state["rendered_growth_selection"] == tuple(
+        f"A{column}" for column in range(2, 9)
+    )
+
+    next(item for item in app.multiselect if item.label == "Selected wells (list)").set_value(
+        ["B1"]
+    ).run()
+    assert app.session_state["component_growth_selection"] == ("B1",)
+    assert _selected_metric(app) == "1"
+    _click(app, "Render selected curves")
+    assert app.session_state["rendered_growth_selection"] == ("B1",)
 
 
 def test_growth_workspace_save_boundaries_and_raw_immutability(
@@ -98,8 +116,9 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert workspace_labels == WORKSPACE_TABS
     assert {tab.label for tab in app.tabs}.issuperset({"96-well plate", "Full well table"})
     assert {tab.label for tab in app.tabs}.issuperset(
-        {"Reference plate", "96-well selection", "Selection list", "Metadata filters"}
+        {"96-well selection", "Selection list", "Metadata filters"}
     )
+    assert any(item.value == "#### Reference plate" for item in app.markdown)
     assert any(item.label == "Time-course background correction" for item in app.expander)
     assert {item.label for item in app.selectbox}.issuperset(
         {"Heatmap channel", "Heatmap timepoint", "Heatmap values"}

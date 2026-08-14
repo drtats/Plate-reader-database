@@ -88,48 +88,56 @@ def render_growth_well_selector(
                 combine_growth_selection(selected, matches, shortcut_operation),
             )
 
-    reference_tab, grid_tab, list_tab, filter_tab = st.tabs(
-        ("Reference plate", "96-well selection", "Selection list", "Metadata filters")
+    st.markdown("#### Reference plate")
+    st.caption("Reference labels stay visible above every well-selection method.")
+    st.markdown(
+        growth_selection_reference(wells).to_html(border=0),
+        unsafe_allow_html=True,
     )
-    with reference_tab:
-        st.markdown(
-            growth_selection_reference(wells).to_html(border=0),
-            unsafe_allow_html=True,
-        )
+
+    if not _is_streamlit_test():
+        _sync_direct_selection_widgets(state_key, selected, all_positions)
+    grid_tab, list_tab, filter_tab = st.tabs(
+        ("96-well selection", "Selection list", "Metadata filters")
+    )
     with grid_tab:
+        st.caption("Changes take effect immediately. Render uses the checked wells below.")
         if _is_streamlit_test():
             st.caption("Interactive 8x12 selection grid enabled in the running app.")
         else:
-            with st.form(f"{state_key}_grid_form"):
-                edited_grid = st.data_editor(
-                    growth_selection_grid(selected),
-                    width="stretch",
-                    column_config={
-                        str(column): st.column_config.CheckboxColumn(str(column))
-                        for column in range(1, 13)
-                    },
-                    key=f"{state_key}_grid",
-                )
-                apply_grid = st.form_submit_button("Apply 96-well selection", type="primary")
-            if apply_grid:
-                _store_selection(state_key, growth_selection_from_grid(edited_grid))
+            header = st.columns((0.55, *([1.0] * 12)))
+            header[0].markdown("**Row**")
+            for column, container in enumerate(header[1:], start=1):
+                container.markdown(f"**{column}**")
+            for row in "ABCDEFGH":
+                cells = st.columns((0.55, *([1.0] * 12)))
+                cells[0].markdown(f"**{row}**")
+                for column, container in enumerate(cells[1:], start=1):
+                    position = f"{row}{column}"
+                    container.checkbox(
+                        position,
+                        key=_grid_checkbox_key(state_key, position),
+                        label_visibility="collapsed",
+                        help=f"Include well {position}",
+                        on_change=_store_grid_widget_selection,
+                        args=(state_key, all_positions),
+                    )
     with list_tab:
         if _is_streamlit_test():
-            st.caption("Interactive 96-row selection list enabled in the running app.")
+            st.caption("Interactive selection list enabled in the running app.")
         else:
-            with st.form(f"{state_key}_list_form"):
-                edited_list = st.data_editor(
-                    growth_selection_list(wells, selected),
-                    height=500,
-                    width="stretch",
-                    hide_index=True,
-                    disabled=("Well", "Display name", "Raw label"),
-                    column_config={"Selected": st.column_config.CheckboxColumn("Selected")},
-                    key=f"{state_key}_list",
-                )
-                apply_list = st.form_submit_button("Apply selection list", type="primary")
-            if apply_list:
-                _store_selection(state_key, growth_selection_from_list(edited_list))
+            by_position = _wells_by_position(wells)
+            st.multiselect(
+                "Selected wells (list)",
+                all_positions,
+                key=_selection_list_key(state_key),
+                format_func=lambda position: (
+                    f"{position} · {_well_label(by_position[position], position)}"
+                ),
+                on_change=_store_list_widget_selection,
+                args=(state_key,),
+                help="Changes immediately affect Render selected curves.",
+            )
     with filter_tab:
         fields = growth_selection_fields(wells)
         fields_by_label = {field.label: field for field in fields}
@@ -259,7 +267,54 @@ def growth_selection_reference(wells: Sequence[Mapping[str, object]]) -> pd.Data
 
 def _store_selection(state_key: str, positions: Iterable[str]) -> None:
     st.session_state[state_key] = tuple(positions)
+    st.session_state[_direct_sync_key(state_key)] = True
     st.rerun()
+
+
+def _sync_direct_selection_widgets(
+    state_key: str,
+    selected: Iterable[str],
+    all_positions: Sequence[str],
+) -> None:
+    selected_set = set(selected)
+    force_sync = bool(st.session_state.pop(_direct_sync_key(state_key), False))
+    for position in all_positions:
+        widget_key = _grid_checkbox_key(state_key, position)
+        if force_sync or widget_key not in st.session_state:
+            st.session_state[widget_key] = position in selected_set
+    list_key = _selection_list_key(state_key)
+    if force_sync or list_key not in st.session_state:
+        st.session_state[list_key] = tuple(
+            position for position in all_positions if position in selected_set
+        )
+
+
+def _store_grid_widget_selection(state_key: str, all_positions: Sequence[str]) -> None:
+    selected = tuple(
+        position
+        for position in all_positions
+        if bool(st.session_state[_grid_checkbox_key(state_key, position)])
+    )
+    st.session_state[state_key] = selected
+    st.session_state[_selection_list_key(state_key)] = selected
+
+
+def _store_list_widget_selection(state_key: str) -> None:
+    st.session_state[state_key] = tuple(st.session_state[_selection_list_key(state_key)])
+    st.session_state[_direct_sync_key(state_key)] = True
+    st.rerun()
+
+
+def _grid_checkbox_key(state_key: str, position: str) -> str:
+    return f"{state_key}_grid_{position}"
+
+
+def _selection_list_key(state_key: str) -> str:
+    return f"{state_key}_list"
+
+
+def _direct_sync_key(state_key: str) -> str:
+    return f"{state_key}_direct_sync_pending"
 
 
 def _wells_by_position(

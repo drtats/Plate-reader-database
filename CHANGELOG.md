@@ -3,6 +3,13 @@
 All notable changes follow semantic versioning and this file records application,
 schema, portable-format, and scientific compatibility impact.
 
+## Unreleased
+
+- Made Growth plotting use live 96-well grid or list selections directly, without
+  separate Apply buttons, while keeping selection persistence as an optional save.
+- Moved the Growth reference plate out of the selection tabs so it remains visible
+  above every selection method.
+
 ## 0.1.0 - 2026-08-01
 
 - Created one modular Streamlit/Python platform for growth and MIC assays.
