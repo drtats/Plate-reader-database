@@ -104,7 +104,7 @@ def render_growth_well_selector(
             _store_selection(
                 state_key,
                 combine_growth_selection(selected, matches, shortcut_operation),
-    )
+            )
 
     reference_fields = reference_plate_fields(wells)
     reference_keys_by_label = {label: key for key, label in reference_fields}
@@ -144,23 +144,17 @@ def render_growth_well_selector(
         if _is_streamlit_test():
             st.caption("Interactive 8x12 selection grid enabled in the running app.")
         else:
-            header = st.columns((0.55, *([1.0] * 12)))
-            header[0].markdown("**Row**")
-            for column, container in enumerate(header[1:], start=1):
-                container.markdown(f"**{column}**")
-            for row in "ABCDEFGH":
-                cells = st.columns((0.55, *([1.0] * 12)))
-                cells[0].markdown(f"**{row}**")
-                for column, container in enumerate(cells[1:], start=1):
-                    position = f"{row}{column}"
-                    container.checkbox(
-                        position,
-                        key=_grid_checkbox_key(state_key, position),
-                        label_visibility="collapsed",
-                        help=f"Include well {position}",
-                        on_change=_store_grid_widget_selection,
-                        args=(state_key, all_positions),
-                    )
+            st.data_editor(
+                growth_selection_grid(selected),
+                width="stretch",
+                column_config={
+                    str(column): st.column_config.CheckboxColumn(str(column))
+                    for column in range(1, 13)
+                },
+                key=_grid_editor_key(state_key),
+                on_change=_store_grid_editor_selection,
+                args=(state_key,),
+            )
     with list_tab:
         if _is_streamlit_test():
             st.caption("Interactive selection list enabled in the running app.")
@@ -250,6 +244,29 @@ def growth_selection_from_grid(frame: pd.DataFrame) -> tuple[str, ...]:
         for column in expected_columns
         if _boolean(normalized.loc[row, column])
     )
+
+
+def growth_selection_from_grid_edits(
+    selected_positions: Iterable[str],
+    edited_rows: Mapping[object, object],
+) -> tuple[str, ...]:
+    """Apply Streamlit's checkbox-table edit payload to a canonical selection."""
+
+    selected = set(_normalize_positions(selected_positions))
+    for row_index, changes in edited_rows.items():
+        if not isinstance(changes, Mapping):
+            raise ValueError("Growth selection grid edits must map rows to changed columns")
+        try:
+            row = "ABCDEFGH"[int(str(row_index))]
+        except (IndexError, TypeError, ValueError) as error:
+            raise ValueError(f"Invalid Growth selection grid row: {row_index}") from error
+        for column, checked in changes.items():
+            position = WellPosition.parse(f"{row}{column}").label
+            if _boolean(checked):
+                selected.add(position)
+            else:
+                selected.discard(position)
+    return _normalize_positions(selected)
 
 
 def growth_selection_list(
@@ -351,12 +368,10 @@ def _sync_direct_selection_widgets(
     selected: Iterable[str],
     all_positions: Sequence[str],
 ) -> None:
-    selected_set = set(selected)
     force_sync = bool(st.session_state.pop(_direct_sync_key(state_key), False))
-    for position in all_positions:
-        widget_key = _grid_checkbox_key(state_key, position)
-        if force_sync or widget_key not in st.session_state:
-            st.session_state[widget_key] = position in selected_set
+    if force_sync:
+        st.session_state.pop(_grid_editor_key(state_key), None)
+    selected_set = set(selected)
     list_key = _selection_list_key(state_key)
     if force_sync or list_key not in st.session_state:
         st.session_state[list_key] = tuple(
@@ -364,23 +379,27 @@ def _sync_direct_selection_widgets(
         )
 
 
-def _store_grid_widget_selection(state_key: str, all_positions: Sequence[str]) -> None:
-    selected = tuple(
-        position
-        for position in all_positions
-        if bool(st.session_state[_grid_checkbox_key(state_key, position)])
-    )
-    st.session_state[state_key] = selected
-    st.session_state[_selection_list_key(state_key)] = selected
-
-
 def _store_list_widget_selection(state_key: str) -> None:
     st.session_state[state_key] = tuple(st.session_state[_selection_list_key(state_key)])
     st.session_state[_direct_sync_key(state_key)] = True
 
 
-def _grid_checkbox_key(state_key: str, position: str) -> str:
-    return f"{state_key}_grid_{position}"
+def _store_grid_editor_selection(state_key: str) -> None:
+    editor_state = st.session_state.get(_grid_editor_key(state_key), {})
+    if not isinstance(editor_state, Mapping):
+        return
+    edited_rows = editor_state.get("edited_rows", {})
+    if not isinstance(edited_rows, Mapping):
+        return
+
+    updated = growth_selection_from_grid_edits(st.session_state[state_key], edited_rows)
+    st.session_state[state_key] = updated
+    st.session_state[_selection_list_key(state_key)] = updated
+    st.session_state[_direct_sync_key(state_key)] = True
+
+
+def _grid_editor_key(state_key: str) -> str:
+    return f"{state_key}_grid"
 
 
 def _selection_list_key(state_key: str) -> str:

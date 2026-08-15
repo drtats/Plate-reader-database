@@ -45,17 +45,10 @@ def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch)
     assert _button_labels(app).issuperset({"Select all", "Clear all", "Invert"})
     assert "Apply 96-well selection" not in _button_labels(app)
     assert "Apply selection list" not in _button_labels(app)
+    selection_grid = app.dataframe[0].value
+    assert tuple(selection_grid.index) == tuple("ABCDEFGH")
+    assert tuple(selection_grid.columns) == tuple(str(column) for column in range(1, 13))
     assert any(item.label == "Filter fields" for item in app.multiselect)
-
-    next(item for item in app.checkbox if item.label == "A1").set_value(False).run()
-    assert app.session_state["component_growth_selection"] == tuple(
-        f"A{column}" for column in range(2, 9)
-    )
-    assert _selected_metric(app) == "7"
-    _click(app, "Render selected curves")
-    assert app.session_state["rendered_growth_selection"] == tuple(
-        f"A{column}" for column in range(2, 9)
-    )
 
     next(item for item in app.multiselect if item.label == "Selected wells (list)").set_value(
         ["B1"]

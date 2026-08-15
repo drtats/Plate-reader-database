@@ -9,6 +9,8 @@ schema, portable-format, and scientific compatibility impact.
   separate Apply buttons, while keeping selection persistence as an optional save.
 - Moved the Growth reference plate out of the selection tabs into a collapsible
   viewer below the row/column shortcuts, with selectable layout-field labels.
+- Restored the compact 8×12 checkbox-table format for direct Growth well selection
+  while keeping changes live and removing the separate Apply step.
 
 ## 0.1.0 - 2026-08-01
 

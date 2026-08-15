@@ -8,6 +8,7 @@ import pytest
 from plate_reader.domain.common.plate import PLATE_96
 from plate_reader.ui.growth_selector import (
     growth_selection_from_grid,
+    growth_selection_from_grid_edits,
     growth_selection_from_list,
     growth_selection_grid,
     growth_selection_list,
@@ -25,6 +26,15 @@ def test_grid_and_list_round_trip_the_same_canonical_selection() -> None:
 
     assert grid_result == ("A1", "B2", "H12")
     assert list_result == grid_result
+
+
+def test_grid_edit_payload_updates_the_canonical_selection() -> None:
+    result = growth_selection_from_grid_edits(
+        ("A1", "A2"),
+        {0: {"1": False, "9": True}, "7": {"12": True}},
+    )
+
+    assert result == ("A2", "A9", "H12")
 
 
 def test_reference_plate_shows_the_chosen_layout_field() -> None:
