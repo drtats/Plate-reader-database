@@ -127,10 +127,12 @@ def render_growth_well_selector(
     )
     with st.expander("Reference plate", expanded=False):
         st.markdown(
-            growth_selection_reference(
-                wells,
-                field_key=reference_keys_by_label[reference_label],
-            ).to_html(border=0),
+            growth_selection_reference_html(
+                growth_selection_reference(
+                    wells,
+                    field_key=reference_keys_by_label[reference_label],
+                )
+            ),
             unsafe_allow_html=True,
         )
 
@@ -354,6 +356,35 @@ def growth_selection_reference(
         ],
         index=list("ABCDEFGH"),
         columns=[str(column) for column in range(1, 13)],
+    )
+
+
+def growth_selection_reference_html(frame: pd.DataFrame) -> str:
+    """Render a wide reference plate inside its own horizontal scroll viewport."""
+
+    table = frame.to_html(
+        border=0,
+        classes="growth-reference-plate-table",
+        escape=True,
+    )
+    return (
+        "<style>"
+        ".growth-reference-plate-scroll{"
+        "box-sizing:border-box;max-width:100%;width:100%;overflow-x:auto;"
+        "overscroll-behavior-inline:contain;scrollbar-gutter:stable;}"
+        ".growth-reference-plate-scroll .growth-reference-plate-table{"
+        "border-collapse:collapse;min-width:90rem;width:max-content;}"
+        ".growth-reference-plate-scroll .growth-reference-plate-table th,"
+        ".growth-reference-plate-scroll .growth-reference-plate-table td{"
+        "box-sizing:border-box;min-width:7rem;max-width:14rem;"
+        "white-space:normal;overflow-wrap:anywhere;vertical-align:top;}"
+        ".growth-reference-plate-scroll .growth-reference-plate-table thead th:first-child,"
+        ".growth-reference-plate-scroll .growth-reference-plate-table tbody th{"
+        "min-width:3rem;width:3rem;}"
+        "</style>"
+        '<div class="growth-reference-plate-scroll" '
+        'aria-label="Scrollable reference plate">'
+        f"{table}</div>"
     )
 
 

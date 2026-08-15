@@ -11,6 +11,8 @@ schema, portable-format, and scientific compatibility impact.
   viewer below the row/column shortcuts, with selectable layout-field labels.
 - Restored the compact 8×12 checkbox-table format for direct Growth well selection
   while keeping changes live and removing the separate Apply step.
+- Gave the wider Growth reference plate its own horizontal scroll viewport so it
+  no longer moves the page and selection grid as one surface on narrow windows.
 
 ## 0.1.0 - 2026-08-01
 

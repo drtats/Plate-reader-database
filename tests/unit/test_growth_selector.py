@@ -13,6 +13,7 @@ from plate_reader.ui.growth_selector import (
     growth_selection_grid,
     growth_selection_list,
     growth_selection_reference,
+    growth_selection_reference_html,
     reference_plate_fields,
 )
 
@@ -63,6 +64,17 @@ def test_reference_plate_offers_present_layout_and_custom_fields() -> None:
     assert fields["concentration"] == "Concentration"
     assert fields["custom:Oxygen"] == "Oxygen (custom)"
     assert "medium" not in fields
+
+
+def test_reference_plate_html_owns_its_horizontal_scroll() -> None:
+    html = growth_selection_reference_html(
+        growth_selection_reference(growth_wells(), field_key="display_name")
+    )
+
+    assert 'class="growth-reference-plate-scroll"' in html
+    assert "overflow-x:auto" in html
+    assert "min-width:90rem" in html
+    assert 'aria-label="Scrollable reference plate"' in html
 
 
 def test_grid_and_list_reject_incomplete_or_duplicate_shapes() -> None:
