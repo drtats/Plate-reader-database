@@ -45,4 +45,7 @@ with selection:
         wells,
         tuple(position.label for position in PLATE_96.positions())[:8],
         state_key="dark_mode_selection",
+        form_key="dark_mode_selection_form",
+        render_form_controls=lambda _selected: st.form_submit_button("Render selected curves"),
+        selection_submitted=bool,
     )

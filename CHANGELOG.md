@@ -13,6 +13,8 @@ schema, portable-format, and scientific compatibility impact.
   while keeping changes live and removing the separate Apply step.
 - Gave the wider Growth reference plate its own horizontal scroll viewport so it
   no longer moves the page and selection grid as one surface on narrow windows.
+- Batched direct 96-well plot selection inside the Render/Save form so checking
+  wells stays local and causes no application rerun until an explicit action.
 
 ## 0.1.0 - 2026-08-01
 

@@ -48,6 +48,8 @@ def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch)
     selection_grid = app.dataframe[0].value
     assert tuple(selection_grid.index) == tuple("ABCDEFGH")
     assert tuple(selection_grid.columns) == tuple(str(column) for column in range(1, 13))
+    assert app.dataframe[0].proto.form_id == "component_growth_plot_form"
+    assert any("Grid checks are staged locally" in item.value for item in app.caption)
     assert any(item.label == "Filter fields" for item in app.multiselect)
 
     next(item for item in app.multiselect if item.label == "Selected wells (list)").set_value(

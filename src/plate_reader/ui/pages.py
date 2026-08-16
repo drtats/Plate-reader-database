@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import cast
@@ -93,6 +94,20 @@ from plate_reader.ui.plotting import (
 from plate_reader.ui.template_controls import render_plate_template_controls
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _GrowthPlotFormValues:
+    label_options: GrowthPlotLabelOptions | None
+    corrected: bool
+    x_max: float
+    y_min: float
+    y_max: float
+    symlog: bool
+    title: str
+    color_choice: str
+    save_selection: bool
+    render: bool
 
 
 def render_run_library(context: AppContext) -> None:
@@ -859,58 +874,31 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
             render_exception(error)
 
 
-def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
-    positions = tuple(str(well["position"]) for well in view.snapshot.wells)
-    persisted = tuple(
-        str(well["position"]) for well in view.snapshot.wells if bool(well["plot_selected"])
+def _render_growth_plot_form(
+    selected: tuple[str, ...],
+    *,
+    view: GrowthRunView,
+    plate_id: PlateId,
+    color_choices: tuple[str, ...],
+    label_choices: dict[str, str],
+) -> _GrowthPlotFormValues:  # pragma: no cover - Streamlit widget composition
+    st.caption(
+        f"Currently applied: {len(selected)} well(s). Grid changes above stay local until one "
+        "of the actions below is pressed."
     )
-    default_positions = persisted or positions[:8]
-    selected = render_growth_well_selector(
-        view.snapshot.wells,
-        default_positions,
-        state_key=f"growth_plot_selection_{plate_id}",
-    )
-    selected_summary = ", ".join(selected[:16])
-    if len(selected) > 16:
-        selected_summary = f"{selected_summary}, +{len(selected) - 16} more"
-    st.caption(f"Selected wells: {selected_summary or 'none'}")
-    color_choices: dict[str, GrowthPlotColorOptions] = {
-        "Rainbow · plate order": GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
-        "Rainbow · plotted-series order": GrowthPlotColorOptions(
-            GrowthPlotColorMode.RAINBOW_SERIES_ORDER
-        ),
-    }
-    color_choices.update(
-        {
-            f"Metadata · {field.label}": GrowthPlotColorOptions(
-                GrowthPlotColorMode.CATEGORICAL, field.key
-            )
-            for field in growth_selection_fields(view.snapshot.wells)
-        }
-    )
-    label_choices = {
-        "Display name": "display_name",
-        **{
-            field.label: field.key
-            for field in growth_selection_fields(view.snapshot.wells)
-            if field.key != "display_name"
-        },
-    }
     label_mode = st.radio(
         "Curve label format",
         ("Single field", "Combine fields"),
         horizontal=True,
         key=f"growth_plot_label_mode_{plate_id}",
     )
-    label_options: GrowthPlotLabelOptions | None
-    if label_mode == "Single field":
-        label_choice = st.selectbox(
-            "Curve label",
-            tuple(label_choices),
-            key=f"growth_plot_label_field_{plate_id}",
-        )
-        label_options = GrowthPlotLabelOptions((label_choices[label_choice],))
-    else:
+    label_choice = st.selectbox(
+        "Curve label",
+        tuple(label_choices),
+        key=f"growth_plot_label_field_{plate_id}",
+    )
+    with st.expander("Combined curve label settings", expanded=False):
+        st.caption("These settings are used when Curve label format is Combine fields.")
         combined_labels = tuple(
             st.multiselect(
                 "Curve label fields in order",
@@ -935,7 +923,10 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             value=True,
             key=f"growth_plot_label_omit_empty_{plate_id}",
         )
-        label_options = (
+    label_options = (
+        GrowthPlotLabelOptions((label_choices[label_choice],))
+        if label_mode == "Single field"
+        else (
             GrowthPlotLabelOptions(
                 tuple(label_choices[label] for label in combined_labels),
                 separator=label_separator,
@@ -946,30 +937,87 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             if combined_labels
             else None
         )
-        if label_options is None:
-            st.info("Choose at least one field for the combined curve label.")
-    with st.form(f"growth-plot-options-{plate_id}"):
-        corrected = st.toggle(
-            "Apply current background revision",
-            value=bool(view.backgrounds),
-            disabled=not bool(view.backgrounds),
-        )
-        limits = st.columns(4)
-        x_max = limits[0].number_input("X maximum", min_value=0.001, value=1_400.0)
-        y_min = limits[1].number_input("Y minimum", value=0.001, format="%.4f")
-        y_max = limits[2].number_input("Y maximum", value=1.5, format="%.4f")
-        symlog = limits[3].checkbox("Symmetric log scale", value=True)
-        title = st.text_input("Plot title")
-        color_choice = st.selectbox("Curve colors", tuple(color_choices))
-        save_selection = st.form_submit_button("Save well selection")
-        render = st.form_submit_button(
-            "Render selected curves",
-            type="primary",
-            disabled=not selected or label_options is None,
-        )
+    )
+    corrected = st.toggle(
+        "Apply current background revision",
+        value=bool(view.backgrounds),
+        disabled=not bool(view.backgrounds),
+    )
+    limits = st.columns(4)
+    x_max = limits[0].number_input("X maximum", min_value=0.001, value=1_400.0)
+    y_min = limits[1].number_input("Y minimum", value=0.001, format="%.4f")
+    y_max = limits[2].number_input("Y maximum", value=1.5, format="%.4f")
+    symlog = limits[3].checkbox("Symmetric log scale", value=True)
+    title = st.text_input("Plot title")
+    color_choice = st.selectbox("Curve colors", color_choices)
+    save_selection = st.form_submit_button("Save well selection")
+    render = st.form_submit_button("Render selected curves", type="primary")
+    return _GrowthPlotFormValues(
+        label_options=label_options,
+        corrected=bool(corrected),
+        x_max=float(x_max),
+        y_min=float(y_min),
+        y_max=float(y_max),
+        symlog=bool(symlog),
+        title=title,
+        color_choice=color_choice,
+        save_selection=bool(save_selection),
+        render=bool(render),
+    )
+
+
+def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
+    positions = tuple(str(well["position"]) for well in view.snapshot.wells)
+    persisted = tuple(
+        str(well["position"]) for well in view.snapshot.wells if bool(well["plot_selected"])
+    )
+    default_positions = persisted or positions[:8]
+    color_choices: dict[str, GrowthPlotColorOptions] = {
+        "Rainbow · plate order": GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
+        "Rainbow · plotted-series order": GrowthPlotColorOptions(
+            GrowthPlotColorMode.RAINBOW_SERIES_ORDER
+        ),
+    }
+    color_choices.update(
+        {
+            f"Metadata · {field.label}": GrowthPlotColorOptions(
+                GrowthPlotColorMode.CATEGORICAL, field.key
+            )
+            for field in growth_selection_fields(view.snapshot.wells)
+        }
+    )
+    label_choices = {
+        "Display name": "display_name",
+        **{
+            field.label: field.key
+            for field in growth_selection_fields(view.snapshot.wells)
+            if field.key != "display_name"
+        },
+    }
+    selection_state_key = f"growth_plot_selection_{plate_id}"
+    selected, plot_form = render_growth_well_selector(
+        view.snapshot.wells,
+        default_positions,
+        state_key=selection_state_key,
+        form_key=f"growth-plot-options-{plate_id}",
+        render_form_controls=lambda form_selected: _render_growth_plot_form(
+            form_selected,
+            view=view,
+            plate_id=plate_id,
+            color_choices=tuple(color_choices),
+            label_choices=label_choices,
+        ),
+        selection_submitted=lambda values: values.save_selection or values.render,
+    )
+    selected_summary = ", ".join(selected[:16])
+    if len(selected) > 16:
+        selected_summary = f"{selected_summary}, +{len(selected) - 16} more"
+    st.caption(f"Selected wells: {selected_summary or 'none'}")
     if not selected:
         st.info("Select at least one well before rendering curves.")
-    if save_selection:
+    if plot_form.label_options is None:
+        st.info("Choose at least one field for the combined curve label.")
+    if plot_form.save_selection:
         try:
             selected_set = set(selected)
             UpdateGrowthLayoutService(context.repository).execute(
@@ -990,7 +1038,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             st.rerun()
         except Exception as error:
             render_exception(error)
-    if render:
+    if plot_form.render and selected and plot_form.label_options is not None:
         current_revision_key = next(
             (
                 str(row["revision_id"])
@@ -999,28 +1047,27 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             ),
             "raw",
         )
-        revision_key = current_revision_key if corrected else "raw"
+        revision_key = current_revision_key if plot_form.corrected else "raw"
         raw_hash = _raw_hash(view.snapshot.raw_observations)
-        assert label_options is not None
         plot_data = PrepareGrowthPlotDataService().execute(
             view.snapshot,
             view.backgrounds,
             tuple(selected),
-            corrected=corrected,
-            label_options=label_options,
+            corrected=plot_form.corrected,
+            label_options=plot_form.label_options,
         )
         options = GrowthPlotOptions(
-            title=title.strip(),
-            x_max=float(x_max),
-            y_min=float(y_min),
-            y_max=float(y_max),
-            symlog=symlog,
+            title=plot_form.title.strip(),
+            x_max=plot_form.x_max,
+            y_min=plot_form.y_min,
+            y_max=plot_form.y_max,
+            symlog=plot_form.symlog,
             dark_mode=bool(st.session_state.get("dark_mode", False)),
         )
         styles = BuildGrowthPlotStylesService().execute(
             plot_data,
             view.snapshot.wells,
-            color_choices[color_choice],
+            color_choices[plot_form.color_choice],
         )
         st.session_state.growth_plot = growth_curve_figure(
             plot_data,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
 import streamlit as st
@@ -45,13 +45,16 @@ _REFERENCE_FIELDS = (
 )
 
 
-def render_growth_well_selector(
+def render_growth_well_selector[FormResultT](
     wells: Sequence[Mapping[str, object]],
     default_positions: Iterable[str],
     *,
     state_key: str,
-) -> tuple[str, ...]:  # pragma: no cover - Streamlit widget composition
-    """Render synchronized plate/list/filter controls and return staged positions."""
+    form_key: str,
+    render_form_controls: Callable[[tuple[str, ...]], FormResultT],
+    selection_submitted: Callable[[FormResultT], bool],
+) -> tuple[tuple[str, ...], FormResultT]:  # pragma: no cover - Streamlit composition
+    """Render selection controls and batch direct grid edits with plot submission."""
 
     configure_arrow_memory_pool()
     if state_key not in st.session_state:
@@ -62,8 +65,9 @@ def render_growth_well_selector(
 
     st.subheader("Select wells")
     st.caption(
-        "The 96-well grid, list, and metadata filters edit one staged selection. "
-        "Plot immediately, or use Save well selection to keep it as this plate's default."
+        "Check wells in the 96-well grid without rerunning the page. Render selected curves "
+        "applies the complete grid once; Save well selection also keeps it as this plate's "
+        "default."
     )
     metric, select_all, clear_all, invert = st.columns((1.4, 1, 1, 1))
     metric.metric("Selected wells", len(selected))
@@ -142,21 +146,30 @@ def render_growth_well_selector(
         ("96-well selection", "Selection list", "Metadata filters")
     )
     with grid_tab:
-        st.caption("Changes take effect immediately. Render uses the checked wells below.")
-        if _is_streamlit_test():
-            st.caption("Interactive 8x12 selection grid enabled in the running app.")
-        else:
-            st.data_editor(
-                growth_selection_grid(selected),
-                width="stretch",
-                column_config={
-                    str(column): st.column_config.CheckboxColumn(str(column))
-                    for column in range(1, 13)
-                },
-                key=_grid_editor_key(state_key),
-                on_change=_store_grid_editor_selection,
-                args=(state_key,),
-            )
+        st.caption(
+            "Grid checks are staged locally. They are applied only when Render selected curves "
+            "or Save well selection is pressed."
+        )
+        with st.form(form_key):
+            if _is_streamlit_test():
+                st.caption("Interactive 8x12 selection grid enabled in the running app.")
+                form_selected = selected
+            else:
+                edited_grid = st.data_editor(
+                    growth_selection_grid(selected),
+                    width="stretch",
+                    column_config={
+                        str(column): st.column_config.CheckboxColumn(str(column))
+                        for column in range(1, 13)
+                    },
+                    key=_grid_editor_key(state_key),
+                )
+                form_selected = growth_selection_from_grid(edited_grid)
+            form_result = render_form_controls(form_selected)
+    if selection_submitted(form_result):
+        selected = form_selected
+        st.session_state[state_key] = selected
+        st.session_state[_selection_list_key(state_key)] = selected
     with list_tab:
         if _is_streamlit_test():
             st.caption("Interactive selection list enabled in the running app.")
@@ -219,7 +232,7 @@ def render_growth_well_selector(
             )
             _store_selection(state_key, updated)
 
-    return normalize_growth_selection(wells, st.session_state[state_key])
+    return selected, form_result
 
 
 def growth_selection_grid(selected_positions: Iterable[str]) -> pd.DataFrame:
@@ -246,29 +259,6 @@ def growth_selection_from_grid(frame: pd.DataFrame) -> tuple[str, ...]:
         for column in expected_columns
         if _boolean(normalized.loc[row, column])
     )
-
-
-def growth_selection_from_grid_edits(
-    selected_positions: Iterable[str],
-    edited_rows: Mapping[object, object],
-) -> tuple[str, ...]:
-    """Apply Streamlit's checkbox-table edit payload to a canonical selection."""
-
-    selected = set(_normalize_positions(selected_positions))
-    for row_index, changes in edited_rows.items():
-        if not isinstance(changes, Mapping):
-            raise ValueError("Growth selection grid edits must map rows to changed columns")
-        try:
-            row = "ABCDEFGH"[int(str(row_index))]
-        except (IndexError, TypeError, ValueError) as error:
-            raise ValueError(f"Invalid Growth selection grid row: {row_index}") from error
-        for column, checked in changes.items():
-            position = WellPosition.parse(f"{row}{column}").label
-            if _boolean(checked):
-                selected.add(position)
-            else:
-                selected.discard(position)
-    return _normalize_positions(selected)
 
 
 def growth_selection_list(
@@ -412,20 +402,6 @@ def _sync_direct_selection_widgets(
 
 def _store_list_widget_selection(state_key: str) -> None:
     st.session_state[state_key] = tuple(st.session_state[_selection_list_key(state_key)])
-    st.session_state[_direct_sync_key(state_key)] = True
-
-
-def _store_grid_editor_selection(state_key: str) -> None:
-    editor_state = st.session_state.get(_grid_editor_key(state_key), {})
-    if not isinstance(editor_state, Mapping):
-        return
-    edited_rows = editor_state.get("edited_rows", {})
-    if not isinstance(edited_rows, Mapping):
-        return
-
-    updated = growth_selection_from_grid_edits(st.session_state[state_key], edited_rows)
-    st.session_state[state_key] = updated
-    st.session_state[_selection_list_key(state_key)] = updated
     st.session_state[_direct_sync_key(state_key)] = True
 
 
