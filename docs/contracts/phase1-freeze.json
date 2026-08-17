@@ -32,13 +32,18 @@
       "date": "2026-08-17",
       "adr": "docs/adr/0023-separate-library-discovery-and-plate-comparison.md",
       "reason": "Add metadata-only Run Library summaries and an authorized condition-only read contract for a separate on-demand plate comparison workflow."
+    },
+    {
+      "date": "2026-08-17",
+      "adr": "docs/adr/0024-select-individual-wells-for-plate-comparison.md",
+      "reason": "Replace common-condition intersection with cached metadata filtering and stable individual-well selection for on-demand plate comparison."
     }
   ],
   "sha256": {
     "docs/contracts/AUTHORIZATION_V1.md": "ddc3595e17861d74061507694f3c5c55d5188bc70371af1f41c7c4e19cf36469",
     "docs/contracts/LEGACY_BEHAVIOR.md": "33178153f07abb8351b4791b8bdce1516eeda6cd0dc487c1973249a6254893a0",
     "docs/contracts/PORTABLE_FORMAT_V1.md": "508bc77458eb751652bad9ded94bd6429530a1ca7fff4fe98e3237dd00245b86",
-    "docs/contracts/SCHEMA_V1.md": "d9f5fa146b52ad7b458080ab60cc476dd3c001d7cd9cbf5932064a57e79a770e",
+    "docs/contracts/SCHEMA_V1.md": "06f36dbb1aec9af7c4336964f481f3cd9062ce2db3faf770825af2a04a50ef62",
     "migrations/0001_schema_v1.sql": "06b028cb32df87d36f734a5d69caa3133d95d05f85b4a4ad766e8284003bb27b",
     "src/plate_reader/application/contracts.py": "39d9068ddcb93080e8cd18894d3673a3399b9e0c72f469eade71581a035d5916",
     "src/plate_reader/application/ports/repositories.py": "22ac4900769dacd4fa421b3a138e1e36ccd8e8dbf8ec569b9ea70abf326ac113",

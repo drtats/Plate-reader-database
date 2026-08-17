@@ -248,7 +248,11 @@ def test_growth_comparison_wells_are_condition_only_and_filter_available_growth_
         repository.insert_wells(
             PlateId("plate-growth-two"),
             [
-                well_values("well-two-b1", "B1", 1, 0),
+                {
+                    **well_values("well-two-b1", "B1", 1, 0),
+                    "display_name": None,
+                    "is_blank": True,
+                },
                 well_values("well-two-a1", "A1", 0, 0),
             ],
         )
@@ -259,6 +263,9 @@ def test_growth_comparison_wells_are_condition_only_and_filter_available_growth_
                     "strain": "comparison strain",
                     "medium": "comparison medium",
                     "replicate": 2,
+                    "grouping_label": "comparison group",
+                    "inoculum_size": 1.25,
+                    "inoculum_unit": "x10^6 CFU/mL",
                     "treatment": "compound",
                     "concentration": 0.5,
                     "concentration_unit": "ug/mL",
@@ -290,12 +297,16 @@ def test_growth_comparison_wells_are_condition_only_and_filter_available_growth_
         "plate_name",
         "well_id",
         "position",
+        "display_name",
         "strain",
         "treatment",
         "concentration",
         "concentration_unit",
         "medium",
         "replicate",
+        "grouping_label",
+        "inoculum_size",
+        "inoculum_unit",
         "is_blank",
     )
     assert [(row["plate_id"], row["position"]) for row in rows] == [
@@ -310,13 +321,35 @@ def test_growth_comparison_wells_are_condition_only_and_filter_available_growth_
         "plate_name": "Second Growth Plate",
         "well_id": "well-two-a1",
         "position": "A1",
+        "display_name": "Sample A1",
         "strain": "comparison strain",
         "treatment": "compound",
         "concentration": 0.5,
         "concentration_unit": "ug/mL",
         "medium": "comparison medium",
         "replicate": 2,
+        "grouping_label": "comparison group",
+        "inoculum_size": 1.25,
+        "inoculum_unit": "x10^6 CFU/mL",
         "is_blank": 0,
+    }
+    assert rows[1] == {
+        "plate_id": "plate-growth-two",
+        "experiment_name": "Synthetic Experiment",
+        "plate_name": "Second Growth Plate",
+        "well_id": "well-two-b1",
+        "position": "B1",
+        "display_name": None,
+        "strain": None,
+        "treatment": None,
+        "concentration": None,
+        "concentration_unit": None,
+        "medium": None,
+        "replicate": None,
+        "grouping_label": None,
+        "inoculum_size": None,
+        "inoculum_unit": None,
+        "is_blank": 1,
     }
     available = repository.growth_comparison_wells(
         (PlateId("plate-growth"), PlateId("plate-mic-comparison"))

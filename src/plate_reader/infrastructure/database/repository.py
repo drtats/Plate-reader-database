@@ -920,8 +920,9 @@ class SqlPlateReaderRepository:
         order_by = " ".join(f"WHEN ? THEN {index}" for index, _plate_id in enumerate(requested_ids))
         cursor = self.connection.execute(
             "SELECT p.plate_id, e.name AS experiment_name, p.plate_name, w.well_id, "
-            "w.position, wc.strain, wc.treatment, wc.concentration, wc.concentration_unit, "
-            "wc.medium, wc.replicate, w.is_blank "
+            "w.position, w.display_name, wc.strain, wc.treatment, wc.concentration, "
+            "wc.concentration_unit, wc.medium, wc.replicate, wc.grouping_label, "
+            "wc.inoculum_size, wc.inoculum_unit, w.is_blank "
             "FROM plates p JOIN experiments e ON e.experiment_id = p.experiment_id "
             "JOIN wells w ON w.plate_id = p.plate_id "
             "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "

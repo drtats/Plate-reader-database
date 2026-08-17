@@ -1,21 +1,13 @@
-"""Pure condition matching for cross-plate Growth comparisons.
-
-The matching key deliberately contains normalized metadata only.  The original,
-trimmed values remain on :class:`GrowthComparisonWell` and a readable condition
-display accompanies each match, so case-insensitive matching never forces the UI
-to show normalized (case-folded) scientific labels.
-"""
+"""Metadata-only well discovery and explicit raw Growth comparison rendering."""
 
 from __future__ import annotations
 
 import json
 import math
 import re
-from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from enum import StrEnum
 from hashlib import sha256
 from numbers import Real
 from typing import Protocol
@@ -31,47 +23,42 @@ from plate_reader.application.services.growth_plotting import (
 from plate_reader.domain.common import DomainIssue
 
 
-class GrowthComparisonMatchField(StrEnum):
-    """Metadata fields that may define a cross-plate Growth condition."""
-
-    STRAIN = "strain"
-    TREATMENT = "treatment"
-    CONCENTRATION = "concentration"
-    MEDIUM = "medium"
-
-
-DEFAULT_GROWTH_COMPARISON_FIELDS = (
-    GrowthComparisonMatchField.STRAIN,
-    GrowthComparisonMatchField.TREATMENT,
-    GrowthComparisonMatchField.CONCENTRATION,
-)
-
-
 @dataclass(frozen=True, slots=True)
 class GrowthComparisonWell:
-    """A single well's condition data, without measurements or UI concerns."""
+    """A single Growth well and its queryable metadata, without measurements."""
 
     plate_id: str
     well_id: str
     position: str
+    display_name: str | None = None
     strain: str | None = None
     treatment: str | None = None
     concentration: int | float | Decimal | None = None
     concentration_unit: str | None = None
     medium: str | None = None
     replicate: int | None = None
+    grouping_label: str | None = None
+    inoculum_size: int | float | Decimal | None = None
+    inoculum_unit: str | None = None
     is_blank: bool = False
 
     def __post_init__(self) -> None:
         for name in ("plate_id", "well_id", "position"):
-            value = getattr(self, name).strip()
+            value = str(getattr(self, name)).strip()
             if not value:
                 raise ValueError(f"Growth comparison well {name} cannot be empty")
             object.__setattr__(self, name, value)
-        for name in ("strain", "treatment", "concentration_unit", "medium"):
+        for name in (
+            "display_name",
+            "strain",
+            "treatment",
+            "concentration_unit",
+            "medium",
+            "grouping_label",
+            "inoculum_unit",
+        ):
             value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, str(value).strip() or None)
+            object.__setattr__(self, name, _trimmed_text(value))
         if self.replicate is not None and (
             isinstance(self.replicate, bool)
             or not isinstance(self.replicate, int)
@@ -79,12 +66,14 @@ class GrowthComparisonWell:
         ):
             raise ValueError("Growth comparison replicate must be a positive integer when present")
         if self.concentration is not None:
-            _normalized_concentration(self.concentration)
+            _normalized_number(self.concentration, "concentration")
+        if self.inoculum_size is not None:
+            _normalized_number(self.inoculum_size, "inoculum size")
 
 
 @dataclass(frozen=True, slots=True)
 class GrowthComparisonPlate:
-    """The complete condition-only index for one selected plate."""
+    """The condition-only well index for one selected Growth plate."""
 
     plate_id: str
     wells: tuple[GrowthComparisonWell, ...]
@@ -92,83 +81,91 @@ class GrowthComparisonPlate:
     plate_name: str | None = None
 
     def __post_init__(self) -> None:
-        plate_id = self.plate_id.strip()
+        plate_id = str(self.plate_id).strip()
         if not plate_id:
             raise ValueError("Growth comparison plate_id cannot be empty")
         wells = tuple(self.wells)
         if any(well.plate_id != plate_id for well in wells):
             raise ValueError("Every Growth comparison well must belong to its containing plate")
-        well_ids = [well.well_id for well in wells]
+        well_ids = tuple(well.well_id for well in wells)
         if len(set(well_ids)) != len(well_ids):
             raise ValueError("Growth comparison plate contains duplicate well_id values")
         object.__setattr__(self, "plate_id", plate_id)
         object.__setattr__(self, "wells", wells)
-        for name in ("experiment_name", "plate_name"):
-            value = getattr(self, name)
-            object.__setattr__(
-                self, name, str(value).strip() or None if value is not None else None
+        object.__setattr__(self, "experiment_name", _trimmed_text(self.experiment_name))
+        object.__setattr__(self, "plate_name", _trimmed_text(self.plate_name))
+
+
+@dataclass(frozen=True, slots=True)
+class GrowthWellSearchFilter:
+    """Frozen, normalized predicates for a local metadata-only well search.
+
+    Text tuples use OR matching within one field; every populated field is ANDed
+    with every other populated field.  ``source_plate_ids`` narrows the already
+    selected index and does not authorize or fetch any new plate.
+    """
+
+    source_plate_ids: tuple[str, ...] = ()
+    text: str | None = None
+    strains: tuple[str, ...] = ()
+    treatments: tuple[str, ...] = ()
+    concentration_min: int | float | Decimal | None = None
+    concentration_max: int | float | Decimal | None = None
+    concentration_units: tuple[str, ...] = ()
+    media: tuple[str, ...] = ()
+    replicates: tuple[int, ...] = ()
+    grouping_labels: tuple[str, ...] = ()
+    include_blank_wells: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_plate_ids", _unique_text_values(self.source_plate_ids))
+        object.__setattr__(self, "text", _trimmed_text(self.text))
+        for name in ("strains", "treatments", "concentration_units", "media", "grouping_labels"):
+            object.__setattr__(self, name, _unique_text_values(getattr(self, name)))
+        replicates = tuple(self.replicates)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in replicates
+        ):
+            raise ValueError("Growth comparison replicates must be positive integers")
+        object.__setattr__(self, "replicates", tuple(sorted(set(replicates))))
+        minimum = (
+            _normalized_number(self.concentration_min, "concentration minimum")
+            if self.concentration_min is not None
+            else None
+        )
+        maximum = (
+            _normalized_number(self.concentration_max, "concentration maximum")
+            if self.concentration_max is not None
+            else None
+        )
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError("Growth comparison concentration minimum cannot exceed maximum")
+        if (minimum is not None or maximum is not None) and len(self.concentration_units) != 1:
+            raise ValueError(
+                "Growth comparison concentration bounds require exactly one concentration unit"
             )
+        object.__setattr__(self, "concentration_min", minimum)
+        object.__setattr__(self, "concentration_max", maximum)
+        if not isinstance(self.include_blank_wells, bool):
+            raise ValueError("Growth comparison include_blank_wells must be boolean")
 
 
 @dataclass(frozen=True, slots=True)
-class GrowthConditionKey:
-    """Case-folded, selected metadata used as an exact intersection key."""
+class GrowthWellSearchResult:
+    """The first 500 deterministic metadata matches and the untruncated total."""
 
-    strain: str | None = None
-    treatment: str | None = None
-    concentration: Decimal | None = None
-    concentration_unit: str | None = None
-    medium: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class GrowthConditionDisplay:
-    """A readable representative label for a normalized condition key."""
-
-    strain: str | None = None
-    treatment: str | None = None
-    concentration: str | None = None
-    concentration_unit: str | None = None
-    medium: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class GrowthComparisonPlateMatch:
-    """All replicate wells from one plate that share a matched condition."""
-
-    plate_id: str
     wells: tuple[GrowthComparisonWell, ...]
+    total: int
+    truncated: bool
 
-
-@dataclass(frozen=True, slots=True)
-class GrowthComparisonMatch:
-    """One condition occurring in every selected plate."""
-
-    condition: GrowthConditionKey
-    display: GrowthConditionDisplay
-    plate_matches: tuple[GrowthComparisonPlateMatch, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class GrowthComparisonExclusions:
-    """Condition-only discovery exclusions for a selected plate."""
-
-    plate_id: str
-    blank_well_count: int
-    missing_required_metadata_count: int
-
-    @property
-    def excluded_well_count(self) -> int:
-        return self.blank_well_count + self.missing_required_metadata_count
-
-
-@dataclass(frozen=True, slots=True)
-class GrowthComparisonResult:
-    """Common conditions plus transparent per-plate exclusion information."""
-
-    match_fields: tuple[GrowthComparisonMatchField, ...]
-    matches: tuple[GrowthComparisonMatch, ...]
-    exclusions: tuple[GrowthComparisonExclusions, ...]
+    def __post_init__(self) -> None:
+        if self.total < len(self.wells) or self.total < 0:
+            raise ValueError("Growth comparison search total is invalid")
+        if len(self.wells) > _SEARCH_RESULT_LIMIT:
+            raise ValueError("Growth comparison search result exceeds its fixed limit")
+        if self.truncated != (self.total > len(self.wells)):
+            raise ValueError("Growth comparison search truncation state is inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +178,8 @@ class GrowthComparisonPlotResult:
     well_count: int
 
 
-class GrowthComparisonConditionsRepository(Protocol):
-    """Authorized condition-only read surface used before curve rendering."""
+class GrowthComparisonWellIndexRepository(Protocol):
+    """Authorized metadata-only read surface used before curve rendering."""
 
     def user_by_email(self, email: str) -> Mapping[str, object] | None: ...
 
@@ -192,10 +189,10 @@ class GrowthComparisonConditionsRepository(Protocol):
         """Return requested wells and condition metadata, never measurements."""
 
 
-class LoadGrowthComparisonConditionsService:
-    """Load selected Growth plate conditions in one authorized repository call."""
+class LoadGrowthComparisonWellIndexService:
+    """Load the selected Growth well index in one authorized repository call."""
 
-    def __init__(self, repository: GrowthComparisonConditionsRepository) -> None:
+    def __init__(self, repository: GrowthComparisonWellIndexRepository) -> None:
         self.repository = repository
 
     def execute(
@@ -203,8 +200,43 @@ class LoadGrowthComparisonConditionsService:
     ) -> tuple[GrowthComparisonPlate, ...]:
         require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
         requested_ids = _validated_requested_plate_ids(plate_ids)
-        rows = self.repository.growth_comparison_wells(requested_ids)
-        return _plates_from_condition_rows(requested_ids, rows)
+        return _plates_from_well_rows(
+            requested_ids, self.repository.growth_comparison_wells(requested_ids)
+        )
+
+
+class SearchGrowthComparisonWellsService:
+    """Filter an already loaded comparison index without repository access."""
+
+    def execute(
+        self,
+        plates: Sequence[GrowthComparisonPlate],
+        filters: GrowthWellSearchFilter | None = None,
+    ) -> GrowthWellSearchResult:
+        index = _validated_plate_index(plates, require_two=False)
+        filters = filters or GrowthWellSearchFilter()
+        if not isinstance(filters, GrowthWellSearchFilter):
+            raise ValueError("Growth comparison filters must be GrowthWellSearchFilter")
+        allowed_ids = set(filters.source_plate_ids) if filters.source_plate_ids else None
+        if allowed_ids is not None:
+            unknown = allowed_ids - {plate.plate_id for plate in index}
+            if unknown:
+                raise ValueError(
+                    "Growth comparison filter references a plate outside the supplied index: "
+                    + ", ".join(sorted(unknown))
+                )
+        matches = tuple(
+            well
+            for plate in index
+            if allowed_ids is None or plate.plate_id in allowed_ids
+            for well in sorted(plate.wells, key=_well_sort_key)
+            if _matches_filter(well, filters)
+        )
+        return GrowthWellSearchResult(
+            wells=matches[:_SEARCH_RESULT_LIMIT],
+            total=len(matches),
+            truncated=len(matches) > _SEARCH_RESULT_LIMIT,
+        )
 
 
 class GrowthComparisonPlotRepository(Protocol):
@@ -218,7 +250,7 @@ class GrowthComparisonPlotRepository(Protocol):
 
 
 class LoadGrowthComparisonPlotService:
-    """Load raw observations for selected common conditions and combine plot points."""
+    """Load raw observations only for explicit, individually selected wells."""
 
     def __init__(self, repository: GrowthComparisonPlotRepository) -> None:
         self.repository = repository
@@ -227,20 +259,26 @@ class LoadGrowthComparisonPlotService:
     def execute(
         self,
         actor: Actor,
-        plates: Sequence[GrowthComparisonPlate],
-        selected_matches: Sequence[GrowthComparisonMatch],
+        plate_index: Sequence[GrowthComparisonPlate],
+        selected_wells: Sequence[GrowthComparisonWell],
     ) -> GrowthComparisonPlotResult:
         require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
-        selected_plates = tuple(plates)
-        _validate_plates(selected_plates)
-        positions_by_plate, displays_by_plate = _selected_plot_membership(
-            selected_plates, selected_matches
-        )
+        plates = _validated_plate_index(plate_index, require_two=False)
+        selected = _validated_selected_wells(plates, selected_wells)
+        selected_by_plate: dict[str, list[GrowthComparisonWell]] = {}
+        for well in selected:
+            selected_by_plate.setdefault(well.plate_id, []).append(well)
+        if len(selected_by_plate) < 2:
+            raise ValueError("Choose wells from at least two plates for Growth comparison")
 
+        plates_by_id = {plate.plate_id: plate for plate in plates}
         points: list[GrowthPlotPoint] = []
         issues: list[DomainIssue] = []
         cache_inputs: list[dict[str, object]] = []
-        for plate in selected_plates:
+        for plate in plates:
+            selected_for_plate = selected_by_plate.get(plate.plate_id)
+            if not selected_for_plate:
+                continue
             plate_id = PlateId(plate.plate_id)
             snapshot = self.repository.load_plate(plate_id)
             if snapshot is None:
@@ -251,24 +289,32 @@ class LoadGrowthComparisonPlotService:
             if token is None or not token.strip():
                 raise LookupError(f"Growth plate cache token not found: {plate.plate_id}")
 
-            positions = positions_by_plate[plate.plate_id]
-            snapshot_positions = {str(well["position"]) for well in snapshot.wells}
-            missing_positions = tuple(
-                position for position in positions if position not in snapshot_positions
+            snapshot_wells = {str(well["well_id"]): well for well in snapshot.wells}
+            missing = tuple(
+                well.well_id for well in selected_for_plate if well.well_id not in snapshot_wells
             )
-            if missing_positions:
-                formatted_positions = ", ".join(missing_positions)
+            if missing:
                 raise ValueError(
-                    f"Growth comparison positions are not present in plate {plate.plate_id}: "
-                    f"{formatted_positions}"
+                    f"Growth comparison wells are not present in plate {plate.plate_id}: "
+                    + ", ".join(missing)
                 )
+            changed_positions = tuple(
+                well.well_id
+                for well in selected_for_plate
+                if str(snapshot_wells[well.well_id].get("position", "")).strip() != well.position
+            )
+            if changed_positions:
+                raise ValueError(
+                    f"Growth comparison well positions changed in plate {plate.plate_id}: "
+                    + ", ".join(changed_positions)
+                )
+            positions = tuple(well.position for well in selected_for_plate)
             prepared = self.plot_preparer.execute(snapshot, (), positions, corrected=False)
             issues.extend(prepared.issues)
+            selected_by_position = {well.position: well for well in selected_for_plate}
             points.extend(
                 _comparison_plot_point(
-                    point,
-                    plate,
-                    displays_by_plate[plate.plate_id][point.position],
+                    point, plates_by_id[plate.plate_id], selected_by_position[point.position]
                 )
                 for point in prepared.points
             )
@@ -276,90 +322,16 @@ class LoadGrowthComparisonPlotService:
                 {
                     "plate_id": plate.plate_id,
                     "token": token,
-                    "positions": positions,
-                    "conditions": tuple(
-                        _display_cache_value(displays_by_plate[plate.plate_id][position])
-                        for position in positions
-                    ),
+                    "wells": tuple(_well_cache_value(well) for well in selected_for_plate),
                 }
             )
 
         return GrowthComparisonPlotResult(
             plot_data=GrowthPlotData(tuple(points), tuple(issues), False),
             cache_key=_comparison_cache_key(cache_inputs),
-            plate_count=len(selected_plates),
-            well_count=sum(len(positions) for positions in positions_by_plate.values()),
+            plate_count=len(selected_by_plate),
+            well_count=len(selected),
         )
-
-
-class FindCommonGrowthConditionsService:
-    """Find exact, normalized condition intersections without loading measurements."""
-
-    def execute(
-        self,
-        plates: Sequence[GrowthComparisonPlate],
-        match_fields: Iterable[GrowthComparisonMatchField] = DEFAULT_GROWTH_COMPARISON_FIELDS,
-    ) -> GrowthComparisonResult:
-        fields = _validated_match_fields(match_fields)
-        selected_plates = tuple(plates)
-        _validate_plates(selected_plates)
-
-        indexed_wells: dict[GrowthConditionKey, dict[str, list[GrowthComparisonWell]]] = (
-            defaultdict(lambda: defaultdict(list))
-        )
-        displays: dict[GrowthConditionKey, list[GrowthConditionDisplay]] = defaultdict(list)
-        exclusions: list[GrowthComparisonExclusions] = []
-
-        for plate in selected_plates:
-            blank_count = 0
-            missing_count = 0
-            for well in plate.wells:
-                if well.is_blank:
-                    blank_count += 1
-                    continue
-                condition = _condition_for(well, fields)
-                if condition is None:
-                    missing_count += 1
-                    continue
-                key, display = condition
-                indexed_wells[key][plate.plate_id].append(well)
-                displays[key].append(display)
-            exclusions.append(
-                GrowthComparisonExclusions(
-                    plate_id=plate.plate_id,
-                    blank_well_count=blank_count,
-                    missing_required_metadata_count=missing_count,
-                )
-            )
-
-        ordered_plate_ids = tuple(plate.plate_id for plate in selected_plates)
-        matches = tuple(
-            GrowthComparisonMatch(
-                condition=key,
-                display=_representative_display(displays[key]),
-                plate_matches=tuple(
-                    GrowthComparisonPlateMatch(
-                        plate_id=plate_id,
-                        wells=tuple(sorted(by_plate[plate_id], key=_well_sort_key)),
-                    )
-                    for plate_id in ordered_plate_ids
-                ),
-            )
-            for key, by_plate in sorted(
-                indexed_wells.items(), key=lambda item: _condition_sort_key(item[0])
-            )
-            if all(plate_id in by_plate for plate_id in ordered_plate_ids)
-        )
-        return GrowthComparisonResult(fields, matches, tuple(exclusions))
-
-
-def find_common_growth_conditions(
-    plates: Sequence[GrowthComparisonPlate],
-    match_fields: Iterable[GrowthComparisonMatchField] = DEFAULT_GROWTH_COMPARISON_FIELDS,
-) -> GrowthComparisonResult:
-    """Convenience function for :class:`FindCommonGrowthConditionsService`."""
-
-    return FindCommonGrowthConditionsService().execute(plates, match_fields)
 
 
 def _validated_requested_plate_ids(plate_ids: Sequence[PlateId]) -> tuple[PlateId, ...]:
@@ -373,7 +345,21 @@ def _validated_requested_plate_ids(plate_ids: Sequence[PlateId]) -> tuple[PlateI
     return requested_ids
 
 
-def _plates_from_condition_rows(
+def _validated_plate_index(
+    plates: Sequence[GrowthComparisonPlate], *, require_two: bool
+) -> tuple[GrowthComparisonPlate, ...]:
+    index = tuple(plates)
+    if require_two and len(index) < 2:
+        raise ValueError("Choose at least two plates for Growth comparison")
+    if any(not isinstance(plate, GrowthComparisonPlate) for plate in index):
+        raise ValueError("Growth comparison index contains an invalid plate")
+    plate_ids = tuple(plate.plate_id for plate in index)
+    if len(set(plate_ids)) != len(plate_ids):
+        raise ValueError("Growth comparison plate IDs must be unique")
+    return index
+
+
+def _plates_from_well_rows(
     requested_ids: tuple[PlateId, ...], rows: Sequence[Mapping[str, object]]
 ) -> tuple[GrowthComparisonPlate, ...]:
     requested_by_text = {str(plate_id): plate_id for plate_id in requested_ids}
@@ -394,38 +380,40 @@ def _plates_from_condition_rows(
                 f"Growth comparison query returned inconsistent names for plate: {plate_id}"
             )
         names_by_plate[plate_id] = names
-        wells_by_plate[plate_id].append(_well_from_condition_row(row, plate_id))
+        wells_by_plate[plate_id].append(_well_from_row(row, plate_id))
 
     missing = tuple(plate_id for plate_id in requested_ids if not wells_by_plate[str(plate_id)])
     if missing:
-        missing_ids = ", ".join(str(plate_id) for plate_id in missing)
-        raise ValueError(f"Growth comparison query did not return requested plates: {missing_ids}")
-    plates: list[GrowthComparisonPlate] = []
-    for plate_id in requested_ids:
-        plate_names = names_by_plate[str(plate_id)]
-        assert plate_names is not None  # A row exists for every requested plate above.
-        plates.append(
-            GrowthComparisonPlate(
-                plate_id=str(plate_id),
-                wells=tuple(wells_by_plate[str(plate_id)]),
-                experiment_name=plate_names[0],
-                plate_name=plate_names[1],
-            )
+        raise ValueError(
+            "Growth comparison query did not return requested plates: "
+            + ", ".join(str(plate_id) for plate_id in missing)
         )
-    return tuple(plates)
+    return tuple(
+        GrowthComparisonPlate(
+            plate_id=str(plate_id),
+            wells=tuple(wells_by_plate[str(plate_id)]),
+            experiment_name=names_by_plate[str(plate_id)][0],  # type: ignore[index]
+            plate_name=names_by_plate[str(plate_id)][1],  # type: ignore[index]
+        )
+        for plate_id in requested_ids
+    )
 
 
-def _well_from_condition_row(row: Mapping[str, object], plate_id: str) -> GrowthComparisonWell:
+def _well_from_row(row: Mapping[str, object], plate_id: str) -> GrowthComparisonWell:
     return GrowthComparisonWell(
         plate_id=plate_id,
         well_id=_required_row_text(row, "well_id"),
         position=_required_row_text(row, "position"),
+        display_name=_optional_row_text(row, "display_name"),
         strain=_optional_row_text(row, "strain"),
         treatment=_optional_row_text(row, "treatment"),
-        concentration=_optional_row_concentration(row),
+        concentration=_optional_row_number(row, "concentration"),
         concentration_unit=_optional_row_text(row, "concentration_unit"),
         medium=_optional_row_text(row, "medium"),
         replicate=_optional_row_replicate(row),
+        grouping_label=_optional_row_text(row, "grouping_label"),
+        inoculum_size=_optional_row_number(row, "inoculum_size"),
+        inoculum_unit=_optional_row_text(row, "inoculum_unit"),
         is_blank=_row_bool(row, "is_blank"),
     )
 
@@ -438,24 +426,20 @@ def _required_row_text(row: Mapping[str, object], name: str) -> str:
 
 
 def _optional_row_text(row: Mapping[str, object], name: str) -> str | None:
+    return _trimmed_text(row.get(name))
+
+
+def _optional_row_number(row: Mapping[str, object], name: str) -> int | float | Decimal | None:
     value = row.get(name)
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
-
-
-def _optional_row_concentration(row: Mapping[str, object]) -> int | float | Decimal | None:
-    value = row.get("concentration")
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, str):
         try:
             return Decimal(value.strip())
         except InvalidOperation as error:
-            raise ValueError("Growth comparison row has invalid concentration") from error
+            raise ValueError(f"Growth comparison row has invalid {name}") from error
     if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
-        raise ValueError("Growth comparison row has invalid concentration")
+        raise ValueError(f"Growth comparison row has invalid {name}")
     return value
 
 
@@ -484,77 +468,81 @@ def _row_bool(row: Mapping[str, object], name: str) -> bool:
     raise ValueError(f"Growth comparison row has invalid {name}")
 
 
-def _selected_plot_membership(
-    plates: tuple[GrowthComparisonPlate, ...],
-    selected_matches: Sequence[GrowthComparisonMatch],
-) -> tuple[dict[str, tuple[str, ...]], dict[str, dict[str, GrowthConditionDisplay]]]:
-    if not selected_matches:
-        raise ValueError("Choose at least one common Growth condition to render")
-    expected_plate_ids = tuple(plate.plate_id for plate in plates)
-    expected_plate_set = set(expected_plate_ids)
-    known_wells = {
-        plate.plate_id: {well.position: well for well in plate.wells} for plate in plates
-    }
-    positions: dict[str, set[str]] = {plate_id: set() for plate_id in expected_plate_ids}
-    displays: dict[str, dict[str, GrowthConditionDisplay]] = {
-        plate_id: {} for plate_id in expected_plate_ids
-    }
-    for match in selected_matches:
-        if not isinstance(match, GrowthComparisonMatch):
-            raise ValueError("Selected Growth comparison condition has an invalid type")
-        plate_matches = tuple(match.plate_matches)
-        match_plate_ids = tuple(plate_match.plate_id for plate_match in plate_matches)
-        if (
-            len(set(match_plate_ids)) != len(match_plate_ids)
-            or set(match_plate_ids) != expected_plate_set
-        ):
-            raise ValueError(
-                "Selected Growth comparison condition does not belong to the supplied plates"
-            )
-        for plate_match in plate_matches:
-            if not plate_match.wells:
-                raise ValueError("Selected Growth comparison condition has no wells for a plate")
-            known_plate_wells = known_wells[plate_match.plate_id]
-            for well in plate_match.wells:
-                known = known_plate_wells.get(well.position)
-                if known != well:
-                    raise ValueError(
-                        "Selected Growth comparison well does not belong to the supplied plate"
-                    )
-                existing_display = displays[plate_match.plate_id].get(well.position)
-                if existing_display is not None and existing_display != match.display:
-                    raise ValueError(
-                        "Selected Growth comparison conditions assign conflicting settings "
-                        "to a well"
-                    )
-                positions[plate_match.plate_id].add(well.position)
-                displays[plate_match.plate_id][well.position] = match.display
+def _matches_filter(well: GrowthComparisonWell, filters: GrowthWellSearchFilter) -> bool:
+    if well.is_blank and not filters.include_blank_wells:
+        return False
+    if filters.text is not None:
+        text = filters.text.casefold()
+        searchable = (
+            well.position,
+            well.display_name,
+            well.strain,
+            well.treatment,
+            well.medium,
+            well.grouping_label,
+        )
+        if not any(text in value.casefold() for value in searchable if value is not None):
+            return False
+    if not _matches_any_text(well.strain, filters.strains):
+        return False
+    if not _matches_any_text(well.treatment, filters.treatments):
+        return False
+    if not _matches_any_text(well.concentration_unit, filters.concentration_units):
+        return False
+    if not _matches_any_text(well.medium, filters.media):
+        return False
+    if not _matches_any_text(well.grouping_label, filters.grouping_labels):
+        return False
+    if filters.replicates and well.replicate not in filters.replicates:
+        return False
+    if filters.concentration_min is not None or filters.concentration_max is not None:
+        if well.concentration is None:
+            return False
+        concentration = _normalized_number(well.concentration, "concentration")
+        if filters.concentration_min is not None and concentration < filters.concentration_min:
+            return False
+        if filters.concentration_max is not None and concentration > filters.concentration_max:
+            return False
+    return True
 
-    ordered_positions = {
-        plate.plate_id: tuple(
-            well.position for well in plate.wells if well.position in positions[plate.plate_id]
-        )
-        for plate in plates
-    }
-    if any(not values for values in ordered_positions.values()):  # Defensive membership guard.
+
+def _matches_any_text(value: str | None, allowed: tuple[str, ...]) -> bool:
+    if not allowed:
+        return True
+    if value is None:
+        return False
+    normalized = value.casefold()
+    return any(normalized == candidate.casefold() for candidate in allowed)
+
+
+def _validated_selected_wells(
+    plates: tuple[GrowthComparisonPlate, ...], selected_wells: Sequence[GrowthComparisonWell]
+) -> tuple[GrowthComparisonWell, ...]:
+    selected = tuple(selected_wells)
+    if not selected:
+        raise ValueError("Choose at least one Growth well to render")
+    if any(not isinstance(well, GrowthComparisonWell) for well in selected):
+        raise ValueError("Selected Growth comparison well has an invalid type")
+    known = {(plate.plate_id, well.well_id): well for plate in plates for well in plate.wells}
+    identity = tuple((well.plate_id, well.well_id) for well in selected)
+    if len(set(identity)) != len(identity):
+        raise ValueError("Selected Growth comparison wells must be unique")
+    unknown = tuple(key for key in identity if key not in known)
+    if unknown:
         raise ValueError(
-            "Selected Growth comparison condition does not include every supplied plate"
+            "Selected Growth comparison well does not belong to the supplied plate index"
         )
-    return ordered_positions, displays
+    return tuple(known[key] for key in identity)
 
 
 def _comparison_plot_point(
-    point: GrowthPlotPoint,
-    plate: GrowthComparisonPlate,
-    condition: GrowthConditionDisplay,
+    point: GrowthPlotPoint, plate: GrowthComparisonPlate, well: GrowthComparisonWell
 ) -> GrowthPlotPoint:
     experiment = plate.experiment_name or "Unnamed experiment"
     plate_name = plate.plate_name or plate.plate_id
-    condition_label = _condition_label(condition)
-    label_parts = (experiment, plate_name, point.position, condition_label)
     return GrowthPlotPoint(
-        position=f"{plate.plate_id}:{point.position}",
-        label=" | ".join(part for part in label_parts if part),
+        position=f"{well.plate_id}:{well.well_id}",
+        label=" | ".join((experiment, plate_name, well.position, _well_label(well))),
         elapsed_minutes=point.elapsed_minutes,
         channel=point.channel,
         value=point.value,
@@ -566,26 +554,56 @@ def _comparison_plot_point(
     )
 
 
-def _condition_label(condition: GrowthConditionDisplay) -> str:
-    concentration = " ".join(
-        value
-        for value in (condition.concentration, condition.concentration_unit)
-        if value is not None
+def _well_label(well: GrowthComparisonWell) -> str:
+    concentration = (
+        " ".join(
+            value
+            for value in (
+                _format_number(well.concentration) if well.concentration is not None else None,
+                well.concentration_unit,
+            )
+            if value
+        )
+        or None
     )
-    return "; ".join(
-        value
-        for value in (condition.strain, condition.treatment, concentration, condition.medium)
-        if value
-    )
-
-
-def _display_cache_value(condition: GrowthConditionDisplay) -> tuple[str | None, ...]:
+    replicate = f"replicate {well.replicate}" if well.replicate is not None else None
     return (
-        condition.strain,
-        condition.treatment,
-        condition.concentration,
-        condition.concentration_unit,
-        condition.medium,
+        "; ".join(
+            value
+            for value in (
+                well.display_name,
+                well.strain,
+                well.treatment,
+                concentration,
+                well.medium,
+                well.grouping_label,
+                replicate,
+            )
+            if value
+        )
+        or well.well_id
+    )
+
+
+def _well_cache_value(well: GrowthComparisonWell) -> tuple[object, ...]:
+    return (
+        well.well_id,
+        well.position,
+        well.display_name,
+        well.strain,
+        well.treatment,
+        str(_normalized_number(well.concentration, "concentration"))
+        if well.concentration is not None
+        else None,
+        well.concentration_unit,
+        well.medium,
+        well.replicate,
+        well.grouping_label,
+        str(_normalized_number(well.inoculum_size, "inoculum size"))
+        if well.inoculum_size is not None
+        else None,
+        well.inoculum_unit,
+        well.is_blank,
     )
 
 
@@ -596,120 +614,41 @@ def _comparison_cache_key(cache_inputs: Sequence[Mapping[str, object]]) -> str:
     return f"growth-comparison:{sha256(encoded).hexdigest()}"
 
 
-def _validated_match_fields(
-    match_fields: Iterable[GrowthComparisonMatchField],
-) -> tuple[GrowthComparisonMatchField, ...]:
-    fields = tuple(match_fields)
-    if not fields:
-        raise ValueError("Choose at least one Growth comparison match field")
-    if any(not isinstance(field, GrowthComparisonMatchField) for field in fields):
-        raise ValueError("Growth comparison match fields must be GrowthComparisonMatchField values")
-    if len(set(fields)) != len(fields):
-        raise ValueError("Growth comparison match fields cannot be repeated")
-    return fields
+def _trimmed_text(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
-def _validate_plates(plates: Sequence[GrowthComparisonPlate]) -> None:
-    if len(plates) < 2:
-        raise ValueError("Choose at least two plates for Growth comparison")
-    plate_ids = tuple(plate.plate_id for plate in plates)
-    if len(set(plate_ids)) != len(plate_ids):
-        raise ValueError("Growth comparison plate IDs must be unique")
+def _unique_text_values(values: Sequence[object]) -> tuple[str, ...]:
+    normalized: dict[str, str] = {}
+    for value in values:
+        text = _trimmed_text(value)
+        if text is None:
+            raise ValueError("Growth comparison filter values cannot be empty")
+        normalized.setdefault(text.casefold(), text)
+    return tuple(normalized[key] for key in sorted(normalized))
 
 
-def _condition_for(
-    well: GrowthComparisonWell,
-    fields: tuple[GrowthComparisonMatchField, ...],
-) -> tuple[GrowthConditionKey, GrowthConditionDisplay] | None:
-    strain = treatment = medium = None
-    concentration = concentration_unit = None
-    display_strain = display_treatment = display_medium = None
-    display_concentration = display_concentration_unit = None
-
-    if GrowthComparisonMatchField.STRAIN in fields:
-        value = _normalized_text(well.strain)
-        if value is None:
-            return None
-        strain, display_strain = value
-    if GrowthComparisonMatchField.TREATMENT in fields:
-        value = _normalized_text(well.treatment)
-        if value is None:
-            return None
-        treatment, display_treatment = value
-    if GrowthComparisonMatchField.CONCENTRATION in fields:
-        if well.concentration is None:
-            return None
-        unit = _normalized_text(well.concentration_unit)
-        if unit is None:
-            return None
-        concentration = _normalized_concentration(well.concentration)
-        concentration_unit, display_concentration_unit = unit
-        display_concentration = _format_concentration(concentration)
-    if GrowthComparisonMatchField.MEDIUM in fields:
-        value = _normalized_text(well.medium)
-        if value is None:
-            return None
-        medium, display_medium = value
-
-    return (
-        GrowthConditionKey(strain, treatment, concentration, concentration_unit, medium),
-        GrowthConditionDisplay(
-            display_strain,
-            display_treatment,
-            display_concentration,
-            display_concentration_unit,
-            display_medium,
-        ),
-    )
-
-
-def _normalized_text(value: str | None) -> tuple[str, str] | None:
-    display = (value or "").strip()
-    return (display.casefold(), display) if display else None
-
-
-def _normalized_concentration(value: int | float | Decimal) -> Decimal:
+def _normalized_number(value: int | float | Decimal, name: str) -> Decimal:
     if isinstance(value, bool) or not isinstance(value, Real | Decimal):
-        raise ValueError("Growth comparison concentration must be a finite number")
+        raise ValueError(f"Growth comparison {name} must be a finite number")
     try:
         decimal = Decimal(str(value))
     except (InvalidOperation, ValueError) as error:
-        raise ValueError("Growth comparison concentration must be a finite number") from error
+        raise ValueError(f"Growth comparison {name} must be a finite number") from error
     if not decimal.is_finite() or (isinstance(value, float) and not math.isfinite(value)):
-        raise ValueError("Growth comparison concentration must be a finite number")
+        raise ValueError(f"Growth comparison {name} must be a finite number")
     return decimal.normalize()
 
 
-def _format_concentration(value: Decimal) -> str:
-    return format(value, "f")
-
-
-def _representative_display(
-    displays: Sequence[GrowthConditionDisplay],
-) -> GrowthConditionDisplay:
-    return min(
-        displays,
-        key=lambda display: (
-            display.strain or "",
-            display.treatment or "",
-            display.concentration or "",
-            display.concentration_unit or "",
-            display.medium or "",
-        ),
-    )
-
-
-def _condition_sort_key(key: GrowthConditionKey) -> tuple[str, str, Decimal, str, str]:
-    return (
-        key.strain or "",
-        key.treatment or "",
-        key.concentration if key.concentration is not None else Decimal("-Infinity"),
-        key.concentration_unit or "",
-        key.medium or "",
-    )
+def _format_number(value: int | float | Decimal) -> str:
+    return format(_normalized_number(value, "number"), "f")
 
 
 _POSITION_PATTERN = re.compile(r"^([A-Za-z]+)(\d+)$")
+_SEARCH_RESULT_LIMIT = 500
 
 
 def _well_sort_key(well: GrowthComparisonWell) -> tuple[int, int, int, str, str]:
@@ -719,5 +658,5 @@ def _well_sort_key(well: GrowthComparisonWell) -> tuple[int, int, int, str, str]
             (ord(letter) - ord("A") + 1) * (26**index)
             for index, letter in enumerate(reversed(match[1].upper()))
         )
-        return (well.replicate or 0, 0, row * 10_000 + int(match[2]), "", well.well_id)
-    return (well.replicate or 0, 1, 0, well.position.casefold(), well.well_id)
+        return (0, row, int(match[2]), "", well.well_id)
+    return (1, 0, 0, well.position.casefold(), well.well_id)

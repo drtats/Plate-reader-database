@@ -88,10 +88,10 @@ The contract tests run `EXPLAIN QUERY PLAN` and require these indexes:
 
 Run-list queries select run columns plus compact summaries derived from nonblank
 `well_conditions`; they never select raw or compressed measurements. Plate-to-plate
-condition discovery is a separate bounded query over experiments, plates, wells, and
-conditions. Full measurements are loaded only after a workspace is opened or a comparison
-plot is explicitly rendered, streamed in bounded chunks by repository adapters, and cached
-by immutable plate/revision identity.
+comparison builds a separate bounded metadata index over experiments, plates, wells, and
+conditions. Filtering and selection operate on that index. Full measurements are loaded
+only after a workspace is opened or a comparison plot is explicitly rendered, streamed in
+bounded chunks by repository adapters, and cached by immutable plate/revision identity.
 
 ## Size and Turso budget check
 
