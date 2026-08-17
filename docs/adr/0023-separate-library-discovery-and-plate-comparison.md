@@ -1,6 +1,6 @@
 # ADR-0023: Separate run-library discovery from plate comparison
 
-- Status: accepted
+- Status: superseded in part by ADR-0024; the Run Library decision remains accepted
 - Date: 2026-08-17
 - Owners: integration owner
 

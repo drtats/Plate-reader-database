@@ -63,6 +63,7 @@ Responsibilities:
 
 - navigation, forms, page-scoped session state, and rendering;
 - metadata-only Run Library discovery and a separate on-demand plate-comparison surface;
+- staged well filtering and a persistent cross-run plot-selection basket;
 - converting user input into application commands;
 - displaying application results and typed errors;
 - UI-only caching and fragments.
@@ -296,6 +297,14 @@ The UI follows the experimental workflow instead of exposing storage mechanics.
 - clear assay/status/date/user columns;
 - create/import action;
 - no full measurement download to populate the list.
+
+### Plate comparison
+
+- source runs selected explicitly in the Run Library;
+- cached metadata-only well filtering with staged multi-well selection;
+- an ordered basket that persists across searches and identifies wells by stable IDs;
+- raw measurement loading only after an explicit render action, and only for plates
+  represented in the basket.
 
 ### New growth run wizard
 

@@ -1,4 +1,4 @@
-"""Focused tests for the condition-only Growth comparison UI helpers."""
+"""Behavior tests for staged individual-well Growth comparison selection."""
 
 from __future__ import annotations
 
@@ -7,205 +7,209 @@ from streamlit.testing.v1 import AppTest
 from plate_reader.application.services.growth_comparison import (
     GrowthComparisonPlate,
     GrowthComparisonWell,
-    find_common_growth_conditions,
 )
 from plate_reader.ui.growth_comparison import (
-    _comparison_match_table,
     _comparison_plate_ids,
-    _selected_condition_keys,
+    _selected_wells,
+    _well_key,
+    _well_table,
 )
 
 
-def test_comparison_match_table_uses_stable_hidden_condition_identifiers() -> None:
-    result = find_common_growth_conditions(
-        (
-            GrowthComparisonPlate(
-                "plate-a",
-                (
-                    GrowthComparisonWell(
-                        "plate-a", "well-a", "A1", "PAO1", "Ciprofloxacin", 1, "ug/mL"
-                    ),
-                ),
-            ),
-            GrowthComparisonPlate(
-                "plate-b",
-                (
-                    GrowthComparisonWell(
-                        "plate-b", "well-b", "B1", "pao1", "Ciprofloxacin", 1.0, "ug/mL"
-                    ),
-                ),
-            ),
-        )
+def test_well_table_uses_plate_and_well_identity_as_its_hidden_stable_key() -> None:
+    first = GrowthComparisonWell("plate-a", "well-a", "A1", display_name="Wild type")
+    second = GrowthComparisonWell("plate-b", "well-b", "B2", display_name="Mutant")
+    plates = (
+        GrowthComparisonPlate("plate-a", (first,), "Experiment A", "Plate A"),
+        GrowthComparisonPlate("plate-b", (second,), "Experiment B", "Plate B"),
     )
 
-    table, keys = _comparison_match_table(result)
-    selected_table = table.copy()
-    selected_table.loc[:, "Select"] = True
+    table, wells_by_key = _well_table((first, second), plates)
+    selected = table.copy()
+    selected.loc[_well_key(second), "Select"] = True
 
-    assert len(table.index) == 1
-    assert "condition_identifier" not in table.columns
-    assert table.iloc[0]["Concentration"] == "1 ug/mL"
-    assert _selected_condition_keys(selected_table, keys) == (result.matches[0].condition,)
+    assert "well_key" not in table.columns
+    assert table.loc[_well_key(first), "Experiment"] == "Experiment A"
+    assert table.loc[_well_key(second), "Plate"] == "Plate B"
+    assert _selected_wells(selected, wells_by_key) == (second,)
 
 
-def test_comparison_plate_ids_require_a_tuple_of_nonblank_values() -> None:
+def test_comparison_plate_ids_require_library_owned_tuple_of_nonblank_values() -> None:
     assert _comparison_plate_ids((" plate-a ", "plate-b")) == ("plate-a", "plate-b")
     assert _comparison_plate_ids(["plate-a", "plate-b"]) == ()
     assert _comparison_plate_ids(("", " ")) == ()
 
 
-def test_comparison_page_caches_condition_load_and_stages_match_discovery() -> None:
-    app = AppTest.from_string(
-        """
-import streamlit as st
+def test_page_indexes_once_adds_wells_without_raw_reads_and_renders_only_on_request() -> None:
+    app = _comparison_page_app().run()
 
-from plate_reader.application.contracts import Actor, Role, UserId
-from plate_reader.ui.context import AppContext
-from plate_reader.ui.growth_comparison import render_growth_comparison
+    assert app.session_state["index_calls"] == 1
+    assert "raw_load_calls" not in app.session_state
+    assert _button(app, "Search wells") is not None
 
+    _button(app, "Search wells").click().run()
+    assert app.session_state["index_calls"] == 1
+    assert app.session_state["growth_comparison_search_result"].total == 2
+    assert "raw_load_calls" not in app.session_state
 
-class Repository:
-    def user_by_email(self, _email):
-        return {"user_id": "user-1", "role": "editor", "is_active": True}
-
-    def growth_comparison_wells(self, plate_ids):
-        st.session_state["condition_loader_calls"] = (
-            st.session_state.get("condition_loader_calls", 0) + 1
-        )
-        rows = []
-        for plate_id, well_id, position, plate_name in (
-            ("plate-a", "well-a", "A1", "Plate A"),
-            ("plate-b", "well-b", "B1", "Plate B"),
-        ):
-            if plate_id in plate_ids:
-                rows.append(
-                    {
-                        "plate_id": plate_id,
-                        "well_id": well_id,
-                        "position": position,
-                        "experiment_name": "Experiment",
-                        "plate_name": plate_name,
-                        "strain": "PAO1",
-                        "treatment": "Ciprofloxacin",
-                        "concentration": 1,
-                        "concentration_unit": "ug/mL",
-                        "medium": "MHB",
-                        "replicate": 1,
-                        "is_blank": False,
-                    }
-                )
-        return rows
-
-
-st.session_state.setdefault("growth_comparison_plate_ids", ("plate-a", "plate-b"))
-context = AppContext(
-    Repository(), Actor(UserId("user-1"), "user@example.com", Role.EDITOR)
-)
-render_growth_comparison(context)
-"""
-    ).run()
-
-    assert app.session_state["condition_loader_calls"] == 1
-    assert app.header[0].value == "Plate Comparison"
-    assert _button(app, "Find common settings") is not None
-
-    _button(app, "Find common settings").click().run()
-
-    assert app.session_state["condition_loader_calls"] == 1
-    assert len(app.session_state["growth_comparison_result"].matches) == 1
-    assert _button(app, "Render comparison curves") is not None
-
-
-def test_comparison_page_reports_no_matches_and_per_plate_exclusions() -> None:
-    app = _comparison_page_app(
-        [
-            _condition_row("plate-a", "well-a", "A1", "Plate A", concentration=1, is_blank=True),
-            _condition_row("plate-a", "well-a2", "A2", "Plate A", concentration=1),
-            _condition_row("plate-b", "well-b", "B1", "Plate B", concentration=2),
-        ]
+    _button(app, "Add all displayed").click().run()
+    assert tuple(_well_key(well) for well in app.session_state["growth_comparison_basket"]) == (
+        "plate-a:well-a",
+        "plate-b:well-b",
     )
+    assert "raw_load_calls" not in app.session_state
 
-    _button(app, "Find common settings").click().run()
-
-    assert not app.get("data_editor")
-    assert any("No common settings were found" in item.value for item in app.info)
-    assert any("Plate A (plate-a): 1 blank" in item.value for item in app.caption)
-    assert any("Plate B (plate-b): 0 blank" in item.value for item in app.caption)
+    _button(app, "Render comparison curves").click().run()
+    assert app.session_state["raw_load_calls"] == 2
+    assert app.session_state["growth_comparison_plot_result"].well_count == 2
+    assert len(app.get("plotly_chart")) == 1
 
 
-def test_comparison_page_stops_invalid_or_duplicate_plate_selections_before_loading() -> None:
-    invalid = _comparison_page_app([], plate_ids=("plate-a",))
-    duplicate = _comparison_page_app([], plate_ids=("plate-a", "plate-a"))
+def test_search_never_clears_existing_basket_and_duplicate_add_is_ignored() -> None:
+    app = _comparison_page_app().run()
+    _button(app, "Search wells").click().run()
+    _button(app, "Add all displayed").click().run()
+    _button(app, "Add all displayed").click().run()
+
+    assert tuple(_well_key(well) for well in app.session_state["growth_comparison_basket"]) == (
+        "plate-a:well-a",
+        "plate-b:well-b",
+    )
+    assert app.session_state["index_calls"] == 1
+
+
+def test_clear_selection_empties_basket_and_invalidates_a_previous_plot() -> None:
+    app = _comparison_page_app().run()
+    _button(app, "Search wells").click().run()
+    _button(app, "Add all displayed").click().run()
+    _button(app, "Render comparison curves").click().run()
+
+    _button(app, "Clear selection").click().run()
+
+    assert app.session_state["growth_comparison_basket"] == ()
+    assert "growth_comparison_plot_result" not in app.session_state
+
+
+def test_successive_source_searches_add_individual_checked_wells_without_clearing_basket() -> None:
+    app = _comparison_page_app(auto_select_first=True).run()
+    app.multiselect[0].set_value(["plate-a"])
+    _button(app, "Search wells").click().run()
+    _button(app, "Add selected wells").click().run()
+
+    app.multiselect[0].set_value(["plate-b"])
+    _button(app, "Search wells").click().run()
+    _button(app, "Add selected wells").click().run()
+
+    assert tuple(_well_key(well) for well in app.session_state["growth_comparison_basket"]) == (
+        "plate-a:well-a",
+        "plate-b:well-b",
+    )
+    assert app.session_state["index_calls"] == 1
+    assert "raw_load_calls" not in app.session_state
+
+
+def test_remove_checked_well_keeps_other_wells_and_invalidates_existing_plot() -> None:
+    app = _comparison_page_app(auto_select_first=True).run()
+    app.multiselect[0].set_value(["plate-a"])
+    _button(app, "Search wells").click().run()
+    _button(app, "Add selected wells").click().run()
+    app.multiselect[0].set_value(["plate-b"])
+    _button(app, "Search wells").click().run()
+    _button(app, "Add selected wells").click().run()
+    _button(app, "Render comparison curves").click().run()
+
+    _button(app, "Remove selected").click().run()
+
+    assert tuple(_well_key(well) for well in app.session_state["growth_comparison_basket"]) == (
+        "plate-b:well-b",
+    )
+    assert "growth_comparison_plot_result" not in app.session_state
+
+
+def test_invalid_concentration_range_without_one_unit_is_safe_and_does_not_search() -> None:
+    app = _comparison_page_app().run()
+    app.text_input[1].input("0.5")
+    _button(app, "Search wells").click().run()
+
+    assert any("exactly one concentration unit" in item.value for item in app.error)
+    assert "growth_comparison_search_result" not in app.session_state
+    assert "growth_comparison_basket" not in app.session_state
+    assert "raw_load_calls" not in app.session_state
+
+
+def test_empty_source_run_filter_is_safe_and_does_not_search_every_plate() -> None:
+    app = _comparison_page_app().run()
+    app.multiselect[0].set_value([])
+    _button(app, "Search wells").click().run()
+
+    assert any("at least one source run" in item.value for item in app.error)
+    assert "growth_comparison_search_result" not in app.session_state
+
+
+def test_source_set_change_clears_basket_and_stale_plot_without_loading_raw_data() -> None:
+    app = _comparison_page_app(include_source_change=True).run()
+    _button(app, "Search wells").click().run()
+    _button(app, "Add all displayed").click().run()
+    _button(app, "Render comparison curves").click().run()
+
+    assert "growth_comparison_plot_result" in app.session_state
+    _button(app, "Change source runs").click().run()
+
+    assert "growth_comparison_basket" not in app.session_state
+    assert "growth_comparison_plot_result" not in app.session_state
+    assert app.session_state["raw_load_calls"] == 2
+
+
+def test_page_stops_invalid_or_duplicate_library_source_sets_before_indexing() -> None:
+    invalid = _comparison_page_app(plate_ids=("plate-a",)).run()
+    duplicate = _comparison_page_app(plate_ids=("plate-a", "plate-a")).run()
 
     assert any("Select at least two runs" in item.value for item in invalid.info)
-    assert "condition_loader_calls" not in invalid.session_state
+    assert "index_calls" not in invalid.session_state
     assert any("unique plate IDs" in item.value for item in duplicate.error)
-    assert "condition_loader_calls" not in duplicate.session_state
-
-
-def test_comparison_page_displays_loader_errors_without_stale_matches() -> None:
-    app = _comparison_page_app([], loader_error=True)
-
-    assert any(
-        "Unable to load selected run conditions: loader unavailable" in item.value
-        for item in app.error
-    )
-    assert app.session_state["condition_loader_calls"] == 1
-    assert not app.get("data_editor")
-
-
-def test_comparison_plot_display_renders_only_for_its_selected_plate_ids() -> None:
-    visible = _comparison_plot_app(("plate-a", "plate-b"))
-    stale = _comparison_plot_app(("plate-a", "plate-c"))
-
-    assert [item.value for item in visible.subheader] == ["Comparison curves"]
-    assert any("2 plates · 2 wells · raw values" in item.value for item in visible.caption)
-    assert len(visible.get("plotly_chart")) == 1
-    assert not stale.subheader
-    assert not stale.get("plotly_chart")
+    assert "index_calls" not in duplicate.session_state
 
 
 def _button(app: AppTest, label: str):
     return next(button for button in app.button if button.label == label)
 
 
-def _condition_row(
-    plate_id: str,
-    well_id: str,
-    position: str,
-    plate_name: str,
-    *,
-    concentration: int,
-    is_blank: bool = False,
-) -> dict[str, object]:
-    return {
-        "plate_id": plate_id,
-        "well_id": well_id,
-        "position": position,
-        "experiment_name": "Experiment",
-        "plate_name": plate_name,
-        "strain": "PAO1",
-        "treatment": "Ciprofloxacin",
-        "concentration": concentration,
-        "concentration_unit": "ug/mL",
-        "medium": "MHB",
-        "replicate": 1,
-        "is_blank": is_blank,
-    }
-
-
 def _comparison_page_app(
-    rows: list[dict[str, object]],
     *,
     plate_ids: tuple[str, ...] = ("plate-a", "plate-b"),
-    loader_error: bool = False,
+    include_source_change: bool = False,
+    auto_select_first: bool = False,
 ) -> AppTest:
-    loader_body = "raise RuntimeError('loader unavailable')" if loader_error else f"return {rows!r}"
+    source_change = (
+        """
+if st.button("Change source runs"):
+    st.session_state["growth_comparison_plate_ids"] = ("plate-a", "plate-c")
+"""
+        if include_source_change
+        else ""
+    )
+    auto_select = (
+        """
+_original_data_editor = st.data_editor
+
+def _select_first_row(frame, **_kwargs):
+    selected = frame.copy()
+    column = "Select" if "Select" in selected.columns else "Remove"
+    selected.iloc[0, selected.columns.get_loc(column)] = True
+    return selected
+
+st.data_editor = _select_first_row
+"""
+        if auto_select_first
+        else ""
+    )
+    restore_data_editor = "st.data_editor = _original_data_editor" if auto_select_first else "pass"
     return AppTest.from_string(
         f"""
 import streamlit as st
 
-from plate_reader.application.contracts import Actor, Role, UserId
+from plate_reader.application.contracts import Actor, AssayType, PlateId, Role, UserId
+from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.growth_comparison import render_growth_comparison
 
@@ -214,46 +218,67 @@ class Repository:
     def user_by_email(self, _email):
         return {{"user_id": "user-1", "role": "editor", "is_active": True}}
 
-    def growth_comparison_wells(self, _plate_ids):
-        st.session_state["condition_loader_calls"] = (
-            st.session_state.get("condition_loader_calls", 0) + 1
+    def growth_comparison_wells(self, plate_ids):
+        st.session_state["index_calls"] = st.session_state.get("index_calls", 0) + 1
+        rows = []
+        for plate_id, well_id, position, plate_name in (
+            ("plate-a", "well-a", "A1", "Plate A"),
+            ("plate-b", "well-b", "B1", "Plate B"),
+            ("plate-c", "well-c", "C1", "Plate C"),
+        ):
+            if plate_id in plate_ids:
+                rows.append({{
+                    "plate_id": plate_id,
+                    "well_id": well_id,
+                    "position": position,
+                    "experiment_name": "Experiment",
+                    "plate_name": plate_name,
+                    "display_name": f"sample {{position}}",
+                    "strain": "PAO1",
+                    "treatment": "Ciprofloxacin",
+                    "concentration": 1,
+                    "concentration_unit": "ug/mL",
+                    "medium": "MHB",
+                    "replicate": 1,
+                    "grouping_label": "drug",
+                    "inoculum_size": 5,
+                    "inoculum_unit": "log CFU/mL",
+                    "is_blank": False,
+                }})
+        return rows
+
+    def load_plate(self, plate_id):
+        st.session_state["raw_load_calls"] = st.session_state.get("raw_load_calls", 0) + 1
+        key = str(plate_id)
+        well_id = {{"plate-a": "well-a", "plate-b": "well-b", "plate-c": "well-c"}}[key]
+        position = {{"plate-a": "A1", "plate-b": "B1", "plate-c": "C1"}}[key]
+        return PlateSnapshot(
+            plate_id=PlateId(key),
+            metadata={{"assay_type": AssayType.GROWTH}},
+            wells=({{"well_id": well_id, "position": position, "display_name": position}},),
+            raw_observations=({{
+                "well_id": well_id,
+                "time_index": 0,
+                "elapsed_microseconds": 0,
+                "channel": "od600",
+                "value_raw": 0.2,
+            }},),
+            revisions=(),
         )
-        {loader_body}
+
+    def plate_cache_token(self, plate_id):
+        return f"token-{{plate_id}}"
 
 
-st.session_state["growth_comparison_plate_ids"] = {plate_ids!r}
+st.session_state.setdefault("growth_comparison_plate_ids", {plate_ids!r})
+{source_change}
+{auto_select}
 context = AppContext(
     Repository(), Actor(UserId("user-1"), "user@example.com", Role.EDITOR)
 )
-render_growth_comparison(context)
+try:
+    render_growth_comparison(context)
+finally:
+    {restore_data_editor}
 """
-    ).run()
-
-
-def _comparison_plot_app(plate_ids: tuple[str, str]) -> AppTest:
-    return AppTest.from_string(
-        f"""
-import streamlit as st
-
-from plate_reader.application.services.growth_comparison import GrowthComparisonPlotResult
-from plate_reader.application.services.growth_plotting import GrowthPlotData, GrowthPlotPoint
-from plate_reader.ui.growth_comparison import _render_comparison_plot
-
-
-st.session_state["growth_comparison_plot_result"] = GrowthComparisonPlotResult(
-    GrowthPlotData(
-        (
-            GrowthPlotPoint("plate-a:A1", "Plate A A1", 0.0, "od600", 0.1, 0.1, None, False),
-            GrowthPlotPoint("plate-b:B1", "Plate B B1", 0.0, "od600", 0.2, 0.2, None, False),
-        ),
-        (),
-        False,
-    ),
-    "comparison-cache-key",
-    2,
-    2,
-)
-st.session_state["growth_comparison_plot_plate_ids"] = ("plate-a", "plate-b")
-_render_comparison_plot({plate_ids!r})
-"""
-    ).run()
+    )

@@ -1408,10 +1408,20 @@ def _clear_growth_plot() -> None:
 
 
 def _invalidate_growth_discovery() -> None:
-    """Discard cached Library/comparison metadata after a relevant committed write."""
+    """Discard cached Library/comparison state after a relevant committed write."""
 
     for key in (
         "run_search_results",
+        "growth_comparison_plate_index_cache",
+        "growth_comparison_source_plate_ids",
+        "growth_comparison_search_result",
+        "growth_comparison_search_source_plate_ids",
+        "growth_comparison_search_revision",
+        "growth_comparison_basket",
+        "growth_comparison_basket_revision",
+        "growth_comparison_plot_source_plate_ids",
+        "growth_comparison_plot_basket_keys",
+        # Remove session state created by the superseded common-condition workflow.
         "growth_comparison_condition_cache",
         "growth_comparison_result",
         "growth_comparison_result_plate_ids",

@@ -30,3 +30,7 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0018](0018-restore-configurable-mic-visualization.md): configurable MIC visualization
 - [ADR-0019](0019-dependency-free-growth-pdf-export.md): dependency-free Growth PDF export
 - [ADR-0020](0020-use-system-arrow-memory-pool.md): stable Arrow allocator for editors
+- [ADR-0021](0021-support-private-hosted-access-identity.md): private hosted-access identity
+- [ADR-0022](0022-store-growth-series-as-compressed-matrices.md): compressed Growth series
+- [ADR-0023](0023-separate-library-discovery-and-plate-comparison.md): separate Library and comparison
+- [ADR-0024](0024-select-individual-wells-for-plate-comparison.md): individual-well comparison selection
