@@ -1,5 +1,19 @@
 """Application use cases."""
 
+from plate_reader.application.services.growth_comparison import (
+    DEFAULT_GROWTH_COMPARISON_FIELDS,
+    FindCommonGrowthConditionsService,
+    GrowthComparisonMatch,
+    GrowthComparisonMatchField,
+    GrowthComparisonPlate,
+    GrowthComparisonPlotResult,
+    GrowthComparisonResult,
+    GrowthComparisonWell,
+    GrowthConditionKey,
+    LoadGrowthComparisonConditionsService,
+    LoadGrowthComparisonPlotService,
+    find_common_growth_conditions,
+)
 from plate_reader.application.services.growth_data_export import (
     GrowthDataCsvArtifact,
     GrowthDataExportContext,
@@ -131,6 +145,7 @@ from plate_reader.application.services.supporting_data import (
 )
 
 __all__ = [
+    "DEFAULT_GROWTH_COMPARISON_FIELDS",
     "AuthenticationError",
     "BackgroundRevisionResult",
     "BuildGrowthBackgroundGroupsService",
@@ -143,9 +158,17 @@ __all__ = [
     "DeletePlateTemplateService",
     "ExportGrowthRunService",
     "ExportMicPlateService",
+    "FindCommonGrowthConditionsService",
     "GrowthBackgroundGroupSource",
     "GrowthBackgroundQcGroup",
     "GrowthBackgroundQcReport",
+    "GrowthComparisonMatch",
+    "GrowthComparisonMatchField",
+    "GrowthComparisonPlate",
+    "GrowthComparisonPlotResult",
+    "GrowthComparisonResult",
+    "GrowthComparisonWell",
+    "GrowthConditionKey",
     "GrowthDataCsvArtifact",
     "GrowthDataExportContext",
     "GrowthDisplayNameAction",
@@ -182,6 +205,8 @@ __all__ = [
     "ImportPortableRunService",
     "ListPlateTemplatesService",
     "ListSavedOptionsService",
+    "LoadGrowthComparisonConditionsService",
+    "LoadGrowthComparisonPlotService",
     "LoadGrowthRunService",
     "LoadMicPlateService",
     "LoadMicResultSearchCatalogService",
@@ -225,6 +250,7 @@ __all__ = [
     "export_growth_plot_data_csv",
     "export_growth_plot_pdf",
     "export_growth_plot_wide_csv",
+    "find_common_growth_conditions",
     "growth_selection_fields",
     "normalize_growth_selection",
     "preview_growth_display_name_csv",

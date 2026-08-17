@@ -267,6 +267,10 @@ Goal: deliver the first usable workflow locally before cloud complexity.
 - [x] Add explicit save/commit indicators and unsaved-change warnings.
 - [x] Provide user-safe errors with diagnostic IDs.
 - [x] Add local configuration and development identity.
+- [x] Replace Run Library cards with a sortable metadata table whose selection
+      remains browser-local until an explicit open or compare action.
+- [x] Add a separate Plate Comparison workflow that discovers shared conditions
+      without loading measurements and renders raw curves only on request.
 
 ### UI changes intentionally allowed
 
@@ -290,6 +294,10 @@ Goal: deliver the first usable workflow locally before cloud complexity.
 - [x] Exported run reimports into an empty database with identical verification
       report.
 - [x] Streamlit reruns do not trigger migrations or unintended writes.
+- [x] Sorting and selecting Library or comparison-table rows do not submit a
+      backend request until the user presses the corresponding action button.
+- [x] Library search and common-condition discovery remain metadata-only; raw
+      measurements are loaded only by explicit workspace or render actions.
 - [x] UI smoke tests cover navigation, import, edit, plot, and export.
 - [x] Manual comparison against growth v4 is documented with screenshots and
       output hashes where meaningful.

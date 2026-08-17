@@ -12,6 +12,7 @@ import turso
 
 from plate_reader.application.contracts import ExperimentId, PlateId
 from plate_reader.application.ports import PlateReaderRepository
+from plate_reader.application.ports.repositories import ConcentrationRange
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
@@ -84,11 +85,13 @@ def test_complete_growth_repository_flow(harness: RepositoryHarness) -> None:
     runs = repository.search_runs({"project": "Contract", "limit": 20, "offset": 0})
     assert len(runs) == 1
     assert runs[0].plate_id == "plate-growth"
+    assert runs[0].strains == ("Synthetic strain",)
+    assert runs[0].treatments == ("none",)
+    assert runs[0].concentration_ranges == (ConcentrationRange(0.0, 0.0, "ug/mL"),)
     filtered = repository.search_runs(
         {"strain": "Synthetic strain", "medium": "Synthetic medium", "treatment": "none"}
     )
     assert len(filtered) == 1
-
     snapshot = repository.load_plate(PlateId("plate-growth"))
     assert snapshot is not None
     assert snapshot.metadata["assay_type"] == "growth"
@@ -98,6 +101,246 @@ def test_complete_growth_repository_flow(harness: RepositoryHarness) -> None:
     assert tuple(len(chunk) for chunk in chunks) == (3, 1)
     with pytest.raises(InvalidRepositoryValueError, match="chunk_size"):
         tuple(repository.stream_growth_measurements(PlateId("plate-growth"), chunk_size=0))
+
+
+def test_run_library_metadata_is_single_query_normalized_and_paged(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {
+                    "position": "A1",
+                    "strain": " Alpha ",
+                    "medium": " Synthetic medium ",
+                    "treatment": " Drug ",
+                    "concentration": 0.25,
+                    "concentration_unit": "ug/mL",
+                },
+                {
+                    "position": "A2",
+                    "strain": "alpha",
+                    "medium": "synthetic medium",
+                    "treatment": "drug",
+                    "concentration": 1.0,
+                    "concentration_unit": "ug/mL",
+                },
+            ],
+        )
+        repository.insert_wells(
+            PlateId("plate-growth"),
+            [
+                {
+                    **well_values("well-a3", "A3", 0, 2),
+                    "is_blank": False,
+                },
+                {
+                    **well_values("well-a4", "A4", 0, 3),
+                    "is_blank": True,
+                },
+                {
+                    **well_values("well-a5", "A5", 0, 4),
+                    "is_blank": False,
+                },
+            ],
+        )
+        repository.insert_conditions(
+            [
+                {
+                    "well_id": "well-a3",
+                    "strain": "Beta",
+                    "medium": "  ",
+                    "treatment": "none",
+                    "concentration": 4.0,
+                    "concentration_unit": "mM",
+                },
+                {
+                    "well_id": "well-a4",
+                    "strain": "Hidden",
+                    "medium": "Hidden medium",
+                    "treatment": "Secret",
+                    "concentration": 99.0,
+                    "concentration_unit": "mM",
+                },
+                {
+                    "well_id": "well-a5",
+                    "strain": "No unit",
+                    "medium": None,
+                    "treatment": None,
+                    "concentration": 5.0,
+                    "concentration_unit": "  ",
+                },
+            ]
+        )
+        repository.create_plate(
+            {
+                "plate_id": "plate-without-conditions",
+                "experiment_id": "experiment-1",
+                "assay_type": "growth",
+                "plate_name": "No conditions",
+                "created_by": "user-1",
+                "created_at": "2026-02-01T00:00:00+00:00",
+                "updated_at": "2026-02-01T00:00:00+00:00",
+            }
+        )
+
+    recorded = RecordingConnection(harness.connection)
+    summaries = SqlPlateReaderRepository(recorded).search_runs({"limit": 20, "offset": 0})
+
+    assert len(recorded.statements) == 1
+    assert "growth_measurements" not in recorded.statements[0].lower()
+    by_plate = {str(summary.plate_id): summary for summary in summaries}
+    assert by_plate["plate-growth"].strains == ("Alpha", "Beta", "No unit")
+    assert by_plate["plate-growth"].treatments == ("Drug", "none")
+    assert by_plate["plate-growth"].concentration_ranges == (
+        ConcentrationRange(4.0, 4.0, "mM"),
+        ConcentrationRange(0.25, 1.0, "ug/mL"),
+        ConcentrationRange(5.0, 5.0, None),
+    )
+    assert by_plate["plate-without-conditions"].strains == ()
+    assert by_plate["plate-without-conditions"].treatments == ()
+    assert by_plate["plate-without-conditions"].concentration_ranges == ()
+    assert [summary.plate_id for summary in repository.search_runs({"limit": 1, "offset": 0})] == [
+        "plate-without-conditions"
+    ]
+    assert [summary.plate_id for summary in repository.search_runs({"limit": 1, "offset": 1})] == [
+        "plate-growth"
+    ]
+    assert [summary.plate_id for summary in repository.search_runs({"text": "beta"})] == [
+        "plate-growth"
+    ]
+    assert [
+        summary.plate_id for summary in repository.search_runs({"text": "synthetic medium"})
+    ] == ["plate-growth"]
+    assert repository.search_runs({"text": "hidden"}) == ()
+
+
+class RecordingConnection:
+    """Records the one database request issued by the Library projection."""
+
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+        self.statements: list[str] = []
+
+    def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> object:
+        self.statements.append(sql)
+        return self._connection.execute(sql, parameters)
+
+
+def test_growth_comparison_wells_are_condition_only_and_filter_available_growth_plates(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.create_plate(
+            {
+                "plate_id": "plate-growth-two",
+                "experiment_id": "experiment-1",
+                "assay_type": "growth",
+                "plate_name": "Second Growth Plate",
+                "created_by": "user-1",
+            }
+        )
+        repository.insert_wells(
+            PlateId("plate-growth-two"),
+            [
+                well_values("well-two-b1", "B1", 1, 0),
+                well_values("well-two-a1", "A1", 0, 0),
+            ],
+        )
+        repository.insert_conditions(
+            [
+                {
+                    "well_id": "well-two-a1",
+                    "strain": "comparison strain",
+                    "medium": "comparison medium",
+                    "replicate": 2,
+                    "treatment": "compound",
+                    "concentration": 0.5,
+                    "concentration_unit": "ug/mL",
+                },
+                {"well_id": "well-two-b1"},
+            ]
+        )
+        repository.create_plate(
+            {
+                "plate_id": "plate-mic-comparison",
+                "experiment_id": "experiment-1",
+                "assay_type": "mic",
+                "plate_name": "MIC comparison plate",
+                "created_by": "user-1",
+            }
+        )
+
+    recorded = RecordingConnection(harness.connection)
+    rows = SqlPlateReaderRepository(recorded).growth_comparison_wells(
+        (PlateId("plate-growth-two"), PlateId("plate-growth"))
+    )
+
+    assert len(recorded.statements) == 1
+    assert "growth_measurements" not in recorded.statements[0].lower()
+    assert "growth_series_chunks" not in recorded.statements[0].lower()
+    assert tuple(rows[0]) == (
+        "plate_id",
+        "experiment_name",
+        "plate_name",
+        "well_id",
+        "position",
+        "strain",
+        "treatment",
+        "concentration",
+        "concentration_unit",
+        "medium",
+        "replicate",
+        "is_blank",
+    )
+    assert [(row["plate_id"], row["position"]) for row in rows] == [
+        ("plate-growth-two", "A1"),
+        ("plate-growth-two", "B1"),
+        ("plate-growth", "A1"),
+        ("plate-growth", "A2"),
+    ]
+    assert rows[0] == {
+        "plate_id": "plate-growth-two",
+        "experiment_name": "Synthetic Experiment",
+        "plate_name": "Second Growth Plate",
+        "well_id": "well-two-a1",
+        "position": "A1",
+        "strain": "comparison strain",
+        "treatment": "compound",
+        "concentration": 0.5,
+        "concentration_unit": "ug/mL",
+        "medium": "comparison medium",
+        "replicate": 2,
+        "is_blank": 0,
+    }
+    available = repository.growth_comparison_wells(
+        (PlateId("plate-growth"), PlateId("plate-mic-comparison"))
+    )
+    assert {row["plate_id"] for row in available} == {"plate-growth"}
+    with_missing = repository.growth_comparison_wells(
+        (PlateId("plate-growth"), PlateId("missing-plate"))
+    )
+    assert {row["plate_id"] for row in with_missing} == {"plate-growth"}
+
+
+@pytest.mark.parametrize(
+    "plate_ids, message",
+    [
+        ((PlateId("plate-growth"),), "at least two"),
+        ((PlateId("plate-growth"), PlateId("plate-growth")), "must be unique"),
+        (tuple(PlateId(f"plate-{index}") for index in range(101)), "at most 100"),
+    ],
+)
+def test_growth_comparison_wells_validate_selection_bounds(
+    harness: RepositoryHarness, plate_ids: tuple[PlateId, ...], message: str
+) -> None:
+    with pytest.raises(InvalidRepositoryValueError, match=message):
+        harness.repository.growth_comparison_wells(plate_ids)
 
 
 def test_import_failure_rolls_back_every_table(harness: RepositoryHarness) -> None:

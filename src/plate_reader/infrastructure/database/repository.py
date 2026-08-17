@@ -8,10 +8,16 @@ import math
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 
 from plate_reader.application.contracts import AssayType, ExperimentId, PlateId, RevisionId
-from plate_reader.application.ports.repositories import PlateSnapshot, RunSummary
+from plate_reader.application.ports.repositories import (
+    ConcentrationRange,
+    PlateSnapshot,
+    RunSummary,
+)
 from plate_reader.infrastructure.database.dbapi import Connection, Cursor
 from plate_reader.infrastructure.database.growth_series import (
     GrowthSeriesCodecError,
@@ -31,6 +37,70 @@ class ConcurrencyConflictError(RuntimeError):
 
 class InvalidRepositoryValueError(ValueError):
     pass
+
+
+@dataclass(slots=True)
+class _RunSummaryMetadata:
+    """Mutable aggregation state used only while materializing one query result."""
+
+    experiment_id: ExperimentId
+    plate_id: PlateId
+    experiment_name: str
+    plate_name: str
+    assay_type: AssayType
+    experiment_date: str
+    project: str | None
+    updated_at: str
+    strains: dict[str, str] = dataclass_field(default_factory=dict)
+    treatments: dict[str, str] = dataclass_field(default_factory=dict)
+    concentration_bounds: dict[str | None, tuple[str | None, float, float]] = dataclass_field(
+        default_factory=dict
+    )
+
+    def add_condition(
+        self, strain: object, treatment: object, concentration: object, unit: object
+    ) -> None:
+        _add_normalized_text(self.strains, strain)
+        _add_normalized_text(self.treatments, treatment)
+        normalized_unit = _normalized_summary_text(unit)
+        normalized_concentration = _nullable_summary_concentration(concentration)
+        if normalized_concentration is None:
+            return
+        unit_key = normalized_unit.casefold() if normalized_unit is not None else None
+        existing = self.concentration_bounds.get(unit_key)
+        if existing is None:
+            self.concentration_bounds[unit_key] = (
+                normalized_unit,
+                normalized_concentration,
+                normalized_concentration,
+            )
+            return
+        display_unit, minimum, maximum = existing
+        self.concentration_bounds[unit_key] = (
+            _preferred_summary_text(display_unit, normalized_unit),
+            min(minimum, normalized_concentration),
+            max(maximum, normalized_concentration),
+        )
+
+    def as_summary(self) -> RunSummary:
+        return RunSummary(
+            experiment_id=self.experiment_id,
+            plate_id=self.plate_id,
+            experiment_name=self.experiment_name,
+            plate_name=self.plate_name,
+            assay_type=self.assay_type,
+            experiment_date=self.experiment_date,
+            project=self.project,
+            updated_at=self.updated_at,
+            strains=tuple(self.strains[key] for key in sorted(self.strains)),
+            treatments=tuple(self.treatments[key] for key in sorted(self.treatments)),
+            concentration_ranges=tuple(
+                ConcentrationRange(minimum=minimum, maximum=maximum, unit=unit)
+                for _unit_key, (unit, minimum, maximum) in sorted(
+                    self.concentration_bounds.items(), key=_summary_unit_sort_key
+                )
+            ),
+        )
 
 
 _MIC_RESULT_FILTER_COLUMNS = {
@@ -59,6 +129,8 @@ _MIC_RESULT_FILTER_COLUMNS = {
     "calculation_status": "mr.calculation_status",
     "warning": "mr.warning",
 }
+
+_MAX_GROWTH_COMPARISON_PLATES = 100
 
 
 class SqlPlateReaderRepository:
@@ -750,14 +822,18 @@ class SqlPlateReaderRepository:
         return event_id
 
     def search_runs(self, filters: dict[str, object]) -> Sequence[RunSummary]:
-        joins = ""
         where = ["p.deleted_at IS NULL"]
         parameters: list[object] = []
         text = _optional_str(filters, "text")
         if text:
-            where.append("(e.name LIKE ? OR p.plate_name LIKE ? OR e.project LIKE ?)")
+            where.append(
+                "(e.name LIKE ? OR p.plate_name LIKE ? OR e.project LIKE ? OR EXISTS ("
+                "SELECT 1 FROM wells tw JOIN well_conditions twc ON twc.well_id = tw.well_id "
+                "WHERE tw.plate_id = p.plate_id AND tw.is_blank = 0 AND "
+                "(twc.strain LIKE ? OR twc.treatment LIKE ? OR twc.medium LIKE ?)))"
+            )
             pattern = f"%{text}%"
-            parameters.extend((pattern, pattern, pattern))
+            parameters.extend((pattern, pattern, pattern, pattern, pattern, pattern))
         for key, column in (
             ("assay_type", "p.assay_type"),
             ("project", "e.project"),
@@ -774,15 +850,19 @@ class SqlPlateReaderRepository:
         condition_filters = {
             key: _optional_str(filters, key) for key in ("strain", "medium", "treatment")
         }
-        if any(condition_filters.values()):
-            joins = (
-                " JOIN wells w ON w.plate_id = p.plate_id"
-                " JOIN well_conditions wc ON wc.well_id = w.well_id"
+        active_condition_filters = tuple(
+            (key, value) for key, value in condition_filters.items() if value
+        )
+        if active_condition_filters:
+            predicates = ["fw.plate_id = p.plate_id", "fw.is_blank = 0"]
+            for key, value in active_condition_filters:
+                predicates.append(f"fwc.{key} = ?")
+                parameters.append(value)
+            where.append(
+                "EXISTS (SELECT 1 FROM wells fw "
+                "JOIN well_conditions fwc ON fwc.well_id = fw.well_id WHERE "
+                f"{' AND '.join(predicates)})"
             )
-            for key, value in condition_filters.items():
-                if value:
-                    where.append(f"wc.{key} = ?")
-                    parameters.append(value)
         if not bool(filters.get("include_deleted", False)):
             pass
         else:
@@ -791,26 +871,66 @@ class SqlPlateReaderRepository:
         offset = _int_value(filters.get("offset", 0), minimum=0)
         parameters.extend((limit, offset))
         cursor = self.connection.execute(
-            "SELECT DISTINCT e.experiment_id, p.plate_id, e.name, p.plate_name, "
-            "p.assay_type, e.experiment_date, e.project, p.updated_at "
-            "FROM plates p JOIN experiments e ON e.experiment_id = p.experiment_id"
-            f"{joins} WHERE {' AND '.join(where) if where else '1 = 1'} "
-            "ORDER BY p.updated_at DESC LIMIT ? OFFSET ?",
+            "WITH candidate_runs AS ("
+            "SELECT e.experiment_id, p.plate_id, e.name AS experiment_name, "
+            "p.plate_name, p.assay_type, e.experiment_date, e.project, p.updated_at "
+            "FROM plates p JOIN experiments e ON e.experiment_id = p.experiment_id "
+            f"WHERE {' AND '.join(where) if where else '1 = 1'} "
+            "ORDER BY p.updated_at DESC, p.plate_id ASC LIMIT ? OFFSET ?"
+            ") "
+            "SELECT cr.experiment_id, cr.plate_id, cr.experiment_name, cr.plate_name, "
+            "cr.assay_type, cr.experiment_date, cr.project, cr.updated_at, "
+            "wc.strain, wc.treatment, wc.concentration, wc.concentration_unit "
+            "FROM candidate_runs cr "
+            "LEFT JOIN wells w ON w.plate_id = cr.plate_id AND w.is_blank = 0 "
+            "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
+            "ORDER BY cr.updated_at DESC, cr.plate_id ASC, w.row_index ASC, w.column_index ASC",
             parameters,
         )
-        return tuple(
-            RunSummary(
-                experiment_id=ExperimentId(str(row[0])),
-                plate_id=PlateId(str(row[1])),
-                experiment_name=str(row[2]),
-                plate_name=str(row[3]),
-                assay_type=AssayType(str(row[4])),
-                experiment_date=str(row[5]),
-                project=None if row[6] is None else str(row[6]),
-                updated_at=str(row[7]),
-            )
-            for row in cursor.fetchall()
+        summaries: dict[str, _RunSummaryMetadata] = {}
+        for row in cursor.fetchall():
+            plate_id = str(row[1])
+            metadata = summaries.get(plate_id)
+            if metadata is None:
+                metadata = _RunSummaryMetadata(
+                    experiment_id=ExperimentId(str(row[0])),
+                    plate_id=PlateId(plate_id),
+                    experiment_name=str(row[2]),
+                    plate_name=str(row[3]),
+                    assay_type=AssayType(str(row[4])),
+                    experiment_date=str(row[5]),
+                    project=None if row[6] is None else str(row[6]),
+                    updated_at=str(row[7]),
+                )
+                summaries[plate_id] = metadata
+            metadata.add_condition(row[8], row[9], row[10], row[11])
+        return tuple(metadata.as_summary() for metadata in summaries.values())
+
+    def growth_comparison_wells(
+        self, plate_ids: Sequence[PlateId]
+    ) -> tuple[dict[str, object], ...]:
+        """Load selected Growth well conditions without reading observations.
+
+        Missing, deleted, and non-Growth IDs intentionally produce no rows. The
+        application service owns reporting which requested IDs were unavailable.
+        """
+
+        requested_ids = _validated_growth_comparison_plate_ids(plate_ids)
+        placeholders = ", ".join("?" for _plate_id in requested_ids)
+        order_by = " ".join(f"WHEN ? THEN {index}" for index, _plate_id in enumerate(requested_ids))
+        cursor = self.connection.execute(
+            "SELECT p.plate_id, e.name AS experiment_name, p.plate_name, w.well_id, "
+            "w.position, wc.strain, wc.treatment, wc.concentration, wc.concentration_unit, "
+            "wc.medium, wc.replicate, w.is_blank "
+            "FROM plates p JOIN experiments e ON e.experiment_id = p.experiment_id "
+            "JOIN wells w ON w.plate_id = p.plate_id "
+            "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
+            f"WHERE p.plate_id IN ({placeholders}) AND p.assay_type = ? AND p.deleted_at IS NULL "
+            f"ORDER BY CASE p.plate_id {order_by} END, w.row_index ASC, w.column_index ASC, "
+            "w.well_id ASC",
+            (*requested_ids, AssayType.GROWTH, *requested_ids),
         )
+        return _all_dicts(cursor)
 
     def load_plate(self, plate_id: PlateId) -> PlateSnapshot | None:
         metadata_cursor = self.connection.execute(
@@ -1270,6 +1390,67 @@ def _json_object_keys(value: object) -> tuple[str, ...]:
 def _normalized_mic_group_value(value: object) -> str:
     normalized = str(value).strip() if value is not None else ""
     return normalized or "Unknown"
+
+
+def _validated_growth_comparison_plate_ids(plate_ids: Sequence[PlateId]) -> tuple[PlateId, ...]:
+    requested = tuple(plate_ids)
+    if len(requested) < 2:
+        raise InvalidRepositoryValueError("Growth comparison requires at least two plate IDs")
+    if len(requested) > _MAX_GROWTH_COMPARISON_PLATES:
+        raise InvalidRepositoryValueError(
+            f"Growth comparison supports at most {_MAX_GROWTH_COMPARISON_PLATES} plate IDs"
+        )
+    normalized: list[PlateId] = []
+    for plate_id in requested:
+        if not isinstance(plate_id, str) or not plate_id.strip():
+            raise InvalidRepositoryValueError(
+                "Growth comparison plate IDs must be nonempty strings"
+            )
+        normalized.append(PlateId(plate_id.strip()))
+    if len(set(normalized)) != len(normalized):
+        raise InvalidRepositoryValueError("Growth comparison plate IDs must be unique")
+    return tuple(normalized)
+
+
+def _normalized_summary_text(value: object) -> str | None:
+    """Return nonempty, trimmed condition metadata suitable for Library display."""
+
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _add_normalized_text(values: dict[str, str], value: object) -> None:
+    normalized = _normalized_summary_text(value)
+    if normalized is None:
+        return
+    key = normalized.casefold()
+    previous = values.get(key)
+    if previous is None or normalized < previous:
+        values[key] = normalized
+
+
+def _preferred_summary_text(current: str | None, candidate: str | None) -> str | None:
+    if current is None or candidate is None:
+        return current or candidate
+    return min(current, candidate)
+
+
+def _summary_unit_sort_key(
+    item: tuple[str | None, tuple[str | None, float, float]],
+) -> tuple[bool, str]:
+    unit_key, _bounds = item
+    return (unit_key is None, unit_key or "")
+
+
+def _nullable_summary_concentration(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return _float_value(value)
+    except InvalidRepositoryValueError:
+        return None
 
 
 def _database_value(value: object) -> object:

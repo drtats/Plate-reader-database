@@ -7,11 +7,13 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import cast
 
+import pandas as pd
 import streamlit as st
 
 from plate_reader import __version__
@@ -31,7 +33,11 @@ from plate_reader.application.contracts import (
     WellLayoutChange,
 )
 from plate_reader.application.demo import synthetic_growth_csv
-from plate_reader.application.ports.repositories import PlateSnapshot
+from plate_reader.application.ports.repositories import (
+    ConcentrationRange,
+    PlateSnapshot,
+    RunSummary,
+)
 from plate_reader.application.services import (
     BuildGrowthBackgroundGroupsService,
     BuildGrowthPlotStylesService,
@@ -113,30 +119,129 @@ class _GrowthPlotFormValues:
 def render_run_library(context: AppContext) -> None:
     st.header("Run Library")
     with st.form("run-search"):
-        text = st.text_input("Search experiment, plate, or project")
+        text = st.text_input(
+            "Search experiment, plate, project, strain, treatment, or medium",
+            key="run_search_text_input",
+        )
         submitted = st.form_submit_button("Search")
     if submitted or "run_search_results" not in st.session_state:
         st.session_state.run_search_results = SearchGrowthRunsService(context.repository).execute(
             SearchRuns(actor=context.actor, text=text)
         )
+        st.session_state.run_search_submitted_text = text.strip()
+        st.session_state.run_library_table_revision = (
+            int(st.session_state.get("run_library_table_revision", 0)) + 1
+        )
     results = st.session_state.run_search_results
     if not results:
-        st.info("No growth runs yet. Open New Growth Run to import the first plate.")
+        if st.session_state.get("run_search_submitted_text"):
+            st.info("No growth runs match this search.")
+        else:
+            st.info("No growth runs yet. Open New Growth Run to import the first plate.")
         return
-    for run in results:
-        with st.container(border=True):
-            st.markdown(f"**{run.experiment_name} — {run.plate_name}**")
-            st.caption(
-                f"{run.experiment_date} · {run.project or 'No project'} · updated {run.updated_at}"
-            )
-    labels = {f"{run.experiment_name} — {run.plate_name}": run.plate_id for run in results}
-    selected_label = st.selectbox("Open run", tuple(labels))
-    if st.button("Open workspace", type="primary"):
-        st.session_state.selected_plate_id = labels[selected_label]
+
+    table = _run_library_table(results)
+    revision = int(st.session_state.get("run_library_table_revision", 0))
+    with st.form("run-library-actions"):
+        edited_table = st.data_editor(
+            table,
+            key=f"run-library-table-{revision}",
+            hide_index=True,
+            width="stretch",
+            disabled=[column for column in table.columns if column != "Select"],
+            column_config={
+                "Select": st.column_config.CheckboxColumn("Select", default=False),
+            },
+        )
+        action_left, action_right = st.columns(2)
+        open_selected = action_left.form_submit_button("Open selected run", type="primary")
+        compare_selected = action_right.form_submit_button("Compare selected")
+
+    selected_plate_ids = _selected_library_plate_ids(edited_table)
+    if open_selected:
+        if len(selected_plate_ids) != 1:
+            st.error("Select exactly one run to open its workspace.")
+            return
+        st.session_state.selected_plate_id = selected_plate_ids[0]
         st.session_state.pending_navigation = "Growth Workspace"
         _clear_growth_plot()
         st.session_state.pop("portable_artifact", None)
         st.rerun()
+    if compare_selected:
+        if len(selected_plate_ids) < 2:
+            st.error("Select at least two runs to compare them.")
+            return
+        st.session_state.growth_comparison_plate_ids = selected_plate_ids
+        st.session_state.pending_navigation = "Plate Comparison"
+        st.rerun()
+
+
+def _run_library_table(results: Sequence[RunSummary]) -> pd.DataFrame:
+    """Build the fixed-row Library table with stable, hidden plate identifiers."""
+
+    rows = _run_library_rows(results)
+    return pd.DataFrame.from_records(rows).set_index("plate_id")
+
+
+def _run_library_rows(results: Sequence[RunSummary]) -> list[dict[str, str | bool]]:
+    """Format metadata-only run summaries for the sortable Library surface."""
+
+    rows: list[dict[str, str | bool]] = []
+    for run in results:
+        rows.append(
+            {
+                "plate_id": str(run.plate_id),
+                "Select": False,
+                "Experiment": str(run.experiment_name),
+                "Plate": str(run.plate_name),
+                "Experiment date": str(run.experiment_date),
+                "Project": _display_library_value(run.project),
+                "Strains": _display_library_values(run.strains),
+                "Treatments": _display_library_values(run.treatments),
+                "Concentration range": _display_concentration_ranges(run.concentration_ranges),
+                "Last updated": str(run.updated_at),
+            }
+        )
+    return rows
+
+
+def _selected_library_plate_ids(table: pd.DataFrame) -> tuple[PlateId, ...]:
+    """Read submitted selections from the table's stable plate-id index."""
+
+    return tuple(PlateId(str(plate_id)) for plate_id in table.index[table["Select"]])
+
+
+def _display_library_value(value: object) -> str:
+    """Render absent Library metadata consistently without changing stored values."""
+
+    text = str(value).strip() if value is not None else ""
+    return text or "—"
+
+
+def _display_library_values(values: object) -> str:
+    if not isinstance(values, tuple):
+        return "—"
+    displayed = tuple(_display_library_value(value) for value in values)
+    return ", ".join(value for value in displayed if value != "—") or "—"
+
+
+def _display_concentration_ranges(ranges: tuple[ConcentrationRange, ...]) -> str:
+    """Format concentration ranges while keeping differently-unit values separate."""
+
+    formatted: list[str] = []
+    for concentration_range in ranges:
+        lower = _format_concentration(concentration_range.minimum)
+        upper = _format_concentration(concentration_range.maximum)
+        unit = _display_library_value(concentration_range.unit)
+        concentration = lower if lower == upper else f"{lower}\N{EN DASH}{upper}"
+        formatted.append(
+            f"{concentration} (unit not set)" if unit == "—" else f"{concentration} {unit}"
+        )
+    return ", ".join(formatted) or "—"
+
+
+def _format_concentration(value: float) -> str:
+    return f"{value:g}"
 
 
 def render_growth_wizard(context: AppContext, *, allow_local_path: bool) -> None:
@@ -488,7 +593,7 @@ def wizard_commit(context: AppContext) -> None:
                 if result.created
                 else "This exact source was already present; the existing run was opened."
             )
-            st.session_state.pop("run_search_results", None)
+            _invalidate_growth_discovery()
             st.session_state.pop("growth_plot", None)
             st.session_state.pop("portable_artifact", None)
             _reset_wizard()
@@ -797,6 +902,7 @@ def render_metadata_form(
                 )
             )
             _clear_growth_plot()
+            _invalidate_growth_discovery()
             st.success("Metadata saved.")
             st.rerun()
         except Exception as error:
@@ -868,6 +974,7 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
                 )
             )
             _clear_growth_plot()
+            _invalidate_growth_discovery()
             st.success("Full layout saved without rewriting measurements.")
             st.rerun()
         except Exception as error:
@@ -1296,6 +1403,22 @@ def _clear_growth_plot() -> None:
         "growth_plate_overview",
         "growth_plate_overview_issues",
         "growth_plate_overview_plate_id",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _invalidate_growth_discovery() -> None:
+    """Discard cached Library/comparison metadata after a relevant committed write."""
+
+    for key in (
+        "run_search_results",
+        "growth_comparison_condition_cache",
+        "growth_comparison_result",
+        "growth_comparison_result_plate_ids",
+        "growth_comparison_selected_condition_keys",
+        "growth_comparison_selected_result",
+        "growth_comparison_plot_result",
+        "growth_comparison_plot_plate_ids",
     ):
         st.session_state.pop(key, None)
 

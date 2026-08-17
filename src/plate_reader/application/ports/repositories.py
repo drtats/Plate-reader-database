@@ -11,7 +11,23 @@ from plate_reader.application.contracts import AssayType, ExperimentId, PlateId,
 
 
 @dataclass(frozen=True, slots=True)
+class ConcentrationRange:
+    """Observed concentration bounds for one normalized concentration unit."""
+
+    minimum: float
+    maximum: float
+    unit: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunSummary:
+    """Metadata-only projection for a single run-library row.
+
+    The metadata tuples are immutable because this read model may be cached by
+    callers.  Repository implementations must not load raw measurements while
+    constructing it.
+    """
+
     experiment_id: ExperimentId
     plate_id: PlateId
     experiment_name: str
@@ -20,6 +36,9 @@ class RunSummary:
     experiment_date: str
     project: str | None
     updated_at: str
+    strains: tuple[str, ...] = ()
+    treatments: tuple[str, ...] = ()
+    concentration_ranges: tuple[ConcentrationRange, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +79,10 @@ class PlateReaderRepository(Protocol):
     def add_analysis_revision(self, values: dict[str, object]) -> RevisionId: ...
 
     def search_runs(self, filters: dict[str, object]) -> Sequence[RunSummary]: ...
+
+    def growth_comparison_wells(
+        self, plate_ids: Sequence[PlateId]
+    ) -> tuple[dict[str, object], ...]: ...
 
     def load_plate(self, plate_id: PlateId) -> PlateSnapshot | None: ...
 

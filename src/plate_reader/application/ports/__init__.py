@@ -5,11 +5,17 @@ from plate_reader.application.ports.portable import (
     PortableImportResultData,
     PortableRunImporter,
 )
-from plate_reader.application.ports.repositories import PlateReaderRepository
+from plate_reader.application.ports.repositories import (
+    ConcentrationRange,
+    PlateReaderRepository,
+    RunSummary,
+)
 
 __all__ = [
+    "ConcentrationRange",
     "PlateReaderRepository",
     "PortableImportPreviewData",
     "PortableImportResultData",
     "PortableRunImporter",
+    "RunSummary",
 ]
