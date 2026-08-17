@@ -62,6 +62,7 @@ Domain models/logic   Infrastructure adapters
 Responsibilities:
 
 - navigation, forms, page-scoped session state, and rendering;
+- metadata-only Run Library discovery and a separate on-demand plate-comparison surface;
 - converting user input into application commands;
 - displaying application results and typed errors;
 - UI-only caching and fragments.

@@ -13,7 +13,11 @@ from plate_reader.application.contracts import (
     Role,
 )
 from plate_reader.application.ports import PlateReaderRepository
-from plate_reader.application.ports.repositories import PlateSnapshot, RunSummary
+from plate_reader.application.ports.repositories import (
+    ConcentrationRange,
+    PlateSnapshot,
+    RunSummary,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -48,6 +52,10 @@ def test_repository_result_contracts_are_storage_neutral() -> None:
         revisions=(),
     )
     assert summary.assay_type is AssayType.GROWTH
+    assert summary.strains == ()
+    assert summary.treatments == ()
+    assert summary.concentration_ranges == ()
+    assert ConcentrationRange(0.25, 1.0, "ug/mL") == ConcentrationRange(0.25, 1.0, "ug/mL")
     assert snapshot.plate_id == "plate-1"
     assert PlateReaderRepository.__name__ == "PlateReaderRepository"
 
