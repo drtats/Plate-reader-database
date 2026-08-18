@@ -86,8 +86,9 @@ The contract tests run `EXPLAIN QUERY PLAN` and require these indexes:
 | MIC search | strain, treatment, medium, MIC | `idx_mic_results_search` |
 | Audit view | entity type/ID and newest event | `idx_provenance_entity` |
 
-Run-list queries select run columns plus compact summaries derived from nonblank
-`well_conditions`; they never select raw or compressed measurements. Plate-to-plate
+Run-list queries select run columns plus compact strain, treatment, concentration,
+medium, and inoculum summaries derived from nonblank `well_conditions`; they never
+select raw or compressed measurements. Plate-to-plate
 comparison builds a separate bounded metadata index over experiments, plates, wells, and
 conditions. Filtering and selection operate on that index. Full measurements are loaded
 only after a workspace is opened or a comparison plot is explicitly rendered, streamed in

@@ -35,6 +35,7 @@ from plate_reader.application.contracts import (
 from plate_reader.application.demo import synthetic_growth_csv
 from plate_reader.application.ports.repositories import (
     ConcentrationRange,
+    InoculumRange,
     PlateSnapshot,
     RunSummary,
 )
@@ -197,8 +198,10 @@ def _run_library_rows(results: Sequence[RunSummary]) -> list[dict[str, str | boo
                 "Experiment date": str(run.experiment_date),
                 "Project": _display_library_value(run.project),
                 "Strains": _display_library_values(run.strains),
+                "Media": _display_library_values(run.media),
                 "Treatments": _display_library_values(run.treatments),
                 "Concentration range": _display_concentration_ranges(run.concentration_ranges),
+                "Inoculum size": _display_inoculum_ranges(run.inoculum_ranges),
                 "Last updated": str(run.updated_at),
             }
         )
@@ -228,15 +231,27 @@ def _display_library_values(values: object) -> str:
 def _display_concentration_ranges(ranges: tuple[ConcentrationRange, ...]) -> str:
     """Format concentration ranges while keeping differently-unit values separate."""
 
+    return _display_numeric_ranges(ranges)
+
+
+def _display_inoculum_ranges(ranges: tuple[InoculumRange, ...]) -> str:
+    """Format inoculum ranges while keeping differently-unit values separate."""
+
+    return _display_numeric_ranges(ranges)
+
+
+def _display_numeric_ranges(
+    ranges: tuple[ConcentrationRange, ...] | tuple[InoculumRange, ...],
+) -> str:
+    """Format bounded numeric metadata with explicit unitless values."""
+
     formatted: list[str] = []
-    for concentration_range in ranges:
-        lower = _format_concentration(concentration_range.minimum)
-        upper = _format_concentration(concentration_range.maximum)
-        unit = _display_library_value(concentration_range.unit)
-        concentration = lower if lower == upper else f"{lower}\N{EN DASH}{upper}"
-        formatted.append(
-            f"{concentration} (unit not set)" if unit == "—" else f"{concentration} {unit}"
-        )
+    for numeric_range in ranges:
+        lower = _format_concentration(numeric_range.minimum)
+        upper = _format_concentration(numeric_range.maximum)
+        unit = _display_library_value(numeric_range.unit)
+        value = lower if lower == upper else f"{lower}\N{EN DASH}{upper}"
+        formatted.append(f"{value} (unit not set)" if unit == "—" else f"{value} {unit}")
     return ", ".join(formatted) or "—"
 
 

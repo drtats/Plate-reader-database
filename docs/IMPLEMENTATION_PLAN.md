@@ -269,6 +269,8 @@ Goal: deliver the first usable workflow locally before cloud complexity.
 - [x] Add local configuration and development identity.
 - [x] Replace Run Library cards with a sortable metadata table whose selection
       remains browser-local until an explicit open or compare action.
+- [x] Include medium and per-unit inoculum-size summaries in the metadata-only
+      Run Library projection.
 - [x] Add a separate Plate Comparison workflow with metadata-only well filtering,
       persistent multi-search selection, and raw curves rendered only on request.
 

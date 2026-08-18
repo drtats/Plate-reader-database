@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from plate_reader.application.contracts import AssayType, ExperimentId, PlateId, RevisionId
 from plate_reader.application.ports.repositories import (
     ConcentrationRange,
+    InoculumRange,
     PlateSnapshot,
     RunSummary,
 )
@@ -53,34 +54,29 @@ class _RunSummaryMetadata:
     updated_at: str
     strains: dict[str, str] = dataclass_field(default_factory=dict)
     treatments: dict[str, str] = dataclass_field(default_factory=dict)
+    media: dict[str, str] = dataclass_field(default_factory=dict)
     concentration_bounds: dict[str | None, tuple[str | None, float, float]] = dataclass_field(
+        default_factory=dict
+    )
+    inoculum_bounds: dict[str | None, tuple[str | None, float, float]] = dataclass_field(
         default_factory=dict
     )
 
     def add_condition(
-        self, strain: object, treatment: object, concentration: object, unit: object
+        self,
+        strain: object,
+        treatment: object,
+        concentration: object,
+        concentration_unit: object,
+        medium: object,
+        inoculum_size: object,
+        inoculum_unit: object,
     ) -> None:
         _add_normalized_text(self.strains, strain)
         _add_normalized_text(self.treatments, treatment)
-        normalized_unit = _normalized_summary_text(unit)
-        normalized_concentration = _nullable_summary_concentration(concentration)
-        if normalized_concentration is None:
-            return
-        unit_key = normalized_unit.casefold() if normalized_unit is not None else None
-        existing = self.concentration_bounds.get(unit_key)
-        if existing is None:
-            self.concentration_bounds[unit_key] = (
-                normalized_unit,
-                normalized_concentration,
-                normalized_concentration,
-            )
-            return
-        display_unit, minimum, maximum = existing
-        self.concentration_bounds[unit_key] = (
-            _preferred_summary_text(display_unit, normalized_unit),
-            min(minimum, normalized_concentration),
-            max(maximum, normalized_concentration),
-        )
+        _add_normalized_text(self.media, medium)
+        _add_summary_range(self.concentration_bounds, concentration, concentration_unit)
+        _add_summary_range(self.inoculum_bounds, inoculum_size, inoculum_unit)
 
     def as_summary(self) -> RunSummary:
         return RunSummary(
@@ -94,10 +90,17 @@ class _RunSummaryMetadata:
             updated_at=self.updated_at,
             strains=tuple(self.strains[key] for key in sorted(self.strains)),
             treatments=tuple(self.treatments[key] for key in sorted(self.treatments)),
+            media=tuple(self.media[key] for key in sorted(self.media)),
             concentration_ranges=tuple(
                 ConcentrationRange(minimum=minimum, maximum=maximum, unit=unit)
                 for _unit_key, (unit, minimum, maximum) in sorted(
                     self.concentration_bounds.items(), key=_summary_unit_sort_key
+                )
+            ),
+            inoculum_ranges=tuple(
+                InoculumRange(minimum=minimum, maximum=maximum, unit=unit)
+                for _unit_key, (unit, minimum, maximum) in sorted(
+                    self.inoculum_bounds.items(), key=_summary_unit_sort_key
                 )
             ),
         )
@@ -880,7 +883,8 @@ class SqlPlateReaderRepository:
             ") "
             "SELECT cr.experiment_id, cr.plate_id, cr.experiment_name, cr.plate_name, "
             "cr.assay_type, cr.experiment_date, cr.project, cr.updated_at, "
-            "wc.strain, wc.treatment, wc.concentration, wc.concentration_unit "
+            "wc.strain, wc.treatment, wc.concentration, wc.concentration_unit, "
+            "wc.medium, wc.inoculum_size, wc.inoculum_unit "
             "FROM candidate_runs cr "
             "LEFT JOIN wells w ON w.plate_id = cr.plate_id AND w.is_blank = 0 "
             "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
@@ -903,7 +907,7 @@ class SqlPlateReaderRepository:
                     updated_at=str(row[7]),
                 )
                 summaries[plate_id] = metadata
-            metadata.add_condition(row[8], row[9], row[10], row[11])
+            metadata.add_condition(row[8], row[9], row[10], row[11], row[12], row[13], row[14])
         return tuple(metadata.as_summary() for metadata in summaries.values())
 
     def growth_comparison_wells(
@@ -1438,6 +1442,28 @@ def _preferred_summary_text(current: str | None, candidate: str | None) -> str |
     return min(current, candidate)
 
 
+def _add_summary_range(
+    bounds: dict[str | None, tuple[str | None, float, float]],
+    value: object,
+    unit: object,
+) -> None:
+    normalized_value = _nullable_summary_number(value)
+    if normalized_value is None:
+        return
+    normalized_unit = _normalized_summary_text(unit)
+    unit_key = normalized_unit.casefold() if normalized_unit is not None else None
+    existing = bounds.get(unit_key)
+    if existing is None:
+        bounds[unit_key] = (normalized_unit, normalized_value, normalized_value)
+        return
+    display_unit, minimum, maximum = existing
+    bounds[unit_key] = (
+        _preferred_summary_text(display_unit, normalized_unit),
+        min(minimum, normalized_value),
+        max(maximum, normalized_value),
+    )
+
+
 def _summary_unit_sort_key(
     item: tuple[str | None, tuple[str | None, float, float]],
 ) -> tuple[bool, str]:
@@ -1445,7 +1471,7 @@ def _summary_unit_sort_key(
     return (unit_key is None, unit_key or "")
 
 
-def _nullable_summary_concentration(value: object) -> float | None:
+def _nullable_summary_number(value: object) -> float | None:
     if value is None:
         return None
     try:

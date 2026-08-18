@@ -34,3 +34,4 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0022](0022-store-growth-series-as-compressed-matrices.md): compressed Growth series
 - [ADR-0023](0023-separate-library-discovery-and-plate-comparison.md): separate Library and comparison
 - [ADR-0024](0024-select-individual-wells-for-plate-comparison.md): individual-well comparison selection
+- [ADR-0025](0025-add-library-medium-and-inoculum-summaries.md): Library medium/inoculum summaries

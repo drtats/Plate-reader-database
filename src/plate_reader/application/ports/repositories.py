@@ -20,6 +20,15 @@ class ConcentrationRange:
 
 
 @dataclass(frozen=True, slots=True)
+class InoculumRange:
+    """Observed inoculum-size bounds for one normalized inoculum unit."""
+
+    minimum: float
+    maximum: float
+    unit: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunSummary:
     """Metadata-only projection for a single run-library row.
 
@@ -39,6 +48,8 @@ class RunSummary:
     strains: tuple[str, ...] = ()
     treatments: tuple[str, ...] = ()
     concentration_ranges: tuple[ConcentrationRange, ...] = ()
+    media: tuple[str, ...] = ()
+    inoculum_ranges: tuple[InoculumRange, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
