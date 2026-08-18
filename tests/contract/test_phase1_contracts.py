@@ -15,6 +15,7 @@ from plate_reader.application.contracts import (
 from plate_reader.application.ports import PlateReaderRepository
 from plate_reader.application.ports.repositories import (
     ConcentrationRange,
+    InoculumRange,
     PlateSnapshot,
     RunSummary,
 )
@@ -54,8 +55,11 @@ def test_repository_result_contracts_are_storage_neutral() -> None:
     assert summary.assay_type is AssayType.GROWTH
     assert summary.strains == ()
     assert summary.treatments == ()
+    assert summary.media == ()
     assert summary.concentration_ranges == ()
+    assert summary.inoculum_ranges == ()
     assert ConcentrationRange(0.25, 1.0, "ug/mL") == ConcentrationRange(0.25, 1.0, "ug/mL")
+    assert InoculumRange(1.0, 3.0, "x10^6 CFU/mL") == InoculumRange(1.0, 3.0, "x10^6 CFU/mL")
     assert snapshot.plate_id == "plate-1"
     assert PlateReaderRepository.__name__ == "PlateReaderRepository"
 

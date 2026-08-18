@@ -12,7 +12,7 @@ import turso
 
 from plate_reader.application.contracts import ExperimentId, PlateId
 from plate_reader.application.ports import PlateReaderRepository
-from plate_reader.application.ports.repositories import ConcentrationRange
+from plate_reader.application.ports.repositories import ConcentrationRange, InoculumRange
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
@@ -87,7 +87,9 @@ def test_complete_growth_repository_flow(harness: RepositoryHarness) -> None:
     assert runs[0].plate_id == "plate-growth"
     assert runs[0].strains == ("Synthetic strain",)
     assert runs[0].treatments == ("none",)
+    assert runs[0].media == ("Synthetic medium",)
     assert runs[0].concentration_ranges == (ConcentrationRange(0.0, 0.0, "ug/mL"),)
+    assert runs[0].inoculum_ranges == (InoculumRange(5.0, 5.0, "x10^6 CFU/mL"),)
     filtered = repository.search_runs(
         {"strain": "Synthetic strain", "medium": "Synthetic medium", "treatment": "none"}
     )
@@ -119,6 +121,8 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "treatment": " Drug ",
                     "concentration": 0.25,
                     "concentration_unit": "ug/mL",
+                    "inoculum_size": 1.0,
+                    "inoculum_unit": "x10^6 CFU/mL",
                 },
                 {
                     "position": "A2",
@@ -127,6 +131,8 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "treatment": "drug",
                     "concentration": 1.0,
                     "concentration_unit": "ug/mL",
+                    "inoculum_size": 3.0,
+                    "inoculum_unit": "X10^6 CFU/mL",
                 },
             ],
         )
@@ -156,6 +162,8 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "treatment": "none",
                     "concentration": 4.0,
                     "concentration_unit": "mM",
+                    "inoculum_size": 4.0,
+                    "inoculum_unit": "OD600",
                 },
                 {
                     "well_id": "well-a4",
@@ -164,6 +172,8 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "treatment": "Secret",
                     "concentration": 99.0,
                     "concentration_unit": "mM",
+                    "inoculum_size": 99.0,
+                    "inoculum_unit": "OD600",
                 },
                 {
                     "well_id": "well-a5",
@@ -172,6 +182,8 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "treatment": None,
                     "concentration": 5.0,
                     "concentration_unit": "  ",
+                    "inoculum_size": 5.0,
+                    "inoculum_unit": "  ",
                 },
             ]
         )
@@ -195,14 +207,22 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
     by_plate = {str(summary.plate_id): summary for summary in summaries}
     assert by_plate["plate-growth"].strains == ("Alpha", "Beta", "No unit")
     assert by_plate["plate-growth"].treatments == ("Drug", "none")
+    assert by_plate["plate-growth"].media == ("Synthetic medium",)
     assert by_plate["plate-growth"].concentration_ranges == (
         ConcentrationRange(4.0, 4.0, "mM"),
         ConcentrationRange(0.25, 1.0, "ug/mL"),
         ConcentrationRange(5.0, 5.0, None),
     )
+    assert by_plate["plate-growth"].inoculum_ranges == (
+        InoculumRange(4.0, 4.0, "OD600"),
+        InoculumRange(1.0, 3.0, "X10^6 CFU/mL"),
+        InoculumRange(5.0, 5.0, None),
+    )
     assert by_plate["plate-without-conditions"].strains == ()
     assert by_plate["plate-without-conditions"].treatments == ()
+    assert by_plate["plate-without-conditions"].media == ()
     assert by_plate["plate-without-conditions"].concentration_ranges == ()
+    assert by_plate["plate-without-conditions"].inoculum_ranges == ()
     assert [summary.plate_id for summary in repository.search_runs({"limit": 1, "offset": 0})] == [
         "plate-without-conditions"
     ]
@@ -713,6 +733,8 @@ def condition_values(well_id: str) -> dict[str, object]:
         "treatment": "none",
         "concentration": 0.0,
         "concentration_unit": "ug/mL",
+        "inoculum_size": 5.0,
+        "inoculum_unit": "x10^6 CFU/mL",
     }
 
 

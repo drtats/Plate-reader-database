@@ -295,6 +295,7 @@ The UI follows the experimental workflow instead of exposing storage mechanics.
 
 - searchable/filterable run list;
 - clear assay/status/date/user columns;
+- compact strain, treatment, concentration, medium, and inoculum summaries;
 - create/import action;
 - no full measurement download to populate the list.
 
