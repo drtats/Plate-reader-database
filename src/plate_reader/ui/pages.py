@@ -113,7 +113,6 @@ class _GrowthPlotFormValues:
     symlog: bool
     title: str
     color_choice: str
-    save_selection: bool
     render: bool
 
 
@@ -1072,7 +1071,6 @@ def _render_growth_plot_form(
     symlog = limits[3].checkbox("Symmetric log scale", value=True)
     title = st.text_input("Plot title")
     color_choice = st.selectbox("Curve colors", color_choices)
-    save_selection = st.form_submit_button("Save well selection")
     render = st.form_submit_button("Render selected curves", type="primary")
     return _GrowthPlotFormValues(
         label_options=label_options,
@@ -1083,17 +1081,11 @@ def _render_growth_plot_form(
         symlog=bool(symlog),
         title=title,
         color_choice=color_choice,
-        save_selection=bool(save_selection),
         render=bool(render),
     )
 
 
 def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
-    positions = tuple(str(well["position"]) for well in view.snapshot.wells)
-    persisted = tuple(
-        str(well["position"]) for well in view.snapshot.wells if bool(well["plot_selected"])
-    )
-    default_positions = persisted or positions[:8]
     color_choices: dict[str, GrowthPlotColorOptions] = {
         "Rainbow · plate order": GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
         "Rainbow · plotted-series order": GrowthPlotColorOptions(
@@ -1119,7 +1111,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
     selection_state_key = f"growth_plot_selection_{plate_id}"
     selected, plot_form = render_growth_well_selector(
         view.snapshot.wells,
-        default_positions,
+        (),
         state_key=selection_state_key,
         form_key=f"growth-plot-options-{plate_id}",
         render_form_controls=lambda form_selected: _render_growth_plot_form(
@@ -1129,7 +1121,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
             color_choices=tuple(color_choices),
             label_choices=label_choices,
         ),
-        selection_submitted=lambda values: values.save_selection or values.render,
+        selection_submitted=lambda values: values.render,
     )
     selected_summary = ", ".join(selected[:16])
     if len(selected) > 16:
@@ -1139,27 +1131,6 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         st.info("Select at least one well before rendering curves.")
     if plot_form.label_options is None:
         st.info("Choose at least one field for the combined curve label.")
-    if plot_form.save_selection:
-        try:
-            selected_set = set(selected)
-            UpdateGrowthLayoutService(context.repository).execute(
-                UpdateWellLayout(
-                    context.actor,
-                    plate_id,
-                    str(view.snapshot.metadata["updated_at"]),
-                    tuple(
-                        WellLayoutChange(
-                            position=position,
-                            plot_selected=position in selected_set,
-                        )
-                        for position in positions
-                    ),
-                )
-            )
-            st.success("Plot selection saved without rewriting measurements.")
-            st.rerun()
-        except Exception as error:
-            render_exception(error)
     if plot_form.render and selected and plot_form.label_options is not None:
         current_revision_key = next(
             (

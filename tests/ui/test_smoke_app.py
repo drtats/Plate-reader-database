@@ -213,10 +213,10 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
     assert next(item for item in app.number_input if item.label == "Y minimum").value == 0.001
     assert next(item for item in app.number_input if item.label == "Y maximum").value == 1.5
     assert next(item for item in app.checkbox if item.label == "Symmetric log scale").value is True
-    click(app, "Save well selection")
-    with sqlite3.connect(database_path) as database:
-        assert database.execute("SELECT sum(plot_selected) FROM wells").fetchone() == (8,)
+    click(app, "Select all")
     click(app, "Render selected curves")
+    with sqlite3.connect(database_path) as database:
+        assert database.execute("SELECT sum(plot_selected) FROM wells").fetchone() == (0,)
     assert len(app.get("plotly_chart")) >= 2
     assert app.session_state["growth_plot_pdf"].content.startswith(b"%PDF-1.4")
     click(app, "Prepare portable export")
@@ -241,7 +241,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
             "(SELECT count(*) FROM schema_migrations), "
             "(SELECT count(*) FROM plates)"
         ).fetchone()
-    assert counts_after == (2, 9, 2, 2)
+    assert counts_after == (2, 7, 2, 2)
 
 
 def test_mic_ui_import_review_edit_visualize_and_export(

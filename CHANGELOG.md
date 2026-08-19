@@ -8,16 +8,19 @@ schema, portable-format, and scientific compatibility impact.
 - Added a separate multi-run Growth Data Export page that creates the established
   observation and metadata CSV pair with explicit raw, background, and corrected
   OD columns and visible stale/missing-background QC.
-- Made Growth plotting use live 96-well grid or list selections directly, without
-  separate Apply buttons, while keeping selection persistence as an optional save.
+- Made Growth plotting use staged 96-well grid selections directly when Render is
+  pressed, without separate Apply or Save selection actions and without database
+  persistence or an implicit A1-A8 default.
 - Moved the Growth reference plate out of the selection tabs into a collapsible
   viewer below the row/column shortcuts, with selectable layout-field labels.
 - Restored the compact 8×12 checkbox-table format for direct Growth well selection
   while keeping changes live and removing the separate Apply step.
 - Gave the wider Growth reference plate its own horizontal scroll viewport so it
   no longer moves the page and selection grid as one surface on narrow windows.
-- Batched direct 96-well plot selection inside the Render/Save form so checking
-  wells stays local and causes no application rerun until an explicit action.
+- Batched direct 96-well plot selection inside the Render form so checking wells
+  stays local and causes no application rerun until plotting is requested.
+- Replaced the plotting selector's Arrow-backed editor with form-native checkboxes
+  so Render submits the staged wells without crashing or restoring A1-A8.
 
 ## 0.1.0 - 2026-08-01
 

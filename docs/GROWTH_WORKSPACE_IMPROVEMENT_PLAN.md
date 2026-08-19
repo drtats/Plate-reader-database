@@ -172,8 +172,8 @@ Filter semantics:
 - [x] Build a Growth-only reusable selector component.
 - [x] Keep the grid, list, filter controls, and session state synchronized.
 - [x] Allow staged selection to render a plot immediately.
-- [x] Preserve the existing `plot_selected` persistence behavior behind an
-      explicit `Save well selection` action.
+- [x] Keep plotting selection session-local; do not read or write the legacy
+      `plot_selected` field from the plotting workflow.
 - [x] Never save selection merely because Streamlit reran.
 
 ### Likely files
