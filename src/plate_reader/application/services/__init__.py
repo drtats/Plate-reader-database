@@ -67,9 +67,11 @@ from plate_reader.application.services.growth_plot_styles import (
 )
 from plate_reader.application.services.growth_plotting import (
     GrowthPlotData,
+    GrowthPlotLabelField,
     GrowthPlotLabelOptions,
     GrowthPlotPoint,
     PrepareGrowthPlotDataService,
+    growth_plot_label_fields,
 )
 from plate_reader.application.services.growth_qc import (
     GrowthBackgroundQcGroup,
@@ -195,6 +197,7 @@ __all__ = [
     "GrowthPlotColorMode",
     "GrowthPlotColorOptions",
     "GrowthPlotData",
+    "GrowthPlotLabelField",
     "GrowthPlotLabelOptions",
     "GrowthPlotPoint",
     "GrowthPlotStyles",
@@ -263,6 +266,7 @@ __all__ = [
     "export_growth_plot_wide_csv",
     "export_growth_tabular_data",
     "growth_comparison_summary_fields",
+    "growth_plot_label_fields",
     "growth_selection_fields",
     "normalize_growth_selection",
     "preview_growth_display_name_csv",

@@ -7,6 +7,7 @@ from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services.growth_plotting import (
     GrowthPlotLabelOptions,
     PrepareGrowthPlotDataService,
+    growth_plot_label_fields,
 )
 from plate_reader.domain.common import IssueCode
 
@@ -98,6 +99,9 @@ def test_plot_label_combines_standard_and_custom_metadata_in_selected_order() ->
         strain="strain-x",
         treatment="drug-y",
         concentration=0.125,
+        concentration_unit="ug/mL",
+        inoculum_size=5,
+        inoculum_unit="log CFU/mL",
         custom_json='{"Batch":"B7"}',
     )
     snapshot = PlateSnapshot(
@@ -114,14 +118,22 @@ def test_plot_label_combines_standard_and_custom_metadata_in_selected_order() ->
         ("A1",),
         corrected=False,
         label_options=GrowthPlotLabelOptions(
-            ("strain", "custom:Batch", "treatment", "concentration"),
+            (
+                "strain",
+                "custom:Batch",
+                "treatment",
+                "concentration",
+                "concentration_unit",
+                "inoculum_size",
+                "inoculum_unit",
+            ),
             separator=" | ",
             prefix="[",
             suffix="]",
         ),
     )
 
-    assert result.points[0].label == "[strain-x | B7 | drug-y | 0.125]"
+    assert result.points[0].label == ("[strain-x | B7 | drug-y | 0.125 | ug/mL | 5 | log CFU/mL]")
 
 
 def test_combined_plot_label_can_keep_or_omit_empty_fields() -> None:
@@ -157,6 +169,28 @@ def test_combined_plot_label_requires_distinct_nonempty_fields() -> None:
         GrowthPlotLabelOptions(("display_name", " "))
     with pytest.raises(ValueError, match="cannot be repeated"):
         GrowthPlotLabelOptions(("display_name", "display_name"))
+
+
+def test_curve_label_fields_always_include_the_complete_layout_metadata_set() -> None:
+    fields = {field.key: field.label for field in growth_plot_label_fields(growth_snapshot().wells)}
+
+    assert fields == {
+        "position": "Well position",
+        "raw_label": "Raw label",
+        "display_name": "Display name",
+        "is_blank": "Blank",
+        "background_group": "Background group",
+        "grouping_label": "Group",
+        "medium": "Media",
+        "strain": "Strain",
+        "inoculum_size": "Inoculum size",
+        "inoculum_unit": "Inoculum unit",
+        "replicate": "Replicate",
+        "notes": "Notes",
+        "treatment": "Treatment",
+        "concentration": "Concentration",
+        "concentration_unit": "Concentration unit",
+    }
 
 
 def growth_snapshot(*, manual_subtraction: float = 0.0) -> PlateSnapshot:

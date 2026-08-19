@@ -64,6 +64,7 @@ from plate_reader.application.services import (
     UpdateGrowthMetadataService,
     export_growth_plot_data_csv,
     export_growth_plot_wide_csv,
+    growth_plot_label_fields,
     growth_selection_fields,
 )
 from plate_reader.domain.growth import (
@@ -1089,12 +1090,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         }
     )
     label_choices = {
-        "Display name": "display_name",
-        **{
-            field.label: field.key
-            for field in growth_selection_fields(view.snapshot.wells)
-            if field.key != "display_name"
-        },
+        field.label: field.key for field in growth_plot_label_fields(view.snapshot.wells)
     }
     selection_state_key = f"growth_plot_selection_{plate_id}"
     selected, plot_form = render_growth_well_selector(

@@ -25,6 +25,8 @@ schema, portable-format, and scientific compatibility impact.
   field selector, and exposed concentration units to metadata filters, colors, and labels.
 - Added inoculum size/unit filtering and display to Plate Comparison, plus selectable
   condition quick stats that count actual matching wells rather than replicate labels.
+- Restored the complete, stable Growth curve-label field list independently of metadata
+  filters, including concentration units, inoculum fields, and other layout metadata.
 
 ## 0.1.0 - 2026-08-01
 

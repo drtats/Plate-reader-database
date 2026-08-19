@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,6 +54,52 @@ class GrowthPlotLabelOptions:
             raise ValueError("Growth plot label fields cannot be empty")
         if len(set(self.fields)) != len(self.fields):
             raise ValueError("Growth plot label fields cannot be repeated")
+
+
+@dataclass(frozen=True, slots=True)
+class GrowthPlotLabelField:
+    """One well-layout field that may contribute to a curve label."""
+
+    key: str
+    label: str
+
+
+_STANDARD_LABEL_FIELDS = (
+    GrowthPlotLabelField("position", "Well position"),
+    GrowthPlotLabelField("raw_label", "Raw label"),
+    GrowthPlotLabelField("display_name", "Display name"),
+    GrowthPlotLabelField("is_blank", "Blank"),
+    GrowthPlotLabelField("background_group", "Background group"),
+    GrowthPlotLabelField("grouping_label", "Group"),
+    GrowthPlotLabelField("medium", "Media"),
+    GrowthPlotLabelField("strain", "Strain"),
+    GrowthPlotLabelField("inoculum_size", "Inoculum size"),
+    GrowthPlotLabelField("inoculum_unit", "Inoculum unit"),
+    GrowthPlotLabelField("replicate", "Replicate"),
+    GrowthPlotLabelField("notes", "Notes"),
+    GrowthPlotLabelField("treatment", "Treatment"),
+    GrowthPlotLabelField("concentration", "Concentration"),
+    GrowthPlotLabelField("concentration_unit", "Concentration unit"),
+)
+
+
+def growth_plot_label_fields(
+    wells: Sequence[Mapping[str, object]],
+) -> tuple[GrowthPlotLabelField, ...]:
+    """Return every standard layout label field plus discovered custom fields.
+
+    Standard fields stay available even when every well is currently empty. This
+    keeps label configuration stable across runs and leaves empty-value handling
+    to :class:`GrowthPlotLabelOptions`.
+    """
+
+    custom_names = sorted(
+        {name for well in wells for name in _custom_values(well)}, key=str.casefold
+    )
+    return (
+        *_STANDARD_LABEL_FIELDS,
+        *(GrowthPlotLabelField(f"custom:{name}", f"{name} (custom)") for name in custom_names),
+    )
 
 
 class PrepareGrowthPlotDataService:

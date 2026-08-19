@@ -145,7 +145,16 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     assert any(item.label == "Filter fields" for item in app.multiselect)
     assert any(item.label == "Curve colors" for item in app.selectbox)
-    assert any(item.label == "Curve label fields in order" for item in app.multiselect)
+    curve_label_fields = next(
+        item for item in app.multiselect if item.label == "Curve label fields in order"
+    )
+    assert {
+        "Concentration unit",
+        "Inoculum size",
+        "Inoculum unit",
+        "Background group",
+        "Notes",
+    }.issubset(curve_label_fields.options)
     assert not any(item.label == "Curve label format" for item in app.radio)
     assert "Save well selection" not in _button_labels(app)
     assert _selected_metric(app) == "0"
