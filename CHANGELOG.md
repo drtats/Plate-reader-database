@@ -19,8 +19,8 @@ schema, portable-format, and scientific compatibility impact.
   no longer moves the page and selection grid as one surface on narrow windows.
 - Batched direct 96-well plot selection inside the Render form so checking wells
   stays local and causes no application rerun until plotting is requested.
-- Replaced the plotting selector's Arrow-backed editor with form-native checkboxes
-  so Render submits the staged wells without crashing or restoring A1-A8.
+- Preserved drag-across multi-well checking in the compact editor while preventing
+  the Selection List synchronization from overwriting its submitted grid.
 
 ## 0.1.0 - 2026-08-01
 

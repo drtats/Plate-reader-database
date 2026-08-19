@@ -51,8 +51,9 @@ derived values, author, and time.
 
 Use the plate, selection list, or metadata filters in **Plotting**; all three
 control one browser-session selection. Checks in the 96-well grid are staged
-without rerunning the page, and **Render selected curves** uses the checked wells
-directly. Plot selection is not written to the run or used as a later default.
+without rerunning the page; you can drag across cells to change several wells at
+once. **Render selected curves** uses the checked wells directly. Plot selection
+is not written to the run or used as a later default.
 
 Set **Curve label format** to **Single field** to use Display name, strain,
 group, treatment, or an available custom field. Select **Combine fields** to
