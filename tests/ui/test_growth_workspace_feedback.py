@@ -156,6 +156,16 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
         "Notes",
     }.issubset(curve_label_fields.options)
     assert not any(item.label == "Curve label format" for item in app.radio)
+    assert any(item.label == "Plot appearance" for item in app.expander)
+    assert {item.label for item in app.text_input}.issuperset({"X-axis label", "Y-axis label"})
+    assert {item.label for item in app.number_input}.issuperset(
+        {
+            "Curve-label font size",
+            "Axis-title font size",
+            "Axis-number font size",
+            "Line thickness",
+        }
+    )
     assert "Save well selection" not in _button_labels(app)
     assert _selected_metric(app) == "0"
 
@@ -179,6 +189,12 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     next(item for item in app.multiselect if item.label == "Rows").set_value(["A"]).run()
     _click(app, "Apply row/column shortcut")
     _input_named(app, "Label prefix").set_value("combined:")
+    _input_named(app, "X-axis label").set_value("Elapsed minutes")
+    _input_named(app, "Y-axis label").set_value("Normalized OD")
+    _number_input_named(app, "Curve-label font size").set_value(15)
+    _number_input_named(app, "Axis-title font size").set_value(17)
+    _number_input_named(app, "Axis-number font size").set_value(11)
+    _number_input_named(app, "Line thickness").set_value(3.5)
     _click(app, "Render selected curves")
     styles = app.session_state["growth_plot_styles"]
     figure = app.session_state["growth_plot"]
@@ -189,6 +205,12 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
         app.session_state[f"growth_plot_selection_{app.session_state['selected_plate_id']}"]
     )
     assert figure.data[0].line.color == styles.styles[0].color_hex
+    assert figure.data[0].line.width == 3.5
+    assert figure.layout.xaxis.title.text == "Elapsed minutes"
+    assert figure.layout.yaxis.title.text == "Normalized OD"
+    assert figure.layout.legend.font.size == 15
+    assert figure.layout.xaxis.title.font.size == 17
+    assert figure.layout.yaxis.tickfont.size == 11
     assert csv_artifact.row_count == sum(len(trace.x) for trace in figure.data)
     assert csv_artifact.content.startswith(b"\xef\xbb\xbf")
     wide_rows = list(
@@ -267,6 +289,10 @@ def _input_named(app: AppTest, label: str) -> Any:
 
 def _radio_named(app: AppTest, label: str) -> Any:
     return next(item for item in app.radio if item.label == label)
+
+
+def _number_input_named(app: AppTest, label: str) -> Any:
+    return next(item for item in app.number_input if item.label == label)
 
 
 def _button_labels(app: AppTest) -> set[str]:

@@ -31,18 +31,29 @@ def test_growth_figure_applies_limits_symlog_labels_and_title() -> None:
     )
     options = GrowthPlotOptions(
         title="Growth comparison",
+        x_axis_title="Elapsed time",
+        y_axis_title="Normalized density",
         x_max=60,
         y_min=-0.1,
         y_max=1.0,
         symlog=True,
+        curve_label_font_size=16,
+        axis_title_font_size=18,
+        axis_number_font_size=13,
+        line_width=3.5,
     )
 
     figure = growth_curve_figure.__wrapped__(plot_data, options, "raw-hash", "revision")
 
     assert figure.layout.title.text == "Growth comparison"
     assert tuple(figure.layout.xaxis.range) == (0, 60)
-    assert figure.layout.yaxis.title.text == "OD (symmetric log)"
+    assert figure.layout.xaxis.title.text == "Elapsed time"
+    assert figure.layout.yaxis.title.text == "Normalized density"
+    assert figure.layout.legend.font.size == 16
+    assert figure.layout.xaxis.title.font.size == 18
+    assert figure.layout.yaxis.tickfont.size == 13
     assert figure.data[0].name == "control"
+    assert figure.data[0].line.width == 3.5
     assert list(figure.data[0].customdata[0]) == [-0.01, "od600", "corrected"]
 
 
@@ -57,6 +68,10 @@ def test_growth_figure_supports_linear_scale_and_empty_selection() -> None:
         GrowthPlotOptions(x_max=0)
     with pytest.raises(ValueError, match="Y minimum"):
         GrowthPlotOptions(y_min=1, y_max=1)
+    with pytest.raises(ValueError, match="Line width"):
+        GrowthPlotOptions(line_width=0)
+    with pytest.raises(ValueError, match="font sizes"):
+        GrowthPlotOptions(axis_number_font_size=0)
 
 
 def test_growth_figure_has_explicit_export_safe_dark_colors() -> None:

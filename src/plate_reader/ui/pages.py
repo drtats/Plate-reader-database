@@ -108,12 +108,18 @@ LOGGER = logging.getLogger(__name__)
 class _GrowthPlotFormValues:
     label_options: GrowthPlotLabelOptions | None
     corrected: bool
+    x_axis_title: str
+    y_axis_title: str
     x_max: float
     y_min: float
     y_max: float
     symlog: bool
     title: str
     color_choice: str
+    curve_label_font_size: int
+    axis_title_font_size: int
+    axis_number_font_size: int
+    line_width: float
     render: bool
 
 
@@ -1062,16 +1068,68 @@ def _render_growth_plot_form(
     symlog = limits[3].checkbox("Symmetric log scale", value=True)
     title = st.text_input("Plot title")
     color_choice = st.selectbox("Curve colors", color_choices)
+    with st.expander("Plot appearance", expanded=False):
+        axis_labels = st.columns(2)
+        x_axis_title = axis_labels[0].text_input(
+            "X-axis label",
+            value="Time (minutes)",
+            key=f"growth_plot_x_axis_title_{plate_id}",
+        )
+        y_axis_title = axis_labels[1].text_input(
+            "Y-axis label",
+            placeholder="OD (symmetric log) / OD",
+            key=f"growth_plot_y_axis_title_{plate_id}",
+            help="Leave blank to use the default label for the selected Y-axis scale.",
+        )
+        appearance = st.columns(4)
+        curve_label_font_size = appearance[0].number_input(
+            "Curve-label font size",
+            min_value=6,
+            max_value=48,
+            value=12,
+            step=1,
+            key=f"growth_plot_curve_label_font_size_{plate_id}",
+        )
+        axis_title_font_size = appearance[1].number_input(
+            "Axis-title font size",
+            min_value=6,
+            max_value=48,
+            value=14,
+            step=1,
+            key=f"growth_plot_axis_title_font_size_{plate_id}",
+        )
+        axis_number_font_size = appearance[2].number_input(
+            "Axis-number font size",
+            min_value=6,
+            max_value=48,
+            value=12,
+            step=1,
+            key=f"growth_plot_axis_number_font_size_{plate_id}",
+        )
+        line_width = appearance[3].number_input(
+            "Line thickness",
+            min_value=0.5,
+            max_value=10.0,
+            value=2.0,
+            step=0.5,
+            key=f"growth_plot_line_width_{plate_id}",
+        )
     render = st.form_submit_button("Render selected curves", type="primary")
     return _GrowthPlotFormValues(
         label_options=label_options,
         corrected=bool(corrected),
+        x_axis_title=x_axis_title.strip(),
+        y_axis_title=y_axis_title.strip(),
         x_max=float(x_max),
         y_min=float(y_min),
         y_max=float(y_max),
         symlog=bool(symlog),
         title=title,
         color_choice=color_choice,
+        curve_label_font_size=int(curve_label_font_size),
+        axis_title_font_size=int(axis_title_font_size),
+        axis_number_font_size=int(axis_number_font_size),
+        line_width=float(line_width),
         render=bool(render),
     )
 
@@ -1137,11 +1195,17 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         )
         options = GrowthPlotOptions(
             title=plot_form.title.strip(),
+            x_axis_title=plot_form.x_axis_title,
+            y_axis_title=plot_form.y_axis_title,
             x_max=plot_form.x_max,
             y_min=plot_form.y_min,
             y_max=plot_form.y_max,
             symlog=plot_form.symlog,
             dark_mode=bool(st.session_state.get("dark_mode", False)),
+            curve_label_font_size=plot_form.curve_label_font_size,
+            axis_title_font_size=plot_form.axis_title_font_size,
+            axis_number_font_size=plot_form.axis_number_font_size,
+            line_width=plot_form.line_width,
         )
         styles = BuildGrowthPlotStylesService().execute(
             plot_data,

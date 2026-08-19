@@ -25,20 +25,37 @@ from plate_reader.application.services import (
 @dataclass(frozen=True, slots=True)
 class GrowthPlotOptions:
     title: str = ""
+    x_axis_title: str = "Time (minutes)"
+    y_axis_title: str = ""
     x_max: float = 1_400.0
     y_min: float = 0.001
     y_max: float = 1.5
     symlog: bool = True
     dark_mode: bool = False
+    curve_label_font_size: int = 12
+    axis_title_font_size: int = 14
+    axis_number_font_size: int = 12
+    line_width: float = 2.0
 
     def __post_init__(self) -> None:
-        values = (self.x_max, self.y_min, self.y_max)
+        values = (self.x_max, self.y_min, self.y_max, self.line_width)
         if not all(math.isfinite(value) for value in values):
-            raise ValueError("Plot limits must be finite")
+            raise ValueError("Plot limits and line width must be finite")
         if self.x_max <= 0:
             raise ValueError("X maximum must be greater than zero")
         if self.y_min >= self.y_max:
             raise ValueError("Y minimum must be less than Y maximum")
+        if self.line_width <= 0:
+            raise ValueError("Line width must be greater than zero")
+        if (
+            min(
+                self.curve_label_font_size,
+                self.axis_title_font_size,
+                self.axis_number_font_size,
+            )
+            <= 0
+        ):
+            raise ValueError("Plot font sizes must be greater than zero")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +110,7 @@ def growth_curve_figure(
                 ],
                 mode="lines",
                 name=style.legend_label,
-                line={"color": style.color_hex},
+                line={"color": style.color_hex, "width": options.line_width},
                 hovertemplate=(
                     "Time: %{x:.4g} min<br>OD: %{customdata[0]:.5g}<br>"
                     "Channel: %{customdata[1]}<br>Correction: %{customdata[2]}"
@@ -110,14 +127,17 @@ def growth_curve_figure(
         paper_bgcolor=background,
         plot_bgcolor=background,
         font={"color": text_color},
-        legend={"font": {"color": text_color}},
+        legend={"font": {"color": text_color, "size": options.curve_label_font_size}},
     )
     figure.update_xaxes(
         range=(0, options.x_max),
-        title="Time (minutes)",
+        title=options.x_axis_title,
+        title_font={"size": options.axis_title_font_size},
+        tickfont={"size": options.axis_number_font_size},
         color=text_color,
         gridcolor=grid_color,
     )
+    y_axis_title = options.y_axis_title or ("OD (symmetric log)" if options.symlog else "OD")
     if options.symlog:
         ticks = _symlog_ticks(options.y_min, options.y_max)
         figure.update_yaxes(
@@ -125,14 +145,18 @@ def growth_curve_figure(
             tickmode="array",
             tickvals=[_symlog(value) for value in ticks],
             ticktext=[f"{value:g}" for value in ticks],
-            title="OD (symmetric log)",
+            title=y_axis_title,
+            title_font={"size": options.axis_title_font_size},
+            tickfont={"size": options.axis_number_font_size},
             color=text_color,
             gridcolor=grid_color,
         )
     else:
         figure.update_yaxes(
             range=(options.y_min, options.y_max),
-            title="OD",
+            title=y_axis_title,
+            title_font={"size": options.axis_title_font_size},
+            tickfont={"size": options.axis_number_font_size},
             color=text_color,
             gridcolor=grid_color,
         )
