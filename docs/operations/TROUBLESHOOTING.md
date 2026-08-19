@@ -31,9 +31,9 @@ saved-run workspace, an explicit metadata save may already have committed before
 a later crash.
 
 If pressing **Render selected curves** reconnects the app and restores A1-A8,
-update to a version using the form-native Growth checkbox grid. The plot selector
-must not depend on Arrow serialization across a rerun, write `plot_selected`, or
-fall back to A1-A8.
+start through the supported launcher so ADR-0020's Arrow allocator setting is
+active. The plot selector must not write `plot_selected`, fall back to A1-A8, or
+let the Selection List overwrite the submitted 8x12 grid.
 
 ## A save reports a concurrency conflict
 
