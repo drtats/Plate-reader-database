@@ -5,6 +5,9 @@ schema, portable-format, and scientific compatibility impact.
 
 ## Unreleased
 
+- Added a separate multi-run Growth Data Export page that creates the established
+  observation and metadata CSV pair with explicit raw, background, and corrected
+  OD columns and visible stale/missing-background QC.
 - Made Growth plotting use live 96-well grid or list selections directly, without
   separate Apply buttons, while keeping selection persistence as an optional save.
 - Moved the Growth reference plate out of the selection tabs into a collapsible

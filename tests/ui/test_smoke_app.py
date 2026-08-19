@@ -37,6 +37,7 @@ def test_smoke_app_renders_in_fake_cloud_mode(
         "New Growth Run",
         "Growth Workspace",
         "Plate Comparison",
+        "Growth Data Export",
         "Import Portable Data",
         "Instructions",
     ]

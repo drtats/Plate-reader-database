@@ -14,6 +14,7 @@ from plate_reader.runtime import load_local_app_config
 from plate_reader.ui.cloud import load_cloud_credentials, oidc_provider
 from plate_reader.ui.context import app_context
 from plate_reader.ui.growth_comparison import render_growth_comparison
+from plate_reader.ui.growth_export import render_growth_data_export
 from plate_reader.ui.instructions import render_instructions
 from plate_reader.ui.pages import render_growth_wizard, render_run_library, render_workspace
 from plate_reader.ui.portable_pages import render_portable_import
@@ -94,6 +95,7 @@ def main() -> None:
         "New Growth Run",
         "Growth Workspace",
         "Plate Comparison",
+        "Growth Data Export",
     ]
     if (
         config.runtime.environment == "test"
@@ -128,6 +130,8 @@ def main() -> None:
         render_workspace(context, root / "migrations")
     elif navigation == "Plate Comparison":
         render_growth_comparison(context)
+    elif navigation == "Growth Data Export":
+        render_growth_data_export(context)
     elif navigation == "MIC Plate Library":
         from plate_reader.ui.mic_pages import render_mic_library
 
