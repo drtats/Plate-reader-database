@@ -23,6 +23,8 @@ schema, portable-format, and scientific compatibility impact.
   the Selection List synchronization from overwriting its submitted grid.
 - Replaced competing single/combined Growth curve-label controls with one ordered
   field selector, and exposed concentration units to metadata filters, colors, and labels.
+- Added inoculum size/unit filtering and display to Plate Comparison, plus selectable
+  condition quick stats that count actual matching wells rather than replicate labels.
 
 ## 0.1.0 - 2026-08-01
 

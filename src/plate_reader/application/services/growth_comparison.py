@@ -115,12 +115,21 @@ class GrowthWellSearchFilter:
     media: tuple[str, ...] = ()
     replicates: tuple[int, ...] = ()
     grouping_labels: tuple[str, ...] = ()
+    inoculum_sizes: tuple[int | float | Decimal, ...] = ()
+    inoculum_units: tuple[str, ...] = ()
     include_blank_wells: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_plate_ids", _unique_text_values(self.source_plate_ids))
         object.__setattr__(self, "text", _trimmed_text(self.text))
-        for name in ("strains", "treatments", "concentration_units", "media", "grouping_labels"):
+        for name in (
+            "strains",
+            "treatments",
+            "concentration_units",
+            "media",
+            "grouping_labels",
+            "inoculum_units",
+        ):
             object.__setattr__(self, name, _unique_text_values(getattr(self, name)))
         replicates = tuple(self.replicates)
         if any(
@@ -129,6 +138,10 @@ class GrowthWellSearchFilter:
         ):
             raise ValueError("Growth comparison replicates must be positive integers")
         object.__setattr__(self, "replicates", tuple(sorted(set(replicates))))
+        inoculum_sizes = tuple(
+            _normalized_number(value, "inoculum size") for value in self.inoculum_sizes
+        )
+        object.__setattr__(self, "inoculum_sizes", tuple(sorted(set(inoculum_sizes))))
         minimum = (
             _normalized_number(self.concentration_min, "concentration minimum")
             if self.concentration_min is not None
@@ -158,6 +171,7 @@ class GrowthWellSearchResult:
     wells: tuple[GrowthComparisonWell, ...]
     total: int
     truncated: bool
+    quick_stats: GrowthComparisonQuickStats | None = None
 
     def __post_init__(self) -> None:
         if self.total < len(self.wells) or self.total < 0:
@@ -166,6 +180,70 @@ class GrowthWellSearchResult:
             raise ValueError("Growth comparison search result exceeds its fixed limit")
         if self.truncated != (self.total > len(self.wells)):
             raise ValueError("Growth comparison search truncation state is inconsistent")
+        if self.quick_stats is not None and self.quick_stats.total_wells != self.total:
+            raise ValueError("Growth comparison quick stats must cover every matching well")
+
+
+@dataclass(frozen=True, slots=True)
+class GrowthComparisonSummaryField:
+    """One supported layout-metadata dimension for comparison quick stats."""
+
+    key: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class GrowthComparisonQuickStat:
+    """Counts for one unique combination of selected layout metadata."""
+
+    values: tuple[str, ...]
+    well_count: int
+    plate_count: int
+
+    def __post_init__(self) -> None:
+        if self.well_count < 1 or self.plate_count < 1 or self.plate_count > self.well_count:
+            raise ValueError("Growth comparison quick-stat counts are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class GrowthComparisonQuickStats:
+    """Condition groups calculated from actual wells, never replicate labels."""
+
+    fields: tuple[GrowthComparisonSummaryField, ...]
+    groups: tuple[GrowthComparisonQuickStat, ...]
+    total_wells: int
+
+    def __post_init__(self) -> None:
+        if not self.fields:
+            raise ValueError("Growth comparison quick stats require at least one field")
+        if (
+            self.total_wells < 0
+            or sum(group.well_count for group in self.groups) != self.total_wells
+        ):
+            raise ValueError("Growth comparison quick-stat total is invalid")
+
+
+_SUMMARY_FIELDS = (
+    GrowthComparisonSummaryField("display_name", "Display name"),
+    GrowthComparisonSummaryField("strain", "Strain"),
+    GrowthComparisonSummaryField("treatment", "Treatment"),
+    GrowthComparisonSummaryField("concentration", "Concentration"),
+    GrowthComparisonSummaryField("medium", "Medium"),
+    GrowthComparisonSummaryField("grouping_label", "Group"),
+    GrowthComparisonSummaryField("inoculum_size", "Inoculum size"),
+    GrowthComparisonSummaryField("is_blank", "Blank status"),
+)
+_SUMMARY_FIELDS_BY_KEY = {field.key: field for field in _SUMMARY_FIELDS}
+
+
+def growth_comparison_summary_fields() -> tuple[GrowthComparisonSummaryField, ...]:
+    """Return metadata dimensions that may define an empirical replicate group.
+
+    The stored ``replicate`` label is deliberately absent: quick-stat counts are
+    derived from the number of wells sharing the selected condition metadata.
+    """
+
+    return _SUMMARY_FIELDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +290,7 @@ class SearchGrowthComparisonWellsService:
         self,
         plates: Sequence[GrowthComparisonPlate],
         filters: GrowthWellSearchFilter | None = None,
+        summary_fields: Sequence[str] = (),
     ) -> GrowthWellSearchResult:
         index = _validated_plate_index(plates, require_two=False)
         filters = filters or GrowthWellSearchFilter()
@@ -232,10 +311,14 @@ class SearchGrowthComparisonWellsService:
             for well in sorted(plate.wells, key=_well_sort_key)
             if _matches_filter(well, filters)
         )
+        quick_stats = (
+            _growth_comparison_quick_stats(matches, summary_fields) if summary_fields else None
+        )
         return GrowthWellSearchResult(
             wells=matches[:_SEARCH_RESULT_LIMIT],
             total=len(matches),
             truncated=len(matches) > _SEARCH_RESULT_LIMIT,
+            quick_stats=quick_stats,
         )
 
 
@@ -478,8 +561,10 @@ def _matches_filter(well: GrowthComparisonWell, filters: GrowthWellSearchFilter)
             well.display_name,
             well.strain,
             well.treatment,
+            well.concentration_unit,
             well.medium,
             well.grouping_label,
+            well.inoculum_unit,
         )
         if not any(text in value.casefold() for value in searchable if value is not None):
             return False
@@ -493,8 +578,16 @@ def _matches_filter(well: GrowthComparisonWell, filters: GrowthWellSearchFilter)
         return False
     if not _matches_any_text(well.grouping_label, filters.grouping_labels):
         return False
+    if not _matches_any_text(well.inoculum_unit, filters.inoculum_units):
+        return False
     if filters.replicates and well.replicate not in filters.replicates:
         return False
+    if filters.inoculum_sizes:
+        if well.inoculum_size is None:
+            return False
+        inoculum_size = _normalized_number(well.inoculum_size, "inoculum size")
+        if inoculum_size not in filters.inoculum_sizes:
+            return False
     if filters.concentration_min is not None or filters.concentration_max is not None:
         if well.concentration is None:
             return False
@@ -504,6 +597,57 @@ def _matches_filter(well: GrowthComparisonWell, filters: GrowthWellSearchFilter)
         if filters.concentration_max is not None and concentration > filters.concentration_max:
             return False
     return True
+
+
+def _growth_comparison_quick_stats(
+    wells: Sequence[GrowthComparisonWell], field_keys: Sequence[str]
+) -> GrowthComparisonQuickStats:
+    keys = tuple(str(key).strip() for key in field_keys)
+    if any(not key for key in keys):
+        raise ValueError("Growth comparison quick-stat fields cannot be empty")
+    if len(set(keys)) != len(keys):
+        raise ValueError("Growth comparison quick-stat fields must be unique")
+    unknown = tuple(key for key in keys if key not in _SUMMARY_FIELDS_BY_KEY)
+    if unknown:
+        raise ValueError("Unknown Growth comparison quick-stat field: " + ", ".join(unknown))
+
+    fields = tuple(_SUMMARY_FIELDS_BY_KEY[key] for key in keys)
+    grouped: dict[tuple[str, ...], tuple[tuple[str, ...], int, set[str]]] = {}
+    for well in wells:
+        values = tuple(_summary_value(well, key) for key in keys)
+        identity = tuple(value.casefold() for value in values)
+        existing = grouped.get(identity)
+        if existing is None:
+            grouped[identity] = (values, 1, {well.plate_id})
+        else:
+            display_values, well_count, plate_ids = existing
+            plate_ids.add(well.plate_id)
+            grouped[identity] = (display_values, well_count + 1, plate_ids)
+    groups = tuple(
+        GrowthComparisonQuickStat(values, well_count, len(plate_ids))
+        for values, well_count, plate_ids in sorted(
+            grouped.values(), key=lambda item: tuple(value.casefold() for value in item[0])
+        )
+    )
+    return GrowthComparisonQuickStats(fields, groups, len(wells))
+
+
+def _summary_value(well: GrowthComparisonWell, key: str) -> str:
+    if key == "concentration":
+        return _quantity_label(well.concentration, well.concentration_unit)
+    if key == "inoculum_size":
+        return _quantity_label(well.inoculum_size, well.inoculum_unit)
+    if key == "is_blank":
+        return "Blank" if well.is_blank else "Sample"
+    value = getattr(well, key)
+    return str(value).strip() if value is not None and str(value).strip() else "—"
+
+
+def _quantity_label(value: int | float | Decimal | None, unit: str | None) -> str:
+    if value is None:
+        return "—"
+    number = _format_number(value)
+    return f"{number} {unit}" if unit else number
 
 
 def _matches_any_text(value: str | None, allowed: tuple[str, ...]) -> bool:
@@ -566,6 +710,11 @@ def _well_label(well: GrowthComparisonWell) -> str:
         )
         or None
     )
+    inoculum = (
+        _quantity_label(well.inoculum_size, well.inoculum_unit)
+        if well.inoculum_size is not None
+        else None
+    )
     replicate = f"replicate {well.replicate}" if well.replicate is not None else None
     return (
         "; ".join(
@@ -576,6 +725,7 @@ def _well_label(well: GrowthComparisonWell) -> str:
                 well.treatment,
                 concentration,
                 well.medium,
+                inoculum,
                 well.grouping_label,
                 replicate,
             )

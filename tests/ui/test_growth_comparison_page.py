@@ -17,7 +17,14 @@ from plate_reader.ui.growth_comparison import (
 
 
 def test_well_table_uses_plate_and_well_identity_as_its_hidden_stable_key() -> None:
-    first = GrowthComparisonWell("plate-a", "well-a", "A1", display_name="Wild type")
+    first = GrowthComparisonWell(
+        "plate-a",
+        "well-a",
+        "A1",
+        display_name="Wild type",
+        inoculum_size=5,
+        inoculum_unit="log CFU/mL",
+    )
     second = GrowthComparisonWell("plate-b", "well-b", "B2", display_name="Mutant")
     plates = (
         GrowthComparisonPlate("plate-a", (first,), "Experiment A", "Plate A"),
@@ -31,6 +38,7 @@ def test_well_table_uses_plate_and_well_identity_as_its_hidden_stable_key() -> N
     assert "well_key" not in table.columns
     assert table.loc[_well_key(first), "Experiment"] == "Experiment A"
     assert table.loc[_well_key(second), "Plate"] == "Plate B"
+    assert table.loc[_well_key(first), "Inoculum"] == "5 log CFU/mL"
     assert _selected_wells(selected, wells_by_key) == (second,)
 
 
@@ -46,11 +54,17 @@ def test_page_indexes_once_adds_wells_without_raw_reads_and_renders_only_on_requ
     assert app.session_state["index_calls"] == 1
     assert "raw_load_calls" not in app.session_state
     assert _button(app, "Search wells") is not None
+    assert {item.label for item in app.multiselect}.issuperset(
+        {"Inoculum size", "Inoculum unit", "Quick stats group by"}
+    )
 
     _button(app, "Search wells").click().run()
     assert app.session_state["index_calls"] == 1
     assert app.session_state["growth_comparison_search_result"].total == 2
     assert "raw_load_calls" not in app.session_state
+    assert next(item for item in app.metric if item.label == "Condition groups").value == "1"
+    assert next(item for item in app.metric if item.label == "Largest well group").value == "2"
+    assert any("saved Replicate field is not used" in item.value for item in app.caption)
 
     _button(app, "Add all displayed").click().run()
     assert tuple(_well_key(well) for well in app.session_state["growth_comparison_basket"]) == (
