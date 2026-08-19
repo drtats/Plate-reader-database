@@ -45,12 +45,15 @@ def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch)
     assert _button_labels(app).issuperset({"Select all", "Clear all", "Invert"})
     assert "Apply 96-well selection" not in _button_labels(app)
     assert "Apply selection list" not in _button_labels(app)
-    selection_grid = app.dataframe[0].value
-    assert tuple(selection_grid.index) == tuple("ABCDEFGH")
-    assert tuple(selection_grid.columns) == tuple(str(column) for column in range(1, 13))
-    assert app.dataframe[0].proto.form_id == "component_growth_plot_form"
+    assert {checkbox.label for checkbox in app.checkbox}.issuperset({"A1", "A12", "H1", "H12"})
     assert any("Grid checks are staged locally" in item.value for item in app.caption)
     assert any(item.label == "Filter fields" for item in app.multiselect)
+
+    next(item for item in app.checkbox if item.label == "A9").set_value(True)
+    _click(app, "Render selected curves")
+    assert app.session_state["rendered_growth_selection"] == tuple(
+        f"A{column}" for column in range(1, 10)
+    )
 
     next(item for item in app.multiselect if item.label == "Selected wells (list)").set_value(
         ["B1"]
@@ -138,7 +141,6 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
         {
             "Save metadata",
             "Save full layout",
-            "Save well selection",
             "Select all",
             "Clear all",
             "Invert",
@@ -147,6 +149,8 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert any(item.label == "Filter fields" for item in app.multiselect)
     assert any(item.label == "Curve colors" for item in app.selectbox)
     assert any(item.label == "Curve label format" for item in app.radio)
+    assert "Save well selection" not in _button_labels(app)
+    assert _selected_metric(app) == "0"
 
     _input_named(app, "Prefix").set_value("saved-")
     _click(app, "Preview generated names")
@@ -172,6 +176,8 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     combined_fields.set_value(["Display name", "Replicate"]).run()
     _input_named(app, "Label separator").set_value(" + ").run()
+    next(item for item in app.multiselect if item.label == "Rows").set_value(["A"]).run()
+    _click(app, "Apply row/column shortcut")
     _click(app, "Render selected curves")
     styles = app.session_state["growth_plot_styles"]
     figure = app.session_state["growth_plot"]
@@ -189,7 +195,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     assert wide_rows[0][0] == "Time (minutes)"
     assert wide_rows[0][1:] == [style.legend_label for style in styles.styles]
-    assert all(style.legend_label.startswith("saved-1 + 1") for style in styles.styles)
+    assert all(style.legend_label.startswith("saved-1") for style in styles.styles)
     csv_rows = list(
         csv.DictReader(io.StringIO(csv_artifact.content.decode("utf-8-sig"), newline=""))
     )
@@ -220,22 +226,18 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     _click(app, "Save full layout")
     assert _growth_raw_hash(database_path) == raw_before
 
-    _click(app, "Save well selection")
-    assert _selected_well_count(database_path) == 8
-    assert _growth_raw_hash(database_path) == raw_before
-
     _click(app, "Select all")
     assert _selected_metric(app) == "96"
     app.run()
     assert _selected_metric(app) == "96"
-    assert _selected_well_count(database_path) == 8
+    assert _selected_well_count(database_path) == 0
 
     _click(app, "Clear all")
     assert _selected_metric(app) == "0"
     assert any("Select at least one well" in item.value for item in app.info)
     _click(app, "Invert")
     assert _selected_metric(app) == "96"
-    assert _selected_well_count(database_path) == 8
+    assert _selected_well_count(database_path) == 0
     assert _growth_raw_hash(database_path) == raw_before
 
 

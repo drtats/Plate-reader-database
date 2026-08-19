@@ -17,7 +17,6 @@ from plate_reader.application.services import (
     growth_selection_fields,
     normalize_growth_selection,
 )
-from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.domain.common.plate import PLATE_96, WellPosition
 
 _OPERATION_LABELS = {
@@ -56,7 +55,6 @@ def render_growth_well_selector[FormResultT](
 ) -> tuple[tuple[str, ...], FormResultT]:  # pragma: no cover - Streamlit composition
     """Render selection controls and batch direct grid edits with plot submission."""
 
-    configure_arrow_memory_pool()
     if state_key not in st.session_state:
         st.session_state[state_key] = normalize_growth_selection(wells, default_positions)
     selected = normalize_growth_selection(wells, st.session_state[state_key])
@@ -66,8 +64,7 @@ def render_growth_well_selector[FormResultT](
     st.subheader("Select wells")
     st.caption(
         "Check wells in the 96-well grid without rerunning the page. Render selected curves "
-        "applies the complete grid once; Save well selection also keeps it as this plate's "
-        "default."
+        "uses the complete grid once. The selection is kept only for this browser session."
     )
     metric, select_all, clear_all, invert = st.columns((1.4, 1, 1, 1))
     metric.metric("Selected wells", len(selected))
@@ -147,24 +144,14 @@ def render_growth_well_selector[FormResultT](
     )
     with grid_tab:
         st.caption(
-            "Grid checks are staged locally. They are applied only when Render selected curves "
-            "or Save well selection is pressed."
+            "Grid checks are staged locally and used only when Render selected curves is pressed."
         )
         with st.form(form_key):
             if _is_streamlit_test():
                 st.caption("Interactive 8x12 selection grid enabled in the running app.")
                 form_selected = selected
             else:
-                edited_grid = st.data_editor(
-                    growth_selection_grid(selected),
-                    width="stretch",
-                    column_config={
-                        str(column): st.column_config.CheckboxColumn(str(column))
-                        for column in range(1, 13)
-                    },
-                    key=_grid_editor_key(state_key),
-                )
-                form_selected = growth_selection_from_grid(edited_grid)
+                form_selected = _render_direct_checkbox_grid(state_key, all_positions)
             form_result = render_form_controls(form_selected)
     if selection_submitted(form_result):
         selected = form_selected
@@ -175,17 +162,19 @@ def render_growth_well_selector[FormResultT](
             st.caption("Interactive selection list enabled in the running app.")
         else:
             by_position = _wells_by_position(wells)
-            st.multiselect(
-                "Selected wells (list)",
-                all_positions,
-                key=_selection_list_key(state_key),
-                format_func=lambda position: (
-                    f"{position} · {_well_label(by_position[position], position)}"
-                ),
-                on_change=_store_list_widget_selection,
-                args=(state_key,),
-                help="Changes immediately affect Render selected curves.",
+            list_selected = tuple(
+                st.multiselect(
+                    "Selected wells (list)",
+                    all_positions,
+                    key=_selection_list_key(state_key),
+                    format_func=lambda position: (
+                        f"{position} · {_well_label(by_position[position], position)}"
+                    ),
+                    help="Changes immediately affect Render selected curves.",
+                )
             )
+            if not selection_submitted(form_result) and list_selected != selected:
+                _store_selection(state_key, list_selected)
     with filter_tab:
         fields = growth_selection_fields(wells)
         fields_by_label = {field.label: field for field in fields}
@@ -390,9 +379,11 @@ def _sync_direct_selection_widgets(
     all_positions: Sequence[str],
 ) -> None:
     force_sync = bool(st.session_state.pop(_direct_sync_key(state_key), False))
-    if force_sync:
-        st.session_state.pop(_grid_editor_key(state_key), None)
     selected_set = set(selected)
+    if force_sync:
+        for position in all_positions:
+            st.session_state[_grid_checkbox_key(state_key, position)] = position in selected_set
+        st.session_state[_grid_initialized_key(state_key)] = True
     list_key = _selection_list_key(state_key)
     if force_sync or list_key not in st.session_state:
         st.session_state[list_key] = tuple(
@@ -400,13 +391,50 @@ def _sync_direct_selection_widgets(
         )
 
 
-def _store_list_widget_selection(state_key: str) -> None:
-    st.session_state[state_key] = tuple(st.session_state[_selection_list_key(state_key)])
-    st.session_state[_direct_sync_key(state_key)] = True
+def _render_direct_checkbox_grid(
+    state_key: str,
+    all_positions: Sequence[str],
+) -> tuple[str, ...]:
+    """Render a compact form-native 8x12 grid without Arrow serialization."""
+
+    selected: list[str] = []
+    initializing = not bool(st.session_state.get(_grid_initialized_key(state_key), False))
+    header = st.columns((1, *(1 for _column in range(12))), gap="small")
+    header[0].markdown("**—**")
+    for column in range(1, 13):
+        header[column].markdown(f"**{column}**")
+    for row in "ABCDEFGH":
+        cells = st.columns((1, *(1 for _column in range(12))), gap="small")
+        cells[0].markdown(f"**{row}**")
+        for column in range(1, 13):
+            position = f"{row}{column}"
+            checkbox_key = _grid_checkbox_key(state_key, position)
+            checked = (
+                cells[column].checkbox(
+                    position,
+                    value=position in st.session_state[state_key],
+                    key=checkbox_key,
+                    label_visibility="collapsed",
+                )
+                if initializing
+                else cells[column].checkbox(
+                    position,
+                    key=checkbox_key,
+                    label_visibility="collapsed",
+                )
+            )
+            if checked:
+                selected.append(position)
+    st.session_state[_grid_initialized_key(state_key)] = True
+    return tuple(position for position in all_positions if position in set(selected))
 
 
-def _grid_editor_key(state_key: str) -> str:
-    return f"{state_key}_grid"
+def _grid_checkbox_key(state_key: str, position: str) -> str:
+    return f"{state_key}_grid_{position}"
+
+
+def _grid_initialized_key(state_key: str) -> str:
+    return f"{state_key}_grid_initialized"
 
 
 def _selection_list_key(state_key: str) -> str:

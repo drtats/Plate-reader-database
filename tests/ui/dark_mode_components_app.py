@@ -22,7 +22,7 @@ with plotting:
     limits[0].number_input("X maximum", value=1_400.0)
     limits[1].number_input("Y minimum", value=0.001, format="%.4f")
     limits[2].number_input("Y maximum", value=1.5, format="%.4f")
-    st.button("Save well selection", type="primary")
+    st.button("Render selected curves", type="primary")
 
 with layout:
     render_plate_editor(

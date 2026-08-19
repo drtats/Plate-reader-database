@@ -50,8 +50,9 @@ derived values, author, and time.
 ## Select and plot curves
 
 Use the plate, selection list, or metadata filters in **Plotting**; all three
-control one selection. Rendering does not save it. Press **Save well selection**
-only when it should become the default for later sessions.
+control one browser-session selection. Checks in the 96-well grid are staged
+without rerunning the page, and **Render selected curves** uses the checked wells
+directly. Plot selection is not written to the run or used as a later default.
 
 Set **Curve label format** to **Single field** to use Display name, strain,
 group, treatment, or an available custom field. Select **Combine fields** to

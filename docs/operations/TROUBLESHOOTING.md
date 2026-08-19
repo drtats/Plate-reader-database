@@ -30,6 +30,11 @@ session, so restart the import; no plate is committed until Step 5. In the
 saved-run workspace, an explicit metadata save may already have committed before
 a later crash.
 
+If pressing **Render selected curves** reconnects the app and restores A1-A8,
+update to a version using the form-native Growth checkbox grid. The plot selector
+must not depend on Arrow serialization across a rerun, write `plot_selected`, or
+fall back to A1-A8.
+
 ## A save reports a concurrency conflict
 
 Another session saved the plate after it was loaded. Reload, compare the latest
