@@ -145,7 +145,8 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     assert any(item.label == "Filter fields" for item in app.multiselect)
     assert any(item.label == "Curve colors" for item in app.selectbox)
-    assert any(item.label == "Curve label format" for item in app.radio)
+    assert any(item.label == "Curve label fields in order" for item in app.multiselect)
+    assert not any(item.label == "Curve label format" for item in app.radio)
     assert "Save well selection" not in _button_labels(app)
     assert _selected_metric(app) == "0"
 
@@ -166,15 +167,9 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert _experiment_name(database_path) == "Characterized Growth run"
     assert _growth_raw_hash(database_path) == raw_before
 
-    label_mode = next(item for item in app.radio if item.label == "Curve label format")
-    label_mode.set_value("Combine fields").run()
-    combined_fields = next(
-        item for item in app.multiselect if item.label == "Curve label fields in order"
-    )
-    combined_fields.set_value(["Display name", "Replicate"]).run()
-    _input_named(app, "Label separator").set_value(" + ").run()
     next(item for item in app.multiselect if item.label == "Rows").set_value(["A"]).run()
     _click(app, "Apply row/column shortcut")
+    _input_named(app, "Label prefix").set_value("combined:")
     _click(app, "Render selected curves")
     styles = app.session_state["growth_plot_styles"]
     figure = app.session_state["growth_plot"]
@@ -192,7 +187,7 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     )
     assert wide_rows[0][0] == "Time (minutes)"
     assert wide_rows[0][1:] == [style.legend_label for style in styles.styles]
-    assert all(style.legend_label.startswith("saved-1") for style in styles.styles)
+    assert all(style.legend_label.startswith("combined:saved-1") for style in styles.styles)
     csv_rows = list(
         csv.DictReader(io.StringIO(csv_artifact.content.decode("utf-8-sig"), newline=""))
     )

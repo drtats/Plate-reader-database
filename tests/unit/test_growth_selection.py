@@ -46,6 +46,17 @@ def test_filters_use_or_within_a_field_and_and_across_fields() -> None:
     assert selected == ("A1", "A2")
 
 
+def test_concentration_unit_is_available_for_well_selection() -> None:
+    selected = GrowthWellSelectionService().execute(
+        growth_wells(),
+        (),
+        (GrowthWellFilter("concentration_unit", ("UG/ML",)),),
+        GrowthSelectionOperation.REPLACE,
+    )
+
+    assert selected == ("A1", "A2")
+
+
 def test_custom_field_filters_and_explicit_operations_share_one_contract() -> None:
     wells = growth_wells()
     service = GrowthWellSelectionService()
@@ -75,6 +86,8 @@ def test_available_filter_fields_normalize_values_without_rewriting_wells() -> N
 
     assert fields["strain"].values == ("strain-a", "strain-b")
     assert fields["concentration"].values == ("1.0", "2.0", "10.0")
+    assert fields["concentration_unit"].label == "Concentration unit"
+    assert fields["concentration_unit"].values == ("mM", "ug/mL")
     assert fields["custom:Oxygen"].label == "Oxygen (custom)"
     assert fields["custom:Oxygen"].values == ("high", "low")
     assert tuple(dict(well) for well in wells) == original
@@ -118,6 +131,7 @@ def growth_wells() -> tuple[Mapping[str, object], ...]:
             "strain": "strain-a",
             "treatment": "drug",
             "concentration": 1.0,
+            "concentration_unit": "ug/mL",
             "medium": "M9",
             "grouping_label": "group-1",
             "replicate": 1,
@@ -127,6 +141,7 @@ def growth_wells() -> tuple[Mapping[str, object], ...]:
             "strain": "strain-a",
             "treatment": "drug",
             "concentration": 2.0,
+            "concentration_unit": "ug/mL",
             "medium": "M9",
             "grouping_label": "group-1",
             "replicate": 2,
@@ -136,6 +151,7 @@ def growth_wells() -> tuple[Mapping[str, object], ...]:
             "strain": "strain-b",
             "treatment": "vehicle",
             "concentration": 10.0,
+            "concentration_unit": "mM",
             "medium": "LB",
             "grouping_label": "group-2",
             "replicate": 1,

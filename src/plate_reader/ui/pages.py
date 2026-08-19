@@ -1007,28 +1007,20 @@ def _render_growth_plot_form(
         f"Currently applied: {len(selected)} well(s). Grid changes above stay local until one "
         "of the actions below is pressed."
     )
-    label_mode = st.radio(
-        "Curve label format",
-        ("Single field", "Combine fields"),
-        horizontal=True,
-        key=f"growth_plot_label_mode_{plate_id}",
-    )
-    label_choice = st.selectbox(
-        "Curve label",
-        tuple(label_choices),
-        key=f"growth_plot_label_field_{plate_id}",
-    )
-    with st.expander("Combined curve label settings", expanded=False):
-        st.caption("These settings are used when Curve label format is Combine fields.")
-        combined_labels = tuple(
-            st.multiselect(
-                "Curve label fields in order",
-                tuple(label_choices),
-                default=("Display name",),
-                key=f"growth_plot_label_fields_{plate_id}",
-                help="Fields are combined from left to right in the order selected.",
-            )
+    selected_label_fields = tuple(
+        st.multiselect(
+            "Curve label fields in order",
+            tuple(label_choices),
+            default=("Display name",),
+            key=f"growth_plot_label_fields_{plate_id}",
+            help=(
+                "Choose one field for a simple label or multiple fields for a combined label. "
+                "Fields are combined from left to right in the order selected."
+            ),
         )
+    )
+    with st.expander("Curve label formatting", expanded=False):
+        st.caption("Separator, prefix, and suffix apply to the selected label fields above.")
         label_format = st.columns((1, 1, 1, 1.2))
         label_separator = label_format[0].text_input(
             "Label separator", value="_", key=f"growth_plot_label_separator_{plate_id}"
@@ -1045,19 +1037,15 @@ def _render_growth_plot_form(
             key=f"growth_plot_label_omit_empty_{plate_id}",
         )
     label_options = (
-        GrowthPlotLabelOptions((label_choices[label_choice],))
-        if label_mode == "Single field"
-        else (
-            GrowthPlotLabelOptions(
-                tuple(label_choices[label] for label in combined_labels),
-                separator=label_separator,
-                prefix=label_prefix,
-                suffix=label_suffix,
-                omit_empty=omit_empty_labels,
-            )
-            if combined_labels
-            else None
+        GrowthPlotLabelOptions(
+            tuple(label_choices[label] for label in selected_label_fields),
+            separator=label_separator,
+            prefix=label_prefix,
+            suffix=label_suffix,
+            omit_empty=omit_empty_labels,
         )
+        if selected_label_fields
+        else None
     )
     corrected = st.toggle(
         "Apply current background revision",
