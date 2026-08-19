@@ -15,6 +15,7 @@ _FIRST_CLASS_FIELDS = (
     ("strain", "Strain"),
     ("treatment", "Treatment"),
     ("concentration", "Concentration"),
+    ("concentration_unit", "Concentration unit"),
     ("medium", "Media"),
     ("grouping_label", "Group"),
     ("replicate", "Replicate"),

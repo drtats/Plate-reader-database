@@ -21,6 +21,8 @@ schema, portable-format, and scientific compatibility impact.
   stays local and causes no application rerun until plotting is requested.
 - Preserved drag-across multi-well checking in the compact editor while preventing
   the Selection List synchronization from overwriting its submitted grid.
+- Replaced competing single/combined Growth curve-label controls with one ordered
+  field selector, and exposed concentration units to metadata filters, colors, and labels.
 
 ## 0.1.0 - 2026-08-01
 
