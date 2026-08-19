@@ -18,6 +18,7 @@ from plate_reader.application.services.growth_comparison import (
     LoadGrowthComparisonPlotService,
     LoadGrowthComparisonWellIndexService,
     SearchGrowthComparisonWellsService,
+    growth_comparison_summary_fields,
 )
 
 ACTOR = Actor(UserId("user-1"), "user@example.invalid", Role.VIEWER)
@@ -222,6 +223,8 @@ def test_search_combines_or_within_fields_and_and_across_fields_case_insensitive
         concentration_max=1,
         concentration_units=("ug/mL",),
         replicates=(2,),
+        inoculum_sizes=(100000,),
+        inoculum_units=("CFU/mL",),
     )
 
     result = SearchGrowthComparisonWellsService().execute(plates, filters)
@@ -229,6 +232,44 @@ def test_search_combines_or_within_fields_and_and_across_fields_case_insensitive
     assert [(well.plate_id, well.position) for well in result.wells] == [("plate-a", "A1")]
     assert result.total == 1
     assert not result.truncated
+
+
+def test_search_filters_inoculum_metadata_and_quick_stats_count_actual_wells() -> None:
+    wells = (
+        _well("plate-a", "a1", "A1", strain="PAO1", treatment="Drug", replicate=1),
+        _well("plate-a", "a2", "A2", strain="pao1", treatment="drug", replicate=7),
+        _well("plate-b", "b1", "A1", strain="PAO1", treatment="Drug", replicate=3),
+        _well(
+            "plate-b",
+            "b2",
+            "A2",
+            strain="PAO1",
+            treatment="Drug",
+            replicate=1,
+            inoculum_size=Decimal("200000"),
+        ),
+    )
+
+    filtered = SearchGrowthComparisonWellsService().execute(
+        (_plate("plate-a", *wells[:2]), _plate("plate-b", *wells[2:])),
+        GrowthWellSearchFilter(inoculum_sizes=(Decimal("100000.0"),), inoculum_units=("cfu/ML",)),
+        ("strain", "treatment", "concentration", "inoculum_size"),
+    )
+
+    assert filtered.total == 3
+    assert filtered.quick_stats is not None
+    assert [field.label for field in filtered.quick_stats.fields] == [
+        "Strain",
+        "Treatment",
+        "Concentration",
+        "Inoculum size",
+    ]
+    assert len(filtered.quick_stats.groups) == 1
+    group = filtered.quick_stats.groups[0]
+    assert group.values == ("PAO1", "Drug", "1 ug/mL", "100000 CFU/mL")
+    assert group.well_count == 3
+    assert group.plate_count == 2
+    assert "replicate" not in {field.key for field in growth_comparison_summary_fields()}
 
 
 def test_search_text_source_subset_blanks_and_deterministic_well_order() -> None:
@@ -268,7 +309,7 @@ def test_search_exact_field_filters_handle_missing_values_and_limit_to_first_500
     plates = (_plate("plate-a", *wells),)
 
     result = SearchGrowthComparisonWellsService().execute(
-        plates, GrowthWellSearchFilter(media=("MHB", "lb"))
+        plates, GrowthWellSearchFilter(media=("MHB", "lb")), ("medium",)
     )
 
     assert result.total == 501
@@ -276,6 +317,8 @@ def test_search_exact_field_filters_handle_missing_values_and_limit_to_first_500
     assert result.truncated
     assert result.wells[0].position == "A1"
     assert result.wells[-1].position == "A500"
+    assert result.quick_stats is not None
+    assert sum(group.well_count for group in result.quick_stats.groups) == 501
 
 
 @pytest.mark.parametrize(
@@ -285,6 +328,8 @@ def test_search_exact_field_filters_handle_missing_values_and_limit_to_first_500
         GrowthWellSearchFilter(concentration_min=Decimal("1"), concentration_units=("ug/mL",)),
         GrowthWellSearchFilter(concentration_max=Decimal("2"), concentration_units=("ug/mL",)),
         GrowthWellSearchFilter(grouping_labels=("group",)),
+        GrowthWellSearchFilter(inoculum_sizes=(Decimal("100000"),)),
+        GrowthWellSearchFilter(inoculum_units=("CFU/mL",)),
     ),
 )
 def test_search_filter_does_not_match_missing_metadata(filters: GrowthWellSearchFilter) -> None:
@@ -295,6 +340,8 @@ def test_search_filter_does_not_match_missing_metadata(filters: GrowthWellSearch
         strain=None,
         concentration=None,
         grouping_label=None,
+        inoculum_size=None,
+        inoculum_unit=None,
     )
     assert (
         SearchGrowthComparisonWellsService().execute((_plate("plate-a", missing),), filters).wells
@@ -307,6 +354,7 @@ def test_search_filter_does_not_match_missing_metadata(filters: GrowthWellSearch
     (
         (lambda: GrowthWellSearchFilter(source_plate_ids=(" ",)), "cannot be empty"),
         (lambda: GrowthWellSearchFilter(replicates=(0,)), "positive integers"),
+        (lambda: GrowthWellSearchFilter(inoculum_sizes=(float("nan"),)), "finite number"),
         (lambda: GrowthWellSearchFilter(concentration_min=2, concentration_max=1), "cannot exceed"),
         (lambda: GrowthWellSearchFilter(concentration_min=1), "exactly one concentration unit"),
         (
@@ -332,6 +380,19 @@ def test_search_rejects_an_unknown_source_plate() -> None:
             (_plate("plate-a", _well("plate-a", "a1", "A1")),),
             GrowthWellSearchFilter(source_plate_ids=("missing",)),
         )
+
+
+def test_quick_stats_reject_unknown_duplicate_or_blank_dimensions() -> None:
+    plate = _plate("plate-a", _well("plate-a", "a1", "A1"))
+    service = SearchGrowthComparisonWellsService()
+
+    for fields, message in (
+        (("replicate",), "Unknown"),
+        (("strain", "strain"), "must be unique"),
+        ((" ",), "cannot be empty"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            service.execute((plate,), summary_fields=fields)
 
 
 @pytest.mark.parametrize(
@@ -431,7 +492,7 @@ def test_plot_loader_uses_canonical_selected_wells_loads_only_represented_plates
     ]
     assert result.plot_data.points[0].label == (
         "Experiment plate-a | Plate plate-a | A1 | Alpha; PAO1; Ciprofloxacin; "
-        "1 ug/mL; MHB; group A; replicate 1"
+        "1 ug/mL; MHB; 100000 CFU/mL; group A; replicate 1"
     )
     assert result.plot_data.correction_requested is False
     assert result.plate_count == 2

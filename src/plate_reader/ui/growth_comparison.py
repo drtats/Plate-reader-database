@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from decimal import Decimal, InvalidOperation
+from numbers import Real
 from typing import cast
 
 import pandas as pd
@@ -19,6 +20,7 @@ from plate_reader.application.services.growth_comparison import (
     LoadGrowthComparisonPlotService,
     LoadGrowthComparisonWellIndexService,
     SearchGrowthComparisonWellsService,
+    growth_comparison_summary_fields,
 )
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.plotting import GrowthPlotOptions, growth_curve_figure, plot_download_config
@@ -118,6 +120,8 @@ def _render_well_search(
     st.subheader("Find wells")
     selectable_plate_ids = tuple(plate.plate_id for plate in plate_index)
     wells = _index_wells(plate_index)
+    summary_fields = growth_comparison_summary_fields()
+    summary_fields_by_label = {field.label: field.key for field in summary_fields}
     with st.form("growth-comparison-well-search"):
         selected_sources = st.multiselect(
             "Source runs",
@@ -128,22 +132,41 @@ def _render_well_search(
         )
         text = st.text_input(
             "Well or metadata contains",
-            help="Search well position, display name, strain, treatment, medium, or group.",
+            help=(
+                "Search well position, display name, strain, treatment, concentration unit, "
+                "medium, group, or inoculum unit."
+            ),
         )
-        left, right = st.columns(2)
+        left, middle, right = st.columns(3)
         with left:
             strains = st.multiselect("Strain", _facet_values(wells, "strain"))
             treatments = st.multiselect("Treatment", _facet_values(wells, "treatment"))
             media = st.multiselect("Medium", _facet_values(wells, "medium"))
             grouping_labels = st.multiselect("Group", _facet_values(wells, "grouping_label"))
-        with right:
+        with middle:
             concentration_min = st.text_input("Minimum concentration")
             concentration_max = st.text_input("Maximum concentration")
             concentration_units = st.multiselect(
                 "Concentration unit", _facet_values(wells, "concentration_unit")
             )
+        with right:
+            inoculum_sizes = st.multiselect(
+                "Inoculum size",
+                _facet_values(wells, "inoculum_size"),
+                format_func=_facet_label,
+            )
+            inoculum_units = st.multiselect("Inoculum unit", _facet_values(wells, "inoculum_unit"))
             replicates = st.multiselect("Replicate", _facet_values(wells, "replicate"))
             include_blank_wells = st.checkbox("Include blank wells", value=False)
+        quick_stat_labels = st.multiselect(
+            "Quick stats group by",
+            tuple(summary_fields_by_label),
+            default=("Strain", "Treatment", "Concentration", "Medium", "Inoculum size"),
+            help=(
+                "Counts wells sharing the same selected metadata. The saved Replicate value "
+                "is deliberately not used."
+            ),
+        )
         search = st.form_submit_button("Search wells", type="primary")
 
     if not search:
@@ -168,9 +191,15 @@ def _render_well_search(
             media=_text_selection(media),
             replicates=_replicate_selection(replicates),
             grouping_labels=_text_selection(grouping_labels),
+            inoculum_sizes=_numeric_selection(inoculum_sizes),
+            inoculum_units=_text_selection(inoculum_units),
             include_blank_wells=include_blank_wells,
         )
-        result = SearchGrowthComparisonWellsService().execute(plate_index, search_filter)
+        result = SearchGrowthComparisonWellsService().execute(
+            plate_index,
+            search_filter,
+            tuple(summary_fields_by_label[label] for label in quick_stat_labels),
+        )
     except Exception as error:
         st.error(f"Unable to search wells: {error}")
         return
@@ -202,6 +231,15 @@ def _replicate_selection(values: Iterable[object]) -> tuple[int, ...]:
     return cast(tuple[int, ...], values_tuple)
 
 
+def _numeric_selection(values: Iterable[object]) -> tuple[int | float | Decimal, ...]:
+    values_tuple = tuple(values)
+    if any(
+        isinstance(value, bool) or not isinstance(value, Real | Decimal) for value in values_tuple
+    ):
+        raise ValueError("Inoculum-size selections must be numeric")
+    return cast(tuple[int | float | Decimal, ...], values_tuple)
+
+
 def _render_search_results(
     plate_index: Sequence[GrowthComparisonPlate], source_key: tuple[str, ...]
 ) -> None:
@@ -216,6 +254,7 @@ def _render_search_results(
     st.subheader("Matching wells")
     if result.truncated:
         st.warning(f"Showing the first {len(result.wells)} of {result.total} matching wells.")
+    _render_quick_stats(result)
     table, wells_by_key = _well_table(result.wells, plate_index)
     revision = int(st.session_state.get("growth_comparison_search_revision", 0))
     with st.form("growth-comparison-add-wells"):
@@ -238,6 +277,31 @@ def _render_search_results(
         st.error("Select at least one well to add.")
         return
     _add_to_basket(selected)
+
+
+def _render_quick_stats(result: GrowthWellSearchResult) -> None:
+    quick_stats = result.quick_stats
+    if quick_stats is None:
+        return
+    st.subheader("Quick stats")
+    largest_group = max((group.well_count for group in quick_stats.groups), default=0)
+    metrics = st.columns(3)
+    metrics[0].metric("Matching wells", quick_stats.total_wells)
+    metrics[1].metric("Condition groups", len(quick_stats.groups))
+    metrics[2].metric("Largest well group", largest_group)
+    st.caption(
+        "Replicate wells (n) is the actual number of wells sharing the selected metadata "
+        "combination; the saved Replicate field is not used."
+    )
+    records = [
+        {
+            **dict(zip((field.label for field in quick_stats.fields), group.values, strict=True)),
+            "Replicate wells (n)": group.well_count,
+            "Runs represented": group.plate_count,
+        }
+        for group in quick_stats.groups
+    ]
+    st.dataframe(pd.DataFrame.from_records(records), hide_index=True, width="stretch", height=280)
 
 
 def _stored_search_result(source_key: tuple[str, ...]) -> GrowthWellSearchResult | None:
@@ -334,6 +398,7 @@ def _well_table(
                 "Treatment": well.treatment or "—",
                 "Concentration": _concentration_label(well),
                 "Medium": well.medium or "—",
+                "Inoculum": _inoculum_label(well),
                 "Replicate": "—" if well.replicate is None else str(well.replicate),
                 "Group": well.grouping_label or "—",
             }
@@ -396,7 +461,20 @@ def _index_wells(plate_index: Sequence[GrowthComparisonPlate]) -> tuple[GrowthCo
 
 def _facet_values(wells: Iterable[GrowthComparisonWell], name: str) -> tuple[object, ...]:
     values = {getattr(well, name) for well in wells if getattr(well, name) is not None}
-    return tuple(sorted(values, key=lambda value: (str(value).casefold(), str(value))))
+    return tuple(sorted(values, key=_facet_sort_key))
+
+
+def _facet_sort_key(value: object) -> tuple[int, Decimal | str, str]:
+    if isinstance(value, Real | Decimal) and not isinstance(value, bool):
+        return (0, Decimal(str(value)), str(value))
+    text = str(value)
+    return (1, text.casefold(), text)
+
+
+def _facet_label(value: object) -> str:
+    if isinstance(value, Real | Decimal) and not isinstance(value, bool):
+        return format(Decimal(str(value)).normalize(), "f")
+    return str(value)
 
 
 def _comparison_plate_label(plate: GrowthComparisonPlate) -> str:
@@ -410,6 +488,13 @@ def _concentration_label(well: GrowthComparisonWell) -> str:
         return "—"
     value = str(well.concentration)
     return f"{value} {well.concentration_unit}" if well.concentration_unit else value
+
+
+def _inoculum_label(well: GrowthComparisonWell) -> str:
+    if well.inoculum_size is None:
+        return "—"
+    value = _facet_label(well.inoculum_size)
+    return f"{value} {well.inoculum_unit}" if well.inoculum_unit else value
 
 
 def _render_comparison_plot(source_key: tuple[str, ...]) -> None:
