@@ -224,8 +224,22 @@ def test_growth_workspace_save_boundaries_and_raw_immutability(
     assert _experiment_name(database_path) == "Saved Growth name"
     assert _growth_raw_hash(database_path) == raw_before
 
+    staged_layout = app.session_state[workspace_layout_key].copy(deep=True)
+    staged_layout.loc[staged_layout["Well"] == "A1", "Strain"] = "updated-strain"
+    app.session_state[workspace_layout_key] = staged_layout
+    app.run()
     _click(app, "Save full layout")
     assert _growth_raw_hash(database_path) == raw_before
+
+    next(item for item in app.multiselect if item.label == "Curve label fields in order").set_value(
+        ["Strain"]
+    )
+    _input_named(app, "Label prefix").set_value("")
+    _click(app, "Render selected curves")
+    style_by_position = {
+        style.position: style for style in app.session_state["growth_plot_styles"].styles
+    }
+    assert style_by_position["A1"].legend_label == "updated-strain"
 
     _click(app, "Select all")
     assert _selected_metric(app) == "96"

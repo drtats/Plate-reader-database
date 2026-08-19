@@ -955,6 +955,7 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
             UpdateWellLayout(context.actor, plate_id, source_updated_at, changes)
         )
         st.session_state[source_key] = str(saved.metadata["updated_at"])
+        _invalidate_growth_view(plate_id)
         _clear_growth_plot()
 
     render_growth_display_name_controls(
@@ -988,6 +989,7 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
                     growth_layout_changes(frame),
                 )
             )
+            _invalidate_growth_view(plate_id)
             _clear_growth_plot()
             _invalidate_growth_discovery()
             st.success("Full layout saved without rewriting measurements.")
@@ -1375,6 +1377,14 @@ def _clear_growth_plot() -> None:
         "growth_plate_overview_plate_id",
     ):
         st.session_state.pop(key, None)
+
+
+def _invalidate_growth_view(plate_id: PlateId) -> None:
+    """Force the next workspace rerun to load the just-saved well layout."""
+
+    cache = st.session_state.get("run_cache")
+    if isinstance(cache, dict):
+        cache.pop(str(plate_id), None)
 
 
 def _invalidate_growth_discovery() -> None:
