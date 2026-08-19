@@ -81,6 +81,13 @@ from plate_reader.application.services.growth_selection import (
     growth_selection_fields,
     normalize_growth_selection,
 )
+from plate_reader.application.services.growth_tabular_export import (
+    ExportGrowthTabularData,
+    ExportGrowthTabularDataService,
+    GrowthTabularCsvArtifact,
+    GrowthTabularExportBundle,
+    export_growth_tabular_data,
+)
 from plate_reader.application.services.growth_workflow import (
     BackgroundRevisionResult,
     ComputeGrowthBackgroundService,
@@ -152,6 +159,8 @@ __all__ = [
     "DeleteOptionService",
     "DeletePlateTemplateService",
     "ExportGrowthRunService",
+    "ExportGrowthTabularData",
+    "ExportGrowthTabularDataService",
     "ExportMicPlateService",
     "GrowthBackgroundGroupSource",
     "GrowthBackgroundQcGroup",
@@ -187,6 +196,8 @@ __all__ = [
     "GrowthSelectionField",
     "GrowthSelectionOperation",
     "GrowthSeriesStyle",
+    "GrowthTabularCsvArtifact",
+    "GrowthTabularExportBundle",
     "GrowthWellFilter",
     "GrowthWellSearchFilter",
     "GrowthWellSearchResult",
@@ -243,6 +254,7 @@ __all__ = [
     "export_growth_plot_data_csv",
     "export_growth_plot_pdf",
     "export_growth_plot_wide_csv",
+    "export_growth_tabular_data",
     "growth_selection_fields",
     "normalize_growth_selection",
     "preview_growth_display_name_csv",

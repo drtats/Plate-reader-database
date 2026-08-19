@@ -78,6 +78,22 @@ reference tables, 96-well grids, and selection lists.
 Both CSVs contain the selected prepared data. The long export preserves physical
 identity; the wide export prioritizes readable curve names.
 
+For complete data from several runs, open **Growth Data Export** in the sidebar.
+Search the Library metadata, select one or more Growth runs, and press **Prepare
+selected runs**. Searching and checking rows do not load measurements. Preparation
+creates two files:
+
+- `growth_runs.csv`: every OD observation with separate **Raw OD**, **Background
+  Mean OD**, and **Background Subtracted OD** columns, plus background SD, blank
+  count, group, and QC status;
+- `growth_runs_metadata.csv`: one run row and one row per well for each selected
+  plate.
+
+If a background revision is missing or stale, raw OD is still exported while the
+background and corrected cells remain blank and the QC reason identifies the
+problem. Recompute the background revision before preparing the files when
+complete corrected data is required.
+
 ## Edit safely and read Activity log
 
 Metadata and layout changes are staged until an explicit Save. Activity log then
@@ -100,5 +116,6 @@ new run.
 2. Inspect raw heatmaps before background correction.
 3. Save blank/group assignments and compute the background revision.
 4. Render corrected curves with meaningful Display names.
-5. Export long CSV for the record and wide CSV for downstream plotting.
+5. Export long CSV for the record and wide CSV for downstream plotting, or use
+   Growth Data Export when combining complete runs.
 6. Check Activity log after any saved metadata or layout correction.

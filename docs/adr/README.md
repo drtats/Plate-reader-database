@@ -35,3 +35,4 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0023](0023-separate-library-discovery-and-plate-comparison.md): separate Library and comparison
 - [ADR-0024](0024-select-individual-wells-for-plate-comparison.md): individual-well comparison selection
 - [ADR-0025](0025-add-library-medium-and-inoculum-summaries.md): Library medium/inoculum summaries
+- [ADR-0026](0026-add-multi-run-growth-tabular-export.md): multi-run Growth tabular export

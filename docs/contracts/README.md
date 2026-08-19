@@ -7,6 +7,8 @@
   checksum protocol.
 - `DOMAIN_V1.md`: validated growth/MIC algorithms, formulas, and intentional
   legacy corrections.
+- `GROWTH_TABULAR_EXPORT_V1.md`: exact multi-run Growth observation/metadata CSV
+  columns, formulas, ordering, and missing-background behavior.
 
 The executable counterparts are the typed DTO/repository protocols under
 `src/plate_reader/application`, SQL under `migrations`, and golden fixtures/tests
