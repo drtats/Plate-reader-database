@@ -135,8 +135,8 @@ def test_plot_download_uses_safe_stable_png_filename() -> None:
     assert config["toImageButtonOptions"] == {
         "format": "png",
         "filename": "my-growth-24-h--test",
-        "width": 1_200,
-        "height": 750,
+        "width": None,
+        "height": None,
         "scale": 2,
     }
 

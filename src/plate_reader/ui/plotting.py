@@ -226,8 +226,8 @@ def plot_download_config(
     title: str,
     plate_id: str,
     *,
-    width: int = 1_200,
-    height: int = 750,
+    width: int | None = None,
+    height: int | None = None,
 ) -> dict[str, object]:
     filename_source = title.strip() or f"growth-plot-{plate_id}"
     filename = "-".join(filename_source.lower().split())
