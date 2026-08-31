@@ -5,6 +5,8 @@ schema, portable-format, and scientific compatibility impact.
 
 ## Unreleased
 
+- Excluded PyArrow 25.0.0, whose bundled allocator can crash Streamlit across
+  script reruns, and moved hosted/local deployments to the fixed 25.0.1 patch.
 - Added a separate multi-run Growth Data Export page that creates the established
   observation and metadata CSV pair with explicit raw, background, and corrected
   OD columns and visible stale/missing-background QC.

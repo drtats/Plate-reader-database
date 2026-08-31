@@ -6,16 +6,19 @@
 
 ## Context
 
-On macOS ARM, opening the shared plate editor after saving import metadata could
-terminate the Python process with `Segmentation fault: 11`. The native stack
-ended in `pyarrow.pandas_compat.convert_column` while Streamlit serialized the
-8x12 `st.data_editor`. Because this is a native allocator crash, Python exception
+Opening the shared plate editor after saving import metadata could terminate the
+Python process with `Segmentation fault: 11`. The native stack ended in
+`pyarrow.pandas_compat.convert_column` while Streamlit serialized the 8x12
+`st.data_editor`. Because this is a native allocator crash, Python exception
 handling and Streamlit error messages cannot intercept it.
 
 The failure reproduced deterministically on the second in-process editor render
 with Python 3.12, Streamlit 1.54, and PyArrow 25 using Arrow's default `mimalloc`
 pool. The same workload completed 100 consecutive renders with Arrow's system
-memory pool.
+memory pool. Apache Arrow later confirmed that PyArrow 25.0.0's bundled mimalloc
+can crash when Streamlit loads Arrow on one short-lived script thread and a later
+rerun allocates on another thread. The defect affects Linux and Windows as well
+as macOS and was fixed in PyArrow 25.0.1.
 
 ## Decision
 
@@ -23,7 +26,8 @@ Configure PyArrow to use `system_memory_pool()` at application startup and again
 at the shared editor boundary. Export `ARROW_DEFAULT_MEMORY_POOL=system` from the
 double-click launcher so the safe allocator is selected before Python imports.
 Declare PyArrow as a direct dependency because application code now configures
-its runtime API.
+its runtime API, and require PyArrow 25.0.1 or later within the tested major
+version so hosted deployments cannot resolve the affected 25.0.0 wheel.
 
 Keep the existing pandas/Arrow column normalization. This decision changes only
 the native allocator; it does not change editor values, database writes, or the
@@ -31,10 +35,10 @@ shared 8x12 plus 96-row UI.
 
 ## Consequences
 
-Standalone, local, test, and hosted execution use one stable allocator for Arrow
-widget serialization. There may be a small allocation-performance difference,
-but the editor workload is tiny relative to raw measurement storage and process
-stability takes priority.
+Standalone, local, test, and hosted execution use the upstream allocator fix and
+one stable allocator for Arrow widget serialization. There may be a small
+allocation-performance difference, but the editor workload is tiny relative to
+raw measurement storage and process stability takes priority.
 
 ## Verification
 
