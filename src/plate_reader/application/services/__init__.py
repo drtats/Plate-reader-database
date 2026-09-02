@@ -112,6 +112,12 @@ from plate_reader.application.services.identity import (
     OidcClaims,
     ResolveAuthenticatedActorService,
 )
+from plate_reader.application.services.layout_columns import (
+    DeleteLayoutColumnService,
+    LayoutColumn,
+    ListLayoutColumnsService,
+    SaveLayoutColumnService,
+)
 from plate_reader.application.services.mic_import import (
     ImportMicPlateService,
     MicImportResult,
@@ -162,6 +168,7 @@ __all__ = [
     "BuildGrowthPlotStylesService",
     "ComputeGrowthBackgroundService",
     "ComputeMicRevisionService",
+    "DeleteLayoutColumnService",
     "DeleteOptionService",
     "DeletePlateTemplateService",
     "ExportGrowthRunService",
@@ -216,6 +223,8 @@ __all__ = [
     "ImportGrowthRunService",
     "ImportMicPlateService",
     "ImportPortableRunService",
+    "LayoutColumn",
+    "ListLayoutColumnsService",
     "ListPlateTemplatesService",
     "ListSavedOptionsService",
     "LoadGrowthComparisonPlotService",
@@ -240,6 +249,7 @@ __all__ = [
     "PreviewPortableRunService",
     "ResolveAuthenticatedActorService",
     "RestoreMicPlateService",
+    "SaveLayoutColumnService",
     "SaveOptionService",
     "SavePlateTemplateService",
     "SavedOption",

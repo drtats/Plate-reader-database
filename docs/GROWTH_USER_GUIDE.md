@@ -91,6 +91,11 @@ creates two files:
 - `growth_runs_metadata.csv`: one run row and one row per well for each selected
   plate.
 
+Custom columns added under **Manage custom columns** are shared by every Growth
+experiment. Their values remain specific to each well and experiment. Both export
+files append the same custom-column headers, including universally registered
+columns whose values are blank in the selected runs.
+
 If a background revision is missing or stale, raw OD is still exported while the
 background and corrected cells remain blank and the QC reason identifies the
 problem. Recompute the background revision before preparing the files when

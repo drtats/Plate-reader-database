@@ -10,11 +10,16 @@ then ordered by channel and integer time identity.
 
 ## `growth_runs.csv`
 
-This file has one row per immutable Growth observation. Its exact columns are:
+This file has one row per immutable Growth observation. Its fixed columns are:
 
 ```text
 Cultivation Short ID,Date Time,Culture Age H,Well Row,Well Column,Culture Volume uL,Condition 1 State,Condition 2 State,Condition 3 State,Background Subtracted OD,Microplate ID,Background Mean OD,Background SD OD,Background Blank N,Background QC Flag,Background QC Reason,Run ID,Project,Experiment Name,Well,Time Min,Signal Type,Raw OD,Blank,BG Group,Strain,Media,Replicate,Notes
 ```
+
+Custom Growth layout columns follow these fixed columns in case-insensitive
+alphabetical order. The export uses the union of assay-wide column definitions and
+custom fields present in the selected wells, so a registered column remains in the
+file even when all selected experiments have blank values.
 
 The three OD fields are intentionally separate:
 
@@ -42,11 +47,14 @@ concentration, and unit without changing their source values.
 ## `growth_runs_metadata.csv`
 
 This file contains one `run` row followed by one `well` row per selected plate.
-Its exact columns are:
+Its fixed columns are:
 
 ```text
 Metadata Level,Run ID,Project,Experiment Name,Experiment Date,User,Instrument,Temperature,Source Folder,Editable Metadata JSON,Source Metadata JSON,run_id,well,display_name,media,strain,inoculum_size,treatments,is_blank,bg_group,row,col,raw_label,plot,group,replicate,notes,treatment_1,conc_1,unit_1,t0_added_min
 ```
+
+The same ordered custom Growth layout columns are appended after
+`t0_added_min`. Run rows leave them blank; well rows contain that well's value.
 
 Run rows leave all well-only columns blank. Well rows repeat the run context and
 populate the lower-case legacy-compatible fields. Retained editable and source

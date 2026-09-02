@@ -16,10 +16,13 @@ from plate_reader.application.contracts import (
     UserId,
 )
 from plate_reader.application.services import (
+    DeleteLayoutColumnService,
     DeleteOptionService,
     DeletePlateTemplateService,
+    ListLayoutColumnsService,
     ListPlateTemplatesService,
     ListSavedOptionsService,
+    SaveLayoutColumnService,
     SaveOptionService,
     SavePlateTemplateService,
 )
@@ -140,6 +143,38 @@ def test_saved_options_are_controlled_deduplicated_and_audited(
     ).fetchall()
     assert [row[0] for row in events].count("saved_option_added") == 1
     assert [row[0] for row in events].count("saved_option_deleted") == 1
+
+
+def test_layout_columns_are_assay_wide_editor_managed_and_audited(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    saved = SaveLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, " Oxygen ")
+    duplicate = SaveLayoutColumnService(repository).execute(ADMIN, AssayType.GROWTH, "oxygen")
+    SaveLayoutColumnService(repository).execute(EDITOR, AssayType.MIC, "Oxygen")
+
+    assert saved.name == "Oxygen"
+    assert duplicate == saved
+    assert tuple(
+        column.name
+        for column in ListLayoutColumnsService(repository).execute(VIEWER, AssayType.GROWTH)
+    ) == ("Oxygen",)
+    assert tuple(
+        column.name
+        for column in ListLayoutColumnsService(repository).execute(VIEWER, AssayType.MIC)
+    ) == ("Oxygen",)
+    with pytest.raises(ValueError, match="reserved"):
+        SaveLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, "Run ID")
+    with pytest.raises(PermissionError):
+        SaveLayoutColumnService(repository).execute(VIEWER, AssayType.GROWTH, "Vessel")
+
+    DeleteLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, "Oxygen")
+    assert ListLayoutColumnsService(repository).execute(VIEWER, AssayType.GROWTH) == ()
+    assert len(ListLayoutColumnsService(repository).execute(VIEWER, AssayType.MIC)) == 1
+    events = repository.connection.execute(
+        "SELECT event_type FROM provenance_events ORDER BY occurred_at, event_id"
+    ).fetchall()
+    assert [row[0] for row in events].count("layout_column_added") == 2
+    assert [row[0] for row in events].count("layout_column_deleted") == 1
 
 
 def test_template_validation_rejects_incomplete_or_nonfinite_layout(

@@ -81,6 +81,30 @@ def test_missing_background_keeps_raw_od_and_exposes_qc_reason() -> None:
     assert any("no current background revision" in warning for warning in bundle.warnings)
 
 
+def test_custom_layout_columns_are_appended_to_both_exports() -> None:
+    view = _view()
+    view.snapshot.wells[0]["custom_json"] = json.dumps(
+        {
+            "treatment_1": "Mecillinam",
+            "conc_1": 3.0,
+            "unit_1": "ug/mL",
+            "t0_added_min": 0.0,
+            "oxygen": "anaerobic",
+        }
+    )
+
+    bundle = export_growth_tabular_data((view,), custom_columns=("Oxygen", "Vessel"))
+    measurement_rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+
+    assert tuple(measurement_rows[0]) == (*GROWTH_MEASUREMENT_HEADERS, "Oxygen", "Vessel")
+    assert tuple(metadata_rows[0]) == (*GROWTH_METADATA_HEADERS, "Oxygen", "Vessel")
+    assert measurement_rows[0]["Oxygen"] == "anaerobic"
+    assert measurement_rows[0]["Vessel"] == ""
+    assert metadata_rows[0]["Oxygen"] == ""
+    assert metadata_rows[1]["Oxygen"] == "anaerobic"
+
+
 def test_export_rejects_empty_duplicate_and_non_growth_views() -> None:
     with pytest.raises(ValueError, match="at least one run"):
         export_growth_tabular_data(())

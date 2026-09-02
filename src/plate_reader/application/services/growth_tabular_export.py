@@ -16,6 +16,7 @@ from plate_reader.application.services.growth_workflow import (
     GrowthWorkflowRepository,
     LoadGrowthRunService,
 )
+from plate_reader.application.services.layout_columns import ListLayoutColumnsService
 
 GROWTH_MEASUREMENT_HEADERS = (
     "Cultivation Short ID",
@@ -98,6 +99,10 @@ _SOURCE_METADATA_KEYS = (
     "metadata_source",
 )
 _CORRECTED_OD_FLOOR = 0.0001
+_STRUCTURED_CUSTOM_KEYS = {
+    "t0_added_min",
+    *(f"{prefix}_{index}" for prefix in ("treatment", "conc", "unit") for index in range(1, 4)),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,11 +157,19 @@ class ExportGrowthTabularDataService:
             raise ValueError("Growth tabular export run IDs must be unique")
         loader = LoadGrowthRunService(self.repository)
         views = tuple(loader.execute(command.actor, plate_id) for plate_id in command.plate_ids)
-        return export_growth_tabular_data(views)
+        custom_columns = tuple(
+            column.name
+            for column in ListLayoutColumnsService(self.repository).execute(
+                command.actor, AssayType.GROWTH
+            )
+        )
+        return export_growth_tabular_data(views, custom_columns=custom_columns)
 
 
 def export_growth_tabular_data(
     views: Sequence[GrowthRunView],
+    *,
+    custom_columns: Sequence[str] = (),
 ) -> GrowthTabularExportBundle:
     """Build deterministic multi-run measurement and metadata CSV files."""
 
@@ -166,12 +179,14 @@ def export_growth_tabular_data(
     if len(set(plate_ids)) != len(plate_ids):
         raise ValueError("Growth tabular export views must have unique plate IDs")
 
+    exported_custom_columns = _custom_column_names(views, custom_columns)
+
     measurement_stream = io.StringIO(newline="")
     metadata_stream = io.StringIO(newline="")
     measurement_writer = csv.writer(measurement_stream, lineterminator="\n")
     metadata_writer = csv.writer(metadata_stream, lineterminator="\n")
-    measurement_writer.writerow(GROWTH_MEASUREMENT_HEADERS)
-    metadata_writer.writerow(GROWTH_METADATA_HEADERS)
+    measurement_writer.writerow((*GROWTH_MEASUREMENT_HEADERS, *exported_custom_columns))
+    metadata_writer.writerow((*GROWTH_METADATA_HEADERS, *exported_custom_columns))
 
     measurement_count = 0
     metadata_count = 0
@@ -179,12 +194,12 @@ def export_growth_tabular_data(
     for view in views:
         context = _run_context(view)
         warnings.extend(_run_warnings(context))
-        metadata_writer.writerow(_run_metadata_row(context))
+        metadata_writer.writerow(_run_metadata_row(context, exported_custom_columns))
         metadata_count += 1
         for well in view.snapshot.wells:
-            metadata_writer.writerow(_well_metadata_row(context, well))
+            metadata_writer.writerow(_well_metadata_row(context, well, exported_custom_columns))
             metadata_count += 1
-        for row in _measurement_rows(context):
+        for row in _measurement_rows(context, exported_custom_columns):
             measurement_writer.writerow(row)
             measurement_count += 1
 
@@ -284,7 +299,7 @@ def _run_warnings(context: _RunContext) -> tuple[str, ...]:
     return tuple(warnings)
 
 
-def _run_metadata_row(context: _RunContext) -> tuple[object, ...]:
+def _run_metadata_row(context: _RunContext, custom_columns: Sequence[str]) -> tuple[object, ...]:
     return (
         "run",
         context.run_id,
@@ -298,10 +313,15 @@ def _run_metadata_row(context: _RunContext) -> tuple[object, ...]:
         _json_cell(context.editable_metadata),
         _json_cell(context.source_metadata),
         *("" for _value in range(20)),
+        *("" for _column in custom_columns),
     )
 
 
-def _well_metadata_row(context: _RunContext, well: Mapping[str, object]) -> tuple[object, ...]:
+def _well_metadata_row(
+    context: _RunContext,
+    well: Mapping[str, object],
+    custom_columns: Sequence[str],
+) -> tuple[object, ...]:
     position = _required_text(well.get("position"), "Growth export well position")
     custom = _well_custom(well)
     treatment = _first_value(custom.get("treatment_1"), well.get("treatment"))
@@ -339,10 +359,13 @@ def _well_metadata_row(context: _RunContext, well: Mapping[str, object]) -> tupl
         concentration,
         unit,
         _first_value(custom.get("t0_added_min"), 0.0),
+        *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
     )
 
 
-def _measurement_rows(context: _RunContext) -> tuple[tuple[object, ...], ...]:
+def _measurement_rows(
+    context: _RunContext, custom_columns: Sequence[str]
+) -> tuple[tuple[object, ...], ...]:
     wells_by_id = {
         _required_text(well.get("well_id"), "Growth export well ID"): well
         for well in context.view.snapshot.wells
@@ -448,6 +471,7 @@ def _measurement_rows(context: _RunContext) -> tuple[tuple[object, ...], ...]:
                 well.get("medium"),
                 well.get("replicate"),
                 well.get("notes"),
+                *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
             )
         )
     return tuple(result)
@@ -523,6 +547,46 @@ def _well_custom(well: Mapping[str, object]) -> Mapping[str, object]:
         **_json_object(well.get("condition_custom_json")),
         **_json_object(well.get("custom_json")),
     }
+
+
+def _custom_column_names(
+    views: Sequence[GrowthRunView], declared: Sequence[str]
+) -> tuple[str, ...]:
+    """Return stable custom headers, including declared columns with no values."""
+
+    names = {
+        str(name).strip().casefold(): str(name).strip() for name in declared if str(name).strip()
+    }
+    for view in views:
+        for well in view.snapshot.wells:
+            for raw_name in _well_custom(well):
+                name = str(raw_name).strip()
+                if name:
+                    names.setdefault(name.casefold(), name)
+    unavailable = {
+        *(header.casefold() for header in GROWTH_MEASUREMENT_HEADERS),
+        *(header.casefold() for header in GROWTH_METADATA_HEADERS),
+        *(name.casefold() for name in _STRUCTURED_CUSTOM_KEYS),
+    }
+    return tuple(
+        sorted(
+            (name for folded, name in names.items() if folded not in unavailable),
+            key=str.casefold,
+        )
+    )
+
+
+def _custom_cell(value: object) -> object:
+    if isinstance(value, Mapping):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if isinstance(value, (list, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return "" if value is None else value
+
+
+def _custom_value(custom: Mapping[str, object], column: str) -> object | None:
+    expected = column.casefold()
+    return next((value for name, value in custom.items() if name.casefold() == expected), None)
 
 
 def _background_group(well: Mapping[str, object]) -> str:

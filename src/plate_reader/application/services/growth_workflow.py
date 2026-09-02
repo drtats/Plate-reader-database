@@ -84,6 +84,10 @@ class GrowthWorkflowRepository(Protocol):
 
     def provenance_for_plate(self, plate_id: PlateId) -> tuple[dict[str, object], ...]: ...
 
+    def list_saved_options(
+        self, option_type: str | None = None
+    ) -> tuple[dict[str, object], ...]: ...
+
 
 class PortableRunExporter(Protocol):
     def export(

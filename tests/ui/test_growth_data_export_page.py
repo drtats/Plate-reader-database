@@ -42,6 +42,9 @@ class Repository:
     def user_by_email(self, _email):
         return {"user_id": "user-1", "role": "viewer", "is_active": True}
 
+    def list_saved_options(self, _option_type=None):
+        return ()
+
     def search_runs(self, _filters):
         st.session_state["search_calls"] = st.session_state.get("search_calls", 0) + 1
         return tuple(

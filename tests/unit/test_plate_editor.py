@@ -13,12 +13,24 @@ from plate_reader.ui.plate_editor import (
     growth_layout_frame,
     growth_layout_frame_from_wells,
     growth_template_layout,
+    include_layout_columns,
     mic_layout_changes,
     mic_layout_frame,
     mic_layout_frame_from_snapshot,
     mic_template_layout,
     plate_matrix,
 )
+
+
+def test_universal_layout_columns_are_added_without_overwriting_plate_values() -> None:
+    frame = growth_layout_frame()
+    frame["Oxygen"] = "aerobic"
+
+    updated = include_layout_columns(frame, ("oxygen", "Vessel"))
+
+    assert "oxygen" not in updated
+    assert set(updated["Oxygen"]) == {"aerobic"}
+    assert set(updated["Vessel"]) == {""}
 
 
 def test_growth_grid_and_table_share_physical_plate_order() -> None:

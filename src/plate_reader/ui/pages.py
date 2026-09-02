@@ -83,7 +83,10 @@ from plate_reader.ui.growth_history import (
 from plate_reader.ui.growth_overview import render_growth_heatmap
 from plate_reader.ui.growth_selector import render_growth_well_selector
 from plate_reader.ui.option_controls import (
+    delete_layout_custom_column,
+    layout_custom_column_names,
     render_saved_option_controls,
+    save_layout_custom_column,
     saved_option_suggestions,
 )
 from plate_reader.ui.plate_editor import (
@@ -525,11 +528,17 @@ def wizard_layout(context: AppContext) -> None:
         if label_text
         else {}
     )
+    custom_columns = layout_custom_column_names(context, AssayType.GROWTH)
     frame = render_plate_editor(
         growth_layout_frame(labels),
         state_key="growth_layout_frame",
         assay="growth",
         suggestions=saved_option_suggestions(context, AssayType.GROWTH),
+        universal_custom_columns=custom_columns,
+        add_custom_column=lambda name: save_layout_custom_column(context, AssayType.GROWTH, name),
+        delete_custom_column=lambda name: delete_layout_custom_column(
+            context, AssayType.GROWTH, name
+        ),
     )
     render_growth_display_name_controls(
         frame,
@@ -939,11 +948,17 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
         st.session_state[state_key] = growth_layout_frame_from_wells(view.snapshot.wells)
         st.session_state[f"{state_key}_revision"] = 0
         st.session_state[source_key] = source_updated_at
+    custom_columns = layout_custom_column_names(context, AssayType.GROWTH)
     frame = render_plate_editor(
         growth_layout_frame_from_wells(view.snapshot.wells),
         state_key=state_key,
         assay="growth",
         suggestions=saved_option_suggestions(context, AssayType.GROWTH),
+        universal_custom_columns=custom_columns,
+        add_custom_column=lambda name: save_layout_custom_column(context, AssayType.GROWTH, name),
+        delete_custom_column=lambda name: delete_layout_custom_column(
+            context, AssayType.GROWTH, name
+        ),
     )
     persisted_selection = tuple(
         str(row["Well"]) for row in frame.to_dict(orient="records") if bool(row["Plot"])

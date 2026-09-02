@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -395,6 +395,19 @@ def normalize_layout_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized.sort_values("__order").drop(columns="__order").reset_index(drop=True)
 
 
+def include_layout_columns(frame: pd.DataFrame, column_names: Sequence[str]) -> pd.DataFrame:
+    """Add missing universal columns without changing existing plate values."""
+
+    updated = normalize_layout_frame(frame)
+    known = {str(column).casefold() for column in updated.columns}
+    for raw_name in column_names:
+        name = str(raw_name).strip()
+        if name and name.casefold() not in known:
+            updated[name] = ""
+            known.add(name.casefold())
+    return updated
+
+
 def replace_editor_frame(state_key: str, frame: pd.DataFrame) -> None:
     """Replace a staged editor frame and invalidate both synchronized widgets."""
 
@@ -410,15 +423,21 @@ def render_plate_editor(
     assay: str,
     immutable_columns: Sequence[str] = (),
     suggestions: Mapping[str, Sequence[str]] | None = None,
+    universal_custom_columns: Sequence[str] = (),
+    add_custom_column: Callable[[str], None] | None = None,
+    delete_custom_column: Callable[[str], None] | None = None,
 ) -> pd.DataFrame:  # pragma: no cover - Streamlit widget composition
     """Render the legacy dual-view editor and return its canonical session frame."""
 
     configure_arrow_memory_pool()
     revision_key = f"{state_key}_revision"
     if state_key not in st.session_state:
-        st.session_state[state_key] = normalize_layout_frame(initial_frame)
+        st.session_state[state_key] = include_layout_columns(
+            initial_frame, universal_custom_columns
+        )
         st.session_state[revision_key] = 0
-    frame = normalize_layout_frame(st.session_state[state_key])
+    frame = include_layout_columns(st.session_state[state_key], universal_custom_columns)
+    st.session_state[state_key] = frame
     revision = int(st.session_state[revision_key])
 
     st.caption(
@@ -433,7 +452,15 @@ def render_plate_editor(
         with table_tab:
             st.caption("Interactive 96-row table editor enabled in the running app.")
         return frame
-    _render_custom_columns(frame, state_key, revision_key)
+    _render_custom_columns(
+        frame,
+        state_key,
+        revision_key,
+        assay,
+        universal_custom_columns,
+        add_custom_column,
+        delete_custom_column,
+    )
     frame = normalize_layout_frame(st.session_state[state_key])
     _render_fill_helpers(
         frame,
@@ -505,21 +532,38 @@ def render_plate_editor(
 
 
 def _render_custom_columns(  # pragma: no cover - Streamlit widget composition
-    frame: pd.DataFrame, state_key: str, revision_key: str
+    frame: pd.DataFrame,
+    state_key: str,
+    revision_key: str,
+    assay: str,
+    universal_custom_columns: Sequence[str],
+    add_custom_column: Callable[[str], None] | None,
+    delete_custom_column: Callable[[str], None] | None,
 ) -> None:
     with st.expander("Manage custom columns"):
+        export_note = " and included in Growth tabular exports" if assay == "growth" else ""
+        st.caption(
+            f"New columns are shared with every {assay.upper()} layout{export_note}. "
+            "Values remain specific to each experiment."
+        )
         add_name, add_button = st.columns((3, 1))
         new_name = add_name.text_input("New custom column", key=f"{state_key}_new_column")
         if add_button.button("Add column", key=f"{state_key}_add_column"):
             clean_name = new_name.strip()
             if not clean_name:
                 st.error("Enter a custom column name.")
-            elif clean_name in frame.columns:
+            elif clean_name.casefold() in {str(column).casefold() for column in frame.columns}:
                 st.error(f"{clean_name} already exists.")
             else:
-                updated = frame.copy(deep=True)
-                updated[clean_name] = ""
-                _replace_frame(state_key, revision_key, updated)
+                try:
+                    if add_custom_column is not None:
+                        add_custom_column(clean_name)
+                except Exception as error:
+                    st.error(f"Could not add universal custom column: {error}")
+                else:
+                    updated = frame.copy(deep=True)
+                    updated[clean_name] = ""
+                    _replace_frame(state_key, revision_key, updated)
         removable = [
             column for column in frame.columns if column not in (*GROWTH_COLUMNS, *MIC_COLUMNS)
         ]
@@ -529,7 +573,16 @@ def _render_custom_columns(  # pragma: no cover - Streamlit widget composition
                 "Remove custom column", removable, key=f"{state_key}_remove_column"
             )
             if remove_button.button("Remove column", key=f"{state_key}_remove_column_button"):
-                _replace_frame(state_key, revision_key, frame.drop(columns=selected))
+                universal = {
+                    str(column).casefold(): str(column) for column in universal_custom_columns
+                }
+                try:
+                    if selected.casefold() in universal and delete_custom_column is not None:
+                        delete_custom_column(universal[selected.casefold()])
+                except Exception as error:
+                    st.error(f"Could not remove universal custom column: {error}")
+                else:
+                    _replace_frame(state_key, revision_key, frame.drop(columns=selected))
 
 
 def _render_fill_helpers(

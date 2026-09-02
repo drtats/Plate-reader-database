@@ -9,8 +9,11 @@ import streamlit as st
 
 from plate_reader.application.contracts import AssayType, DeleteOption, Role, SaveOption
 from plate_reader.application.services import (
+    DeleteLayoutColumnService,
     DeleteOptionService,
+    ListLayoutColumnsService,
     ListSavedOptionsService,
+    SaveLayoutColumnService,
     SaveOptionService,
 )
 from plate_reader.ui.context import AppContext
@@ -64,6 +67,29 @@ def saved_option_suggestions(
         if column is not None:
             values[column].append(option.value)
     return {column: tuple(items) for column, items in values.items() if items}
+
+
+def layout_custom_column_names(context: AppContext, assay_type: AssayType) -> tuple[str, ...]:
+    """Return custom columns shared by every layout of one assay type."""
+
+    return tuple(
+        column.name
+        for column in ListLayoutColumnsService(context.repository).execute(
+            context.actor, assay_type
+        )
+    )
+
+
+def save_layout_custom_column(context: AppContext, assay_type: AssayType, name: str) -> None:
+    """Persist a layout column so subsequent experiments expose it."""
+
+    SaveLayoutColumnService(context.repository).execute(context.actor, assay_type, name)
+
+
+def delete_layout_custom_column(context: AppContext, assay_type: AssayType, name: str) -> None:
+    """Stop offering a layout column globally without deleting saved well values."""
+
+    DeleteLayoutColumnService(context.repository).execute(context.actor, assay_type, name)
 
 
 def render_saved_option_controls(

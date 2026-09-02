@@ -58,7 +58,10 @@ from plate_reader.domain.mic import (
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.option_controls import (
+    delete_layout_custom_column,
+    layout_custom_column_names,
     render_saved_option_controls,
+    save_layout_custom_column,
     saved_option_suggestions,
 )
 from plate_reader.ui.pages import render_exception, render_records
@@ -294,11 +297,15 @@ def _mic_layout_step(context: AppContext) -> None:
             )
             st.text_area("Notes", value=str(metadata["notes"] or ""), key="mic_metadata_notes")
     wells = parse_mic_plate_csv(st.session_state.mic_csv_text)
+    custom_columns = layout_custom_column_names(context, AssayType.MIC)
     frame = render_plate_editor(
         mic_layout_frame(wells),
         state_key="mic_layout_frame",
         assay="mic",
         suggestions=saved_option_suggestions(context, AssayType.MIC),
+        universal_custom_columns=custom_columns,
+        add_custom_column=lambda name: save_layout_custom_column(context, AssayType.MIC, name),
+        delete_custom_column=lambda name: delete_layout_custom_column(context, AssayType.MIC, name),
     )
     render_plate_template_controls(
         context,
@@ -560,12 +567,16 @@ def _render_mic_layout(context: AppContext, plate_id: PlateId, view: MicPlateVie
         )
         st.session_state[f"{state_key}_revision"] = 0
         st.session_state[source_key] = source_updated_at
+    custom_columns = layout_custom_column_names(context, AssayType.MIC)
     frame = render_plate_editor(
         mic_layout_frame_from_snapshot(view.snapshot.wells, view.snapshot.raw_observations),
         state_key=state_key,
         assay="mic",
         immutable_columns=("Raw OD",),
         suggestions=saved_option_suggestions(context, AssayType.MIC),
+        universal_custom_columns=custom_columns,
+        add_custom_column=lambda name: save_layout_custom_column(context, AssayType.MIC, name),
+        delete_custom_column=lambda name: delete_layout_custom_column(context, AssayType.MIC, name),
     )
     render_plate_template_controls(
         context,

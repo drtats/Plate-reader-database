@@ -13,6 +13,7 @@ import pytest
 
 from plate_reader.application.contracts import (
     Actor,
+    AssayType,
     ComputeGrowthBackgroundRevision,
     GrowthRunMetadata,
     ImportGrowthRun,
@@ -25,6 +26,7 @@ from plate_reader.application.services import (
     ExportGrowthTabularData,
     ExportGrowthTabularDataService,
     ImportGrowthRunService,
+    SaveLayoutColumnService,
 )
 from plate_reader.domain.growth import GROWTH_BACKGROUND_VERSION, GROWTH_NORMALIZATION_VERSION
 from plate_reader.infrastructure.database import (
@@ -110,6 +112,7 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
             ComputeGrowthBackgroundRevision(ACTOR, result.plate_id, GROWTH_BACKGROUND_VERSION)
         )
 
+    SaveLayoutColumnService(repository).execute(ACTOR, AssayType.GROWTH, "Vessel")
     counts_before = _table_counts(repository)
     bundle = ExportGrowthTabularDataService(repository).execute(
         ExportGrowthTabularData(ACTOR, tuple(plate_ids))
@@ -123,6 +126,9 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
         csv.DictReader(io.StringIO(bundle.measurements.content.decode("utf-8")))
     )
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"))))
+    assert "Vessel" in measurement_rows[0]
+    assert "Vessel" in metadata_rows[0]
+    assert all(row["Vessel"] == "" for row in measurement_rows)
     assert len(measurement_rows) == 768
     assert len(metadata_rows) == 194
     assert {row["Experiment Name"] for row in measurement_rows} == {
