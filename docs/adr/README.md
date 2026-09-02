@@ -38,3 +38,4 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0026](0026-add-multi-run-growth-tabular-export.md): multi-run Growth tabular export
 - [ADR-0027](0027-make-layout-custom-columns-assay-wide.md): assay-wide layout custom columns
 - [ADR-0028](0028-backfill-existing-layout-column-definitions.md): pre-registry column backfill
+- [ADR-0029](0029-show-custom-layout-fields-in-run-library.md): custom Run Library columns

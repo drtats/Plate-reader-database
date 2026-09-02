@@ -138,9 +138,16 @@ def render_run_library(context: AppContext) -> None:
         st.session_state.run_search_results = SearchGrowthRunsService(context.repository).execute(
             SearchRuns(actor=context.actor, text=text)
         )
+        st.session_state.run_library_custom_columns = layout_custom_column_names(
+            context, AssayType.GROWTH
+        )
         st.session_state.run_search_submitted_text = text.strip()
         st.session_state.run_library_table_revision = (
             int(st.session_state.get("run_library_table_revision", 0)) + 1
+        )
+    elif "run_library_custom_columns" not in st.session_state:
+        st.session_state.run_library_custom_columns = layout_custom_column_names(
+            context, AssayType.GROWTH
         )
     results = st.session_state.run_search_results
     if not results:
@@ -150,7 +157,8 @@ def render_run_library(context: AppContext) -> None:
             st.info("No growth runs yet. Open New Growth Run to import the first plate.")
         return
 
-    table = _run_library_table(results)
+    custom_columns = cast(tuple[str, ...], st.session_state.run_library_custom_columns)
+    table = _run_library_table(results, custom_columns)
     revision = int(st.session_state.get("run_library_table_revision", 0))
     with st.form("run-library-actions"):
         edited_table = st.data_editor(
@@ -186,34 +194,46 @@ def render_run_library(context: AppContext) -> None:
         st.rerun()
 
 
-def _run_library_table(results: Sequence[RunSummary]) -> pd.DataFrame:
+def _run_library_table(
+    results: Sequence[RunSummary], custom_columns: Sequence[str] = ()
+) -> pd.DataFrame:
     """Build the fixed-row Library table with stable, hidden plate identifiers."""
 
-    rows = _run_library_rows(results)
+    rows = _run_library_rows(results, custom_columns)
     return pd.DataFrame.from_records(rows).set_index("plate_id")
 
 
-def _run_library_rows(results: Sequence[RunSummary]) -> list[dict[str, str | bool]]:
+def _run_library_rows(
+    results: Sequence[RunSummary], custom_columns: Sequence[str] = ()
+) -> list[dict[str, str | bool]]:
     """Format metadata-only run summaries for the sortable Library surface."""
 
     rows: list[dict[str, str | bool]] = []
     for run in results:
-        rows.append(
+        row: dict[str, str | bool] = {
+            "plate_id": str(run.plate_id),
+            "Select": False,
+            "Experiment": str(run.experiment_name),
+            "Plate": str(run.plate_name),
+            "Experiment date": str(run.experiment_date),
+            "Project": _display_library_value(run.project),
+            "Strains": _display_library_values(run.strains),
+            "Media": _display_library_values(run.media),
+            "Treatments": _display_library_values(run.treatments),
+            "Concentration range": _display_concentration_ranges(run.concentration_ranges),
+            "Inoculum size": _display_inoculum_ranges(run.inoculum_ranges),
+        }
+        custom_by_name = {
+            name.casefold(): values for name, values in getattr(run, "custom_fields", ())
+        }
+        row.update(
             {
-                "plate_id": str(run.plate_id),
-                "Select": False,
-                "Experiment": str(run.experiment_name),
-                "Plate": str(run.plate_name),
-                "Experiment date": str(run.experiment_date),
-                "Project": _display_library_value(run.project),
-                "Strains": _display_library_values(run.strains),
-                "Media": _display_library_values(run.media),
-                "Treatments": _display_library_values(run.treatments),
-                "Concentration range": _display_concentration_ranges(run.concentration_ranges),
-                "Inoculum size": _display_inoculum_ranges(run.inoculum_ranges),
-                "Last updated": str(run.updated_at),
+                name: _display_library_values(custom_by_name.get(name.casefold(), ()))
+                for name in custom_columns
             }
         )
+        row["Last updated"] = str(run.updated_at)
+        rows.append(row)
     return rows
 
 
@@ -1471,6 +1491,7 @@ def _invalidate_growth_discovery() -> None:
 
     for key in (
         "run_search_results",
+        "run_library_custom_columns",
         "growth_comparison_plate_index_cache",
         "growth_comparison_source_plate_ids",
         "growth_comparison_search_result",

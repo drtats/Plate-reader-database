@@ -84,12 +84,20 @@ def save_layout_custom_column(context: AppContext, assay_type: AssayType, name: 
     """Persist a layout column so subsequent experiments expose it."""
 
     SaveLayoutColumnService(context.repository).execute(context.actor, assay_type, name)
+    _invalidate_growth_library_columns(assay_type)
 
 
 def delete_layout_custom_column(context: AppContext, assay_type: AssayType, name: str) -> None:
     """Stop offering a layout column globally without deleting saved well values."""
 
     DeleteLayoutColumnService(context.repository).execute(context.actor, assay_type, name)
+    _invalidate_growth_library_columns(assay_type)
+
+
+def _invalidate_growth_library_columns(assay_type: AssayType) -> None:
+    if assay_type is AssayType.GROWTH:
+        st.session_state.pop("run_search_results", None)
+        st.session_state.pop("run_library_custom_columns", None)
 
 
 def render_saved_option_controls(

@@ -61,10 +61,11 @@ def test_run_library_table_keeps_plate_id_as_hidden_stable_index() -> None:
         treatments=("Ciprofloxacin",),
         concentration_ranges=concentration_ranges,
         inoculum_ranges=inoculum_ranges,
+        custom_fields=(("oxygen", ("anaerobic", "aerobic")),),
         updated_at="2026-08-17T12:00:00Z",
     )
 
-    table = _run_library_table((run,))
+    table = _run_library_table((run,), ("Oxygen", "Vessel"))
 
     assert list(table.index) == ["plate-1"]
     assert "plate_id" not in table.columns
@@ -76,3 +77,5 @@ def test_run_library_table_keeps_plate_id_as_hidden_stable_index() -> None:
     assert table.loc["plate-1", "Inoculum size"] == (
         "1\N{EN DASH}3 x10^6 CFU/mL, 0.05 (unit not set)"
     )
+    assert table.loc["plate-1", "Oxygen"] == "anaerobic, aerobic"
+    assert table.loc["plate-1", "Vessel"] == "—"

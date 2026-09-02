@@ -50,6 +50,7 @@ class RunSummary:
     concentration_ranges: tuple[ConcentrationRange, ...] = ()
     media: tuple[str, ...] = ()
     inoculum_ranges: tuple[InoculumRange, ...] = ()
+    custom_fields: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

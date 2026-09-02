@@ -123,6 +123,7 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "concentration_unit": "ug/mL",
                     "inoculum_size": 1.0,
                     "inoculum_unit": "x10^6 CFU/mL",
+                    "custom_json": {"Oxygen": "Low", "Vessel": "flask"},
                 },
                 {
                     "position": "A2",
@@ -133,6 +134,7 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                     "concentration_unit": "ug/mL",
                     "inoculum_size": 3.0,
                     "inoculum_unit": "X10^6 CFU/mL",
+                    "custom_json": {"oxygen": "low", "Vessel": "tube"},
                 },
             ],
         )
@@ -146,6 +148,7 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
                 {
                     **well_values("well-a4", "A4", 0, 3),
                     "is_blank": True,
+                    "custom_json": {"Oxygen": "anaerobic"},
                 },
                 {
                     **well_values("well-a5", "A5", 0, 4),
@@ -218,11 +221,16 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
         InoculumRange(1.0, 3.0, "X10^6 CFU/mL"),
         InoculumRange(5.0, 5.0, None),
     )
+    assert by_plate["plate-growth"].custom_fields == (
+        ("Oxygen", ("anaerobic", "Low")),
+        ("Vessel", ("flask", "tube")),
+    )
     assert by_plate["plate-without-conditions"].strains == ()
     assert by_plate["plate-without-conditions"].treatments == ()
     assert by_plate["plate-without-conditions"].media == ()
     assert by_plate["plate-without-conditions"].concentration_ranges == ()
     assert by_plate["plate-without-conditions"].inoculum_ranges == ()
+    assert by_plate["plate-without-conditions"].custom_fields == ()
     assert [summary.plate_id for summary in repository.search_runs({"limit": 1, "offset": 0})] == [
         "plate-without-conditions"
     ]

@@ -58,6 +58,7 @@ def test_repository_result_contracts_are_storage_neutral() -> None:
     assert summary.media == ()
     assert summary.concentration_ranges == ()
     assert summary.inoculum_ranges == ()
+    assert summary.custom_fields == ()
     assert ConcentrationRange(0.25, 1.0, "ug/mL") == ConcentrationRange(0.25, 1.0, "ug/mL")
     assert InoculumRange(1.0, 3.0, "x10^6 CFU/mL") == InoculumRange(1.0, 3.0, "x10^6 CFU/mL")
     assert snapshot.plate_id == "plate-1"

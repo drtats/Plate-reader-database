@@ -61,6 +61,7 @@ class _RunSummaryMetadata:
     inoculum_bounds: dict[str | None, tuple[str | None, float, float]] = dataclass_field(
         default_factory=dict
     )
+    custom_fields: dict[str, tuple[str, dict[str, str]]] = dataclass_field(default_factory=dict)
 
     def add_condition(
         self,
@@ -71,12 +72,17 @@ class _RunSummaryMetadata:
         medium: object,
         inoculum_size: object,
         inoculum_unit: object,
+        is_blank: object,
+        custom_json: object,
     ) -> None:
-        _add_normalized_text(self.strains, strain)
-        _add_normalized_text(self.treatments, treatment)
-        _add_normalized_text(self.media, medium)
-        _add_summary_range(self.concentration_bounds, concentration, concentration_unit)
-        _add_summary_range(self.inoculum_bounds, inoculum_size, inoculum_unit)
+        if not bool(is_blank):
+            _add_normalized_text(self.strains, strain)
+            _add_normalized_text(self.treatments, treatment)
+            _add_normalized_text(self.media, medium)
+            _add_summary_range(self.concentration_bounds, concentration, concentration_unit)
+            _add_summary_range(self.inoculum_bounds, inoculum_size, inoculum_unit)
+        for name, value in _json_object_items(custom_json):
+            _add_summary_custom_value(self.custom_fields, name, value)
 
     def as_summary(self) -> RunSummary:
         return RunSummary(
@@ -102,6 +108,13 @@ class _RunSummaryMetadata:
                 for _unit_key, (unit, minimum, maximum) in sorted(
                     self.inoculum_bounds.items(), key=_summary_unit_sort_key
                 )
+            ),
+            custom_fields=tuple(
+                (
+                    name,
+                    tuple(values[key] for key in sorted(values)),
+                )
+                for _name_key, (name, values) in sorted(self.custom_fields.items())
             ),
         )
 
@@ -884,9 +897,9 @@ class SqlPlateReaderRepository:
             "SELECT cr.experiment_id, cr.plate_id, cr.experiment_name, cr.plate_name, "
             "cr.assay_type, cr.experiment_date, cr.project, cr.updated_at, "
             "wc.strain, wc.treatment, wc.concentration, wc.concentration_unit, "
-            "wc.medium, wc.inoculum_size, wc.inoculum_unit "
+            "wc.medium, wc.inoculum_size, wc.inoculum_unit, w.is_blank, w.custom_json "
             "FROM candidate_runs cr "
-            "LEFT JOIN wells w ON w.plate_id = cr.plate_id AND w.is_blank = 0 "
+            "LEFT JOIN wells w ON w.plate_id = cr.plate_id "
             "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
             "ORDER BY cr.updated_at DESC, cr.plate_id ASC, w.row_index ASC, w.column_index ASC",
             parameters,
@@ -907,7 +920,17 @@ class SqlPlateReaderRepository:
                     updated_at=str(row[7]),
                 )
                 summaries[plate_id] = metadata
-            metadata.add_condition(row[8], row[9], row[10], row[11], row[12], row[13], row[14])
+            metadata.add_condition(
+                row[8],
+                row[9],
+                row[10],
+                row[11],
+                row[12],
+                row[13],
+                row[14],
+                row[15],
+                row[16],
+            )
         return tuple(metadata.as_summary() for metadata in summaries.values())
 
     def growth_comparison_wells(
@@ -1434,6 +1457,32 @@ def _add_normalized_text(values: dict[str, str], value: object) -> None:
     previous = values.get(key)
     if previous is None or normalized < previous:
         values[key] = normalized
+
+
+def _add_summary_custom_value(
+    fields: dict[str, tuple[str, dict[str, str]]], name: str, value: object
+) -> None:
+    """Collect distinct custom well values for one metadata-only Library row."""
+
+    display_name = name.strip()
+    if not display_name or value is None:
+        return
+    if isinstance(value, float) and not math.isfinite(value):
+        return
+    if isinstance(value, (dict, list, tuple)):
+        display_value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    else:
+        display_value = str(value).strip()
+    if not display_value:
+        return
+    name_key = display_name.casefold()
+    stored_name, values = fields.setdefault(name_key, (display_name, {}))
+    if display_name < stored_name:
+        fields[name_key] = (display_name, values)
+    value_key = display_value.casefold()
+    previous = values.get(value_key)
+    if previous is None or display_value < previous:
+        values[value_key] = display_value
 
 
 def _preferred_summary_text(current: str | None, candidate: str | None) -> str | None:

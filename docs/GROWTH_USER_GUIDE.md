@@ -30,6 +30,13 @@ flowchart LR
    groups, and plot defaults. Nothing is saved yet.
 5. Review and commit. The database write is atomic; raw readings are immutable.
 
+## Browse the Run Library
+
+The Run Library includes each universal Growth custom-layout column. Since a run
+can assign different values to different wells, its Library cell shows the
+distinct values as a comma-separated summary; an em dash means that run has no
+saved value. These summaries are metadata-only and do not load growth curves.
+
 ## Inspect and correct background
 
 Open the run from **Growth Run Library**, then use **Overview & QC**. The heatmap
