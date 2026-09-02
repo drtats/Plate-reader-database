@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -88,7 +89,7 @@ def seed_plate(connection: sqlite3.Connection) -> None:
 
 def test_schema_creates_from_empty_and_is_idempotent() -> None:
     connection = sqlite3.connect(":memory:")
-    assert apply_migrations(connection, MIGRATIONS) == (1, 2)
+    assert apply_migrations(connection, MIGRATIONS) == (1, 2, 3)
     assert apply_migrations(connection, MIGRATIONS) == ()
     tables = {
         row[0]
@@ -99,6 +100,30 @@ def test_schema_creates_from_empty_and_is_idempotent() -> None:
     assert tables == EXPECTED_TABLES
     assert connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
     assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    connection.close()
+
+
+def test_existing_custom_layout_columns_are_registered_by_migration(tmp_path: Path) -> None:
+    migration_dir = tmp_path / "migrations"
+    migration_dir.mkdir()
+    for filename in ("0001_schema_v1.sql", "0002_compact_growth_series.sql"):
+        shutil.copyfile(MIGRATIONS / filename, migration_dir / filename)
+    connection = sqlite3.connect(":memory:")
+    assert apply_migrations(connection, migration_dir) == (1, 2)
+    seed_plate(connection)
+    connection.execute(
+        "UPDATE wells SET custom_json = ? WHERE well_id = 'well-1'",
+        (json.dumps({"Oxygen": "anaerobic", "t0_added_min": 5}),),
+    )
+    connection.commit()
+
+    filename = "0003_register_existing_layout_columns.sql"
+    shutil.copyfile(MIGRATIONS / filename, migration_dir / filename)
+    assert apply_migrations(connection, migration_dir) == (3,)
+
+    assert connection.execute(
+        "SELECT option_type, value, created_by FROM saved_options"
+    ).fetchall() == [("layout_column:growth", "Oxygen", "user-1")]
     connection.close()
 
 

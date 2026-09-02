@@ -166,7 +166,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
             "(SELECT count(*) FROM provenance_events), "
             "(SELECT count(*) FROM schema_migrations)"
         ).fetchone()
-    assert counts_before == (1, 1, 2)
+    assert counts_before == (1, 1, 3)
 
     input_named(app, "Experiment name").set_value("UI edited experiment")
     input_named(app, "Project").set_value("UI project")
@@ -241,7 +241,7 @@ def test_growth_ui_navigation_import_edit_plot_export_and_safe_rerun(
             "(SELECT count(*) FROM schema_migrations), "
             "(SELECT count(*) FROM plates)"
         ).fetchone()
-    assert counts_after == (2, 7, 2, 2)
+    assert counts_after == (2, 7, 3, 2)
 
 
 def test_mic_ui_import_review_edit_visualize_and_export(

@@ -37,3 +37,7 @@ consumes reads/writes for existing rows.
 Migrations are append-only and checksum-verified. Never modify an applied SQL
 file. Schema changes require an ADR, forward migration, backup/restore test,
 repository contract test, and portable-format impact review.
+
+Migration 0003 is a data-only compatibility migration: it registers custom layout
+column names already stored in non-deleted well JSON before assay-wide column
+definitions were introduced. It does not modify well JSON or raw measurements.

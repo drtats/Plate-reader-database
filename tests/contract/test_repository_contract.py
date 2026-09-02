@@ -63,7 +63,7 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Reposito
 
 def test_adapter_satisfies_frozen_repository_protocol(harness: RepositoryHarness) -> None:
     assert isinstance(harness.repository, PlateReaderRepository)
-    assert harness.connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (2,)
+    assert harness.connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (3,)
     assert harness.connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
 
 

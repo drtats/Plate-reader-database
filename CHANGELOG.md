@@ -5,9 +5,10 @@ schema, portable-format, and scientific compatibility impact.
 
 ## Unreleased
 
-- Made custom layout-column definitions universal within each assay while keeping
-  their well values experiment-specific, and appended Growth custom columns to
-  both complete tabular CSV exports even when all selected values are blank.
+- Made custom layout-column definitions universal within each assay, including a
+  migration that registers columns saved before this feature, while keeping their
+  well values experiment-specific. Growth exports append custom columns to both
+  complete tabular CSV files even when all selected values are blank.
 - Excluded PyArrow 25.0.0, whose bundled allocator can crash Streamlit across
   script reruns, and moved hosted/local deployments to the fixed 25.0.1 patch.
 - Added a separate multi-run Growth Data Export page that creates the established

@@ -36,3 +36,5 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0024](0024-select-individual-wells-for-plate-comparison.md): individual-well comparison selection
 - [ADR-0025](0025-add-library-medium-and-inoculum-summaries.md): Library medium/inoculum summaries
 - [ADR-0026](0026-add-multi-run-growth-tabular-export.md): multi-run Growth tabular export
+- [ADR-0027](0027-make-layout-custom-columns-assay-wide.md): assay-wide layout custom columns
+- [ADR-0028](0028-backfill-existing-layout-column-definitions.md): pre-registry column backfill

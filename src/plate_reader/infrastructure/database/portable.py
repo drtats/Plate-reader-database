@@ -29,7 +29,7 @@ from plate_reader.infrastructure.database.transactions import transaction
 
 PORTABLE_FORMAT_VERSION = 1
 SCHEMA_VERSION = 1
-DATABASE_SCHEMA_VERSION = 2
+DATABASE_SCHEMA_VERSION = 3
 PORTABLE_PARSER_VERSION = "portable/1.0.0"
 
 
@@ -1267,9 +1267,7 @@ def _remove_internal_compact_storage(connection: Connection) -> None:
     connection.execute("DROP TRIGGER prevent_growth_series_chunk_update")
     connection.execute("DROP TRIGGER prevent_growth_series_chunk_delete")
     connection.execute("DROP TABLE growth_series_chunks")
-    connection.execute(
-        "DELETE FROM schema_migrations WHERE version = ?", (DATABASE_SCHEMA_VERSION,)
-    )
+    connection.execute("DELETE FROM schema_migrations WHERE version > 1")
 
 
 def _column_values(
