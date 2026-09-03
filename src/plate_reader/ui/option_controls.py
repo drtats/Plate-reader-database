@@ -98,6 +98,8 @@ def _invalidate_growth_library_columns(assay_type: AssayType) -> None:
     if assay_type is AssayType.GROWTH:
         st.session_state.pop("run_search_results", None)
         st.session_state.pop("run_library_custom_columns", None)
+        st.session_state.pop("growth_export_search_results", None)
+        st.session_state.pop("growth_export_custom_columns", None)
 
 
 def render_saved_option_controls(

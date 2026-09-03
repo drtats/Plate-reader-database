@@ -8,7 +8,7 @@ from typing import cast
 import pandas as pd
 import streamlit as st
 
-from plate_reader.application.contracts import PlateId, SearchRuns
+from plate_reader.application.contracts import AssayType, PlateId, SearchRuns
 from plate_reader.application.ports.repositories import RunSummary
 from plate_reader.application.services import (
     ExportGrowthTabularData,
@@ -17,6 +17,8 @@ from plate_reader.application.services import (
     SearchGrowthRunsService,
 )
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.option_controls import layout_custom_column_names
+from plate_reader.ui.run_summary_table import run_summary_table
 
 
 def render_growth_data_export(context: AppContext) -> None:
@@ -39,6 +41,9 @@ def render_growth_data_export(context: AppContext) -> None:
             st.session_state.growth_export_search_results = SearchGrowthRunsService(
                 context.repository
             ).execute(SearchRuns(context.actor, text=text, limit=500))
+            st.session_state.growth_export_custom_columns = layout_custom_column_names(
+                context, AssayType.GROWTH
+            )
         except Exception as error:
             st.error(f"Unable to search Growth runs: {error}")
             return
@@ -46,13 +51,22 @@ def render_growth_data_export(context: AppContext) -> None:
             int(st.session_state.get("growth_export_table_revision", 0)) + 1
         )
         _clear_artifact()
+    elif "growth_export_custom_columns" not in st.session_state:
+        try:
+            st.session_state.growth_export_custom_columns = layout_custom_column_names(
+                context, AssayType.GROWTH
+            )
+        except Exception as error:
+            st.error(f"Unable to load Growth layout columns: {error}")
+            return
 
     results = cast(Sequence[RunSummary], st.session_state.growth_export_search_results)
     if not results:
         st.info("No Growth runs match this search.")
         return
 
-    table = _export_table(results)
+    custom_columns = cast(tuple[str, ...], st.session_state.growth_export_custom_columns)
+    table = _export_table(results, custom_columns)
     revision = int(st.session_state.get("growth_export_table_revision", 0))
     with st.form("growth-export-selection"):
         edited = st.data_editor(
@@ -112,20 +126,12 @@ def render_growth_data_export(context: AppContext) -> None:
     )
 
 
-def _export_table(results: Sequence[RunSummary]) -> pd.DataFrame:
-    rows = [
-        {
-            "plate_id": str(run.plate_id),
-            "Select": False,
-            "Experiment": run.experiment_name,
-            "Plate": run.plate_name,
-            "Experiment date": run.experiment_date,
-            "Project": run.project or "—",
-            "Last updated": run.updated_at,
-        }
-        for run in results
-    ]
-    return pd.DataFrame.from_records(rows).set_index("plate_id")
+def _export_table(
+    results: Sequence[RunSummary], custom_columns: Sequence[str] = ()
+) -> pd.DataFrame:
+    """Build the export selector with the same metadata columns as the Library."""
+
+    return run_summary_table(results, custom_columns)
 
 
 def _selected_plate_ids(table: pd.DataFrame) -> tuple[PlateId, ...]:

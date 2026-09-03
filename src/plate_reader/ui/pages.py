@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -33,12 +32,7 @@ from plate_reader.application.contracts import (
     WellLayoutChange,
 )
 from plate_reader.application.demo import synthetic_growth_csv
-from plate_reader.application.ports.repositories import (
-    ConcentrationRange,
-    InoculumRange,
-    PlateSnapshot,
-    RunSummary,
-)
+from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services import (
     BuildGrowthBackgroundGroupsService,
     BuildGrowthPlotStylesService,
@@ -102,6 +96,7 @@ from plate_reader.ui.plotting import (
     growth_plate_overview_figure,
     plot_download_config,
 )
+from plate_reader.ui.run_summary_table import run_summary_table
 from plate_reader.ui.template_controls import render_plate_template_controls
 
 LOGGER = logging.getLogger(__name__)
@@ -158,7 +153,7 @@ def render_run_library(context: AppContext) -> None:
         return
 
     custom_columns = cast(tuple[str, ...], st.session_state.run_library_custom_columns)
-    table = _run_library_table(results, custom_columns)
+    table = run_summary_table(results, custom_columns)
     revision = int(st.session_state.get("run_library_table_revision", 0))
     with st.form("run-library-actions"):
         edited_table = st.data_editor(
@@ -194,98 +189,10 @@ def render_run_library(context: AppContext) -> None:
         st.rerun()
 
 
-def _run_library_table(
-    results: Sequence[RunSummary], custom_columns: Sequence[str] = ()
-) -> pd.DataFrame:
-    """Build the fixed-row Library table with stable, hidden plate identifiers."""
-
-    rows = _run_library_rows(results, custom_columns)
-    return pd.DataFrame.from_records(rows).set_index("plate_id")
-
-
-def _run_library_rows(
-    results: Sequence[RunSummary], custom_columns: Sequence[str] = ()
-) -> list[dict[str, str | bool]]:
-    """Format metadata-only run summaries for the sortable Library surface."""
-
-    rows: list[dict[str, str | bool]] = []
-    for run in results:
-        row: dict[str, str | bool] = {
-            "plate_id": str(run.plate_id),
-            "Select": False,
-            "Experiment": str(run.experiment_name),
-            "Plate": str(run.plate_name),
-            "Experiment date": str(run.experiment_date),
-            "Project": _display_library_value(run.project),
-            "Strains": _display_library_values(run.strains),
-            "Media": _display_library_values(run.media),
-            "Treatments": _display_library_values(run.treatments),
-            "Concentration range": _display_concentration_ranges(run.concentration_ranges),
-            "Inoculum size": _display_inoculum_ranges(run.inoculum_ranges),
-        }
-        custom_by_name = {
-            name.casefold(): values for name, values in getattr(run, "custom_fields", ())
-        }
-        row.update(
-            {
-                name: _display_library_values(custom_by_name.get(name.casefold(), ()))
-                for name in custom_columns
-            }
-        )
-        row["Last updated"] = str(run.updated_at)
-        rows.append(row)
-    return rows
-
-
 def _selected_library_plate_ids(table: pd.DataFrame) -> tuple[PlateId, ...]:
     """Read submitted selections from the table's stable plate-id index."""
 
     return tuple(PlateId(str(plate_id)) for plate_id in table.index[table["Select"]])
-
-
-def _display_library_value(value: object) -> str:
-    """Render absent Library metadata consistently without changing stored values."""
-
-    text = str(value).strip() if value is not None else ""
-    return text or "—"
-
-
-def _display_library_values(values: object) -> str:
-    if not isinstance(values, tuple):
-        return "—"
-    displayed = tuple(_display_library_value(value) for value in values)
-    return ", ".join(value for value in displayed if value != "—") or "—"
-
-
-def _display_concentration_ranges(ranges: tuple[ConcentrationRange, ...]) -> str:
-    """Format concentration ranges while keeping differently-unit values separate."""
-
-    return _display_numeric_ranges(ranges)
-
-
-def _display_inoculum_ranges(ranges: tuple[InoculumRange, ...]) -> str:
-    """Format inoculum ranges while keeping differently-unit values separate."""
-
-    return _display_numeric_ranges(ranges)
-
-
-def _display_numeric_ranges(
-    ranges: tuple[ConcentrationRange, ...] | tuple[InoculumRange, ...],
-) -> str:
-    """Format bounded numeric metadata with explicit unitless values."""
-
-    formatted: list[str] = []
-    for numeric_range in ranges:
-        lower = _format_concentration(numeric_range.minimum)
-        upper = _format_concentration(numeric_range.maximum)
-        unit = _display_library_value(numeric_range.unit)
-        value = lower if lower == upper else f"{lower}\N{EN DASH}{upper}"
-        formatted.append(f"{value} (unit not set)" if unit == "—" else f"{value} {unit}")
-    return ", ".join(formatted) or "—"
-
-
-def _format_concentration(value: float) -> str:
-    return f"{value:g}"
 
 
 def render_growth_wizard(context: AppContext, *, allow_local_path: bool) -> None:
@@ -1492,6 +1399,8 @@ def _invalidate_growth_discovery() -> None:
     for key in (
         "run_search_results",
         "run_library_custom_columns",
+        "growth_export_search_results",
+        "growth_export_custom_columns",
         "growth_comparison_plate_index_cache",
         "growth_comparison_source_plate_ids",
         "growth_comparison_search_result",

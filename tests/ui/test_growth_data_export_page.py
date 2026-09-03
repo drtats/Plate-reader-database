@@ -13,6 +13,22 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
     assert app.session_state["search_calls"] == 1
     assert "raw_load_calls" not in app.session_state
     assert any("Selected Growth runs: 2" in item.value for item in app.caption)
+    assert app.session_state["export_table_columns"] == (
+        "Select",
+        "Experiment",
+        "Plate",
+        "Experiment date",
+        "Project",
+        "Strains",
+        "Media",
+        "Treatments",
+        "Concentration range",
+        "Inoculum size",
+        "Oxygen",
+        "Last updated",
+    )
+    assert app.session_state["export_table_strains"] == ("PAO1", "PAO1")
+    assert app.session_state["export_table_oxygen"] == ("aerobic", "anaerobic")
 
     next(button for button in app.button if button.label == "Prepare selected runs").click().run()
 
@@ -33,7 +49,12 @@ def _export_page_app() -> AppTest:
 import streamlit as st
 
 from plate_reader.application.contracts import Actor, AssayType, ExperimentId, PlateId, Role, UserId
-from plate_reader.application.ports.repositories import PlateSnapshot, RunSummary
+from plate_reader.application.ports.repositories import (
+    ConcentrationRange,
+    InoculumRange,
+    PlateSnapshot,
+    RunSummary,
+)
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.growth_export import render_growth_data_export
 
@@ -42,7 +63,14 @@ class Repository:
     def user_by_email(self, _email):
         return {"user_id": "user-1", "role": "viewer", "is_active": True}
 
-    def list_saved_options(self, _option_type=None):
+    def list_saved_options(self, option_type=None):
+        if option_type == "layout_column:growth":
+            return ({
+                "option_type": option_type,
+                "value": "Oxygen",
+                "created_by": "user-1",
+                "created_at": "2026-08-18T10:00:00Z",
+            },)
         return ()
 
     def search_runs(self, _filters):
@@ -57,6 +85,12 @@ class Repository:
                 "2026-08-18",
                 "SMS",
                 "2026-08-18T12:00:00Z",
+                strains=("PAO1",),
+                treatments=("Ciprofloxacin",),
+                concentration_ranges=(ConcentrationRange(0.25, 1.0, "ug/mL"),),
+                media=("MHB",),
+                inoculum_ranges=(InoculumRange(1.0, 3.0, "x10^6 CFU/mL"),),
+                custom_fields=(("oxygen", (("aerobic", "anaerobic")[index],)),),
             )
             for index in range(2)
         )
@@ -120,6 +154,9 @@ class Repository:
 original_data_editor = st.data_editor
 
 def select_all(frame, **_kwargs):
+    st.session_state["export_table_columns"] = tuple(frame.columns)
+    st.session_state["export_table_strains"] = tuple(frame["Strains"])
+    st.session_state["export_table_oxygen"] = tuple(frame["Oxygen"])
     selected = frame.copy()
     selected["Select"] = True
     return selected

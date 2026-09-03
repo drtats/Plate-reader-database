@@ -89,8 +89,9 @@ identity; the wide export prioritizes readable curve names.
 
 For complete data from several runs, open **Growth Data Export** in the sidebar.
 Search the Library metadata, select one or more Growth runs, and press **Prepare
-selected runs**. Searching and checking rows do not load measurements. Preparation
-creates two files:
+selected runs**. Its selection table shows the same strain, media, treatment,
+concentration, inoculum, and universal custom-column summaries as the Run Library.
+Searching and checking rows do not load measurements. Preparation creates two files:
 
 - `growth_runs.csv`: every OD observation with separate **Raw OD**, **Background
   Mean OD**, and **Background Subtracted OD** columns, plus background SD, blank

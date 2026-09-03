@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plate_reader.ui.pages import _run_library_rows, _run_library_table
+from plate_reader.ui.run_summary_table import run_summary_rows, run_summary_table
 
 
 def test_run_library_rows_render_blank_metadata_as_em_dash() -> None:
@@ -22,7 +22,7 @@ def test_run_library_rows_render_blank_metadata_as_em_dash() -> None:
         updated_at="2026-08-17T12:00:00Z",
     )
 
-    row = _run_library_rows((run,))[0]
+    row = run_summary_rows((run,))[0]
 
     assert row == {
         "plate_id": "plate-1",
@@ -65,7 +65,7 @@ def test_run_library_table_keeps_plate_id_as_hidden_stable_index() -> None:
         updated_at="2026-08-17T12:00:00Z",
     )
 
-    table = _run_library_table((run,), ("Oxygen", "Vessel"))
+    table = run_summary_table((run,), ("Oxygen", "Vessel"))
 
     assert list(table.index) == ["plate-1"]
     assert "plate_id" not in table.columns
