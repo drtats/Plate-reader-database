@@ -3,12 +3,14 @@ from __future__ import annotations
 import csv
 import io
 import json
+from dataclasses import replace
 
 import pytest
 
 from plate_reader.application.contracts import AssayType, PlateId
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services.growth_tabular_export import (
+    GROWTH_ADDITIONAL_LAYOUT_HEADERS,
     GROWTH_MEASUREMENT_HEADERS,
     GROWTH_METADATA_HEADERS,
     export_growth_tabular_data,
@@ -19,8 +21,8 @@ from plate_reader.application.services.growth_workflow import GrowthRunView
 def test_multi_run_export_preserves_raw_background_and_corrected_od_contract() -> None:
     bundle = export_growth_tabular_data((_view(),))
 
-    assert bundle.measurements.filename == "growth_runs.csv"
-    assert bundle.metadata.filename == "growth_runs_metadata.csv"
+    assert bundle.measurements.filename == "experiment_1_dbea359c.csv"
+    assert bundle.metadata.filename == "experiment_1_dbea359c_metadata.csv"
     assert not bundle.measurements.content.startswith(b"\xef\xbb\xbf")
     assert b"\r\n" not in bundle.measurements.content
     assert bundle.measurements.content.endswith(b"\n")
@@ -51,16 +53,82 @@ def test_multi_run_export_preserves_raw_background_and_corrected_od_contract() -
     assert float(rows[1]["Culture Age H"]) == pytest.approx(2 + 10 / 60)
     assert rows[0]["Condition 1 State"] == "Mecillinam 3.0 ug/mL"
     assert rows[0]["Microplate ID"] == "Plate 58"
+    assert rows[0]["Raw label"] == "raw-a1"
+    assert rows[0]["Display name"] == "sample-a1"
+    assert rows[0]["Background group"] == "plate"
+    assert rows[0]["Plot"] == "True"
+    assert rows[0]["Group"] == "sample"
+    assert rows[0]["Inoculum size"] == "0.0005"
+    assert rows[0]["Inoculum unit"] == "OD600"
+    assert rows[0]["Treatment"] == "Mecillinam"
+    assert rows[0]["Concentration"] == "3.0"
+    assert rows[0]["Concentration unit"] == "ug/mL"
+    assert rows[0]["T0 added (min)"] == "0.0"
 
     metadata_rows = list(
         csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"), newline=""))
     )
     assert tuple(metadata_rows[0]) == GROWTH_METADATA_HEADERS
     assert bundle.metadata.row_count == len(metadata_rows) == 1
-    assert metadata_rows[0]["Run ID"] == "legacy-run-1"
+    assert metadata_rows[0]["Run ID"] == "dbea359c"
     assert metadata_rows[0]["Experiment Name"] == "Experiment 1"
     assert json.loads(metadata_rows[0]["Editable Metadata JSON"])["Culture_volume_uL"] == 200
     assert not bundle.warnings
+
+
+def test_measurement_export_contains_every_canonical_growth_layout_column() -> None:
+    canonical_layout_columns = {
+        "Well",
+        "Raw label",
+        "Display name",
+        "Blank",
+        "Background group",
+        "Plot",
+        "Group",
+        "Media",
+        "Strain",
+        "Inoculum size",
+        "Inoculum unit",
+        "Replicate",
+        "Notes",
+        "Treatment",
+        "Concentration",
+        "Concentration unit",
+        "T0 added (min)",
+    }
+
+    assert canonical_layout_columns <= set(GROWTH_MEASUREMENT_HEADERS)
+    assert GROWTH_MEASUREMENT_HEADERS[-len(GROWTH_ADDITIONAL_LAYOUT_HEADERS) :] == (
+        GROWTH_ADDITIONAL_LAYOUT_HEADERS
+    )
+
+
+def test_single_run_filename_matches_reference_experiment_name_and_hash_pattern() -> None:
+    view = _view()
+    view.snapshot.metadata["name"] = "250910_MG_BW_Mec_RDM_Growth_OD48h_10min_int_tats_mod"
+
+    bundle = export_growth_tabular_data((view,))
+
+    expected = "250910_mg_bw_mec_rdm_growth_od48h_10min_int_tats_mod_dbea359c"
+    assert bundle.measurements.filename == f"{expected}.csv"
+    assert bundle.metadata.filename == f"{expected}_metadata.csv"
+
+
+def test_multi_run_export_keeps_generic_filenames() -> None:
+    second = _view()
+    second = replace(
+        second,
+        snapshot=replace(
+            second.snapshot,
+            plate_id=PlateId("plate-2"),
+            metadata={**second.snapshot.metadata, "legacy_run_id": "abcdef12"},
+        ),
+    )
+
+    bundle = export_growth_tabular_data((_view(), second))
+
+    assert bundle.measurements.filename == "growth_runs.csv"
+    assert bundle.metadata.filename == "growth_runs_metadata.csv"
 
 
 def test_missing_background_keeps_raw_od_and_exposes_qc_reason() -> None:
@@ -125,7 +193,7 @@ def _view() -> GrowthRunView:
         "Plate Number": "Plate 58",
     }
     legacy = {
-        "run_id": "legacy-run-1",
+        "run_id": "dbea359c",
         "editable_metadata_json": json.dumps(editable),
         "source_metadata_json": json.dumps(source),
     }
@@ -152,6 +220,7 @@ def _view() -> GrowthRunView:
             "medium": "RDM",
             "replicate": 1,
             "inoculum_size": 0.0005,
+            "inoculum_unit": "OD600",
             "grouping_label": "sample",
             "treatment": None,
             "concentration": None,
@@ -232,7 +301,7 @@ def _view() -> GrowthRunView:
                 "assay_type": AssayType.GROWTH,
                 "name": "Experiment 1",
                 "plate_name": "Plate 1",
-                "legacy_run_id": "legacy-run-1",
+                "legacy_run_id": "dbea359c",
                 "project": "SMS",
                 "experiment_date": "2025-09-09",
                 "operator_name": "Researcher",

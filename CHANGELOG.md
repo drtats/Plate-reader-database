@@ -5,6 +5,14 @@ schema, portable-format, and scientific compatibility impact.
 
 ## Unreleased
 
+- Prevented Growth tabular download clicks from rerunning the Streamlit page and
+  invalidating its in-memory CSV URL before the browser retrieves the file.
+- Extended `growth_runs.csv` beyond its unchanged legacy-compatible column block
+  with every canonical Growth layout field, followed by every universal or stored
+  custom layout column, so newer experiment fields are not dropped during export.
+- Named single-run Growth CSV downloads from the normalized experiment name and
+  stable eight-character run hash, matching the established laboratory filename
+  pattern; multi-run downloads retain their generic names.
 - Changed `growth_runs_metadata.csv` to contain exactly one homogeneous
   experiment-metadata row per selected Growth run. Well/layout data remains in
   `growth_runs.csv`; the companion file no longer interleaves `run` and `well` rows.

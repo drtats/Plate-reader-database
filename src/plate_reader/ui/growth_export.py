@@ -113,16 +113,20 @@ def render_growth_data_export(context: AppContext) -> None:
         st.warning(warning)
     downloads = st.columns(2)
     downloads[0].download_button(
-        "Download growth_runs.csv",
+        f"Download {bundle.measurements.filename}",
         data=bundle.measurements.content,
         file_name=bundle.measurements.filename,
         mime="text/csv",
+        key="growth-tabular-measurements-download",
+        on_click="ignore",
     )
     downloads[1].download_button(
-        "Download growth_runs_metadata.csv",
+        f"Download {bundle.metadata.filename}",
         data=bundle.metadata.content,
         file_name=bundle.metadata.filename,
         mime="text/csv",
+        key="growth-tabular-metadata-download",
+        on_click="ignore",
     )
 
 

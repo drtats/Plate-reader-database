@@ -41,3 +41,5 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0029](0029-show-custom-layout-fields-in-run-library.md): custom Run Library columns
 - [ADR-0030](0030-share-growth-run-summary-tables.md): shared Library/export summary columns
 - [ADR-0031](0031-separate-experiment-and-well-export-rows.md): homogeneous experiment metadata export
+- [ADR-0032](0032-name-single-run-growth-exports.md): experiment/hash single-run filenames
+- [ADR-0033](0033-export-all-growth-layout-columns.md): complete Growth layout export columns

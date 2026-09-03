@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import math
@@ -18,7 +19,7 @@ from plate_reader.application.services.growth_workflow import (
 )
 from plate_reader.application.services.layout_columns import ListLayoutColumnsService
 
-GROWTH_MEASUREMENT_HEADERS = (
+_LEGACY_GROWTH_MEASUREMENT_HEADERS = (
     "Cultivation Short ID",
     "Date Time",
     "Culture Age H",
@@ -48,6 +49,28 @@ GROWTH_MEASUREMENT_HEADERS = (
     "Media",
     "Replicate",
     "Notes",
+)
+
+# Canonical layout fields that are absent from, or only indirectly represented in,
+# the legacy-compatible block. Together the two tuples expose every fixed Growth
+# layout column without changing the established first 29 columns.
+GROWTH_ADDITIONAL_LAYOUT_HEADERS = (
+    "Raw label",
+    "Display name",
+    "Background group",
+    "Plot",
+    "Group",
+    "Inoculum size",
+    "Inoculum unit",
+    "Treatment",
+    "Concentration",
+    "Concentration unit",
+    "T0 added (min)",
+)
+
+GROWTH_MEASUREMENT_HEADERS = (
+    *_LEGACY_GROWTH_MEASUREMENT_HEADERS,
+    *GROWTH_ADDITIONAL_LAYOUT_HEADERS,
 )
 
 GROWTH_METADATA_HEADERS = (
@@ -158,7 +181,9 @@ def export_growth_tabular_data(
     if len(set(plate_ids)) != len(plate_ids):
         raise ValueError("Growth tabular export views must have unique plate IDs")
 
+    contexts = tuple(_run_context(view) for view in views)
     exported_custom_columns = _custom_column_names(views, custom_columns)
+    single_run_name = _single_run_filename_stem(contexts)
 
     measurement_stream = io.StringIO(newline="")
     metadata_stream = io.StringIO(newline="")
@@ -170,8 +195,7 @@ def export_growth_tabular_data(
     measurement_count = 0
     metadata_count = 0
     warnings: list[str] = []
-    for view in views:
-        context = _run_context(view)
+    for context in contexts:
         warnings.extend(_run_warnings(context))
         metadata_writer.writerow(_run_metadata_row(context))
         metadata_count += 1
@@ -181,17 +205,47 @@ def export_growth_tabular_data(
 
     return GrowthTabularExportBundle(
         measurements=GrowthTabularCsvArtifact(
-            "growth_runs.csv",
+            f"{single_run_name}.csv" if single_run_name else "growth_runs.csv",
             measurement_stream.getvalue().encode("utf-8"),
             measurement_count,
         ),
         metadata=GrowthTabularCsvArtifact(
-            "growth_runs_metadata.csv",
+            (f"{single_run_name}_metadata.csv" if single_run_name else "growth_runs_metadata.csv"),
             metadata_stream.getvalue().encode("utf-8"),
             metadata_count,
         ),
         warnings=tuple(warnings),
     )
+
+
+def _single_run_filename_stem(contexts: Sequence[_RunContext]) -> str:
+    """Return an example-compatible, stable stem for a one-run export."""
+
+    if len(contexts) != 1:
+        return ""
+    context = contexts[0]
+    experiment = _safe_filename_component(context.experiment_name) or "growth_run"
+    return f"{experiment}_{_short_run_hash(context.run_id)}"
+
+
+def _safe_filename_component(value: str) -> str:
+    """Normalize a user-entered experiment name without allowing path syntax."""
+
+    normalized = "".join(
+        character if character.isalnum() else "_" for character in value.casefold()
+    )
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized.strip("_")[:160].rstrip("_")
+
+
+def _short_run_hash(run_id: str) -> str:
+    """Preserve hex run IDs like legacy exports; hash other stable identities."""
+
+    compact = run_id.replace("-", "").casefold()
+    if len(compact) >= 8 and all(character in "0123456789abcdef" for character in compact):
+        return compact[:8]
+    return hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:8]
 
 
 def _run_context(view: GrowthRunView) -> _RunContext:
@@ -398,6 +452,17 @@ def _measurement_rows(
                 well.get("medium"),
                 well.get("replicate"),
                 well.get("notes"),
+                well.get("raw_label"),
+                well.get("display_name"),
+                group,
+                bool(well.get("plot_selected", False)),
+                well.get("grouping_label"),
+                well.get("inoculum_size"),
+                well.get("inoculum_unit"),
+                _first_value(well.get("treatment"), custom.get("treatment_1")),
+                _first_value(well.get("concentration"), custom.get("conc_1")),
+                _first_value(well.get("concentration_unit"), custom.get("unit_1")),
+                custom.get("t0_added_min"),
                 *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
             )
         )

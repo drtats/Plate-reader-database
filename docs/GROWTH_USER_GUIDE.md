@@ -95,9 +95,16 @@ Searching and checking rows do not load measurements. Preparation creates two fi
 
 - `growth_runs.csv`: every OD observation with separate **Raw OD**, **Background
   Mean OD**, and **Background Subtracted OD** columns, plus background SD, blank
-  count, group, and QC status;
+  count, group, and QC status. The original laboratory columns come first, followed
+  by every canonical Growth layout field and every universal custom column;
 - `growth_runs_metadata.csv`: one experiment-metadata row for each selected run;
   it does not mix experiment rows with well rows.
+
+When exactly one run is selected, both download names use the normalized experiment
+name plus its stable eight-character run hash, for example
+`my_growth_experiment_dbea359c.csv` and
+`my_growth_experiment_dbea359c_metadata.csv`. Multi-run exports use the generic
+names shown above.
 
 Custom columns added under **Manage custom columns** are shared by every Growth
 experiment. Their values remain specific to each well and experiment, so they are
