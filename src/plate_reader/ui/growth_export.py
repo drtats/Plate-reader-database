@@ -108,7 +108,7 @@ def render_growth_data_export(context: AppContext) -> None:
     left, middle, right = st.columns(3)
     left.metric("Runs", len(selected))
     middle.metric("OD observation rows", bundle.measurements.row_count)
-    right.metric("Metadata rows", bundle.metadata.row_count)
+    right.metric("Experiment metadata rows", bundle.metadata.row_count)
     for warning in bundle.warnings:
         st.warning(warning)
     downloads = st.columns(2)

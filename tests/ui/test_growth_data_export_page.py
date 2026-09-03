@@ -36,7 +36,7 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
     assert app.session_state["raw_load_calls"] == 2
     bundle = app.session_state["growth_tabular_export_bundle"]
     assert bundle.measurements.row_count == 2
-    assert bundle.metadata.row_count == 4
+    assert bundle.metadata.row_count == 2
     assert {item.label for item in app.get("download_button")} == {
         "Download growth_runs.csv",
         "Download growth_runs_metadata.csv",

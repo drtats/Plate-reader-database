@@ -51,7 +51,6 @@ GROWTH_MEASUREMENT_HEADERS = (
 )
 
 GROWTH_METADATA_HEADERS = (
-    "Metadata Level",
     "Run ID",
     "Project",
     "Experiment Name",
@@ -62,26 +61,6 @@ GROWTH_METADATA_HEADERS = (
     "Source Folder",
     "Editable Metadata JSON",
     "Source Metadata JSON",
-    "run_id",
-    "well",
-    "display_name",
-    "media",
-    "strain",
-    "inoculum_size",
-    "treatments",
-    "is_blank",
-    "bg_group",
-    "row",
-    "col",
-    "raw_label",
-    "plot",
-    "group",
-    "replicate",
-    "notes",
-    "treatment_1",
-    "conc_1",
-    "unit_1",
-    "t0_added_min",
 )
 
 _EDITABLE_METADATA_KEYS = (
@@ -186,7 +165,7 @@ def export_growth_tabular_data(
     measurement_writer = csv.writer(measurement_stream, lineterminator="\n")
     metadata_writer = csv.writer(metadata_stream, lineterminator="\n")
     measurement_writer.writerow((*GROWTH_MEASUREMENT_HEADERS, *exported_custom_columns))
-    metadata_writer.writerow((*GROWTH_METADATA_HEADERS, *exported_custom_columns))
+    metadata_writer.writerow(GROWTH_METADATA_HEADERS)
 
     measurement_count = 0
     metadata_count = 0
@@ -194,11 +173,8 @@ def export_growth_tabular_data(
     for view in views:
         context = _run_context(view)
         warnings.extend(_run_warnings(context))
-        metadata_writer.writerow(_run_metadata_row(context, exported_custom_columns))
+        metadata_writer.writerow(_run_metadata_row(context))
         metadata_count += 1
-        for well in view.snapshot.wells:
-            metadata_writer.writerow(_well_metadata_row(context, well, exported_custom_columns))
-            metadata_count += 1
         for row in _measurement_rows(context, exported_custom_columns):
             measurement_writer.writerow(row)
             measurement_count += 1
@@ -299,9 +275,8 @@ def _run_warnings(context: _RunContext) -> tuple[str, ...]:
     return tuple(warnings)
 
 
-def _run_metadata_row(context: _RunContext, custom_columns: Sequence[str]) -> tuple[object, ...]:
+def _run_metadata_row(context: _RunContext) -> tuple[object, ...]:
     return (
-        "run",
         context.run_id,
         context.project,
         context.experiment_name,
@@ -312,54 +287,6 @@ def _run_metadata_row(context: _RunContext, custom_columns: Sequence[str]) -> tu
         context.source_folder,
         _json_cell(context.editable_metadata),
         _json_cell(context.source_metadata),
-        *("" for _value in range(20)),
-        *("" for _column in custom_columns),
-    )
-
-
-def _well_metadata_row(
-    context: _RunContext,
-    well: Mapping[str, object],
-    custom_columns: Sequence[str],
-) -> tuple[object, ...]:
-    position = _required_text(well.get("position"), "Growth export well position")
-    custom = _well_custom(well)
-    treatment = _first_value(custom.get("treatment_1"), well.get("treatment"))
-    concentration = _first_value(custom.get("conc_1"), well.get("concentration"))
-    unit = _first_value(custom.get("unit_1"), well.get("concentration_unit"))
-    return (
-        "well",
-        context.run_id,
-        context.project,
-        context.experiment_name,
-        context.experiment_date,
-        context.user,
-        context.instrument,
-        context.temperature,
-        context.source_folder,
-        _json_cell(context.editable_metadata),
-        _json_cell(context.source_metadata),
-        context.run_id,
-        position,
-        _display_name(well, position),
-        well.get("medium"),
-        well.get("strain"),
-        well.get("inoculum_size"),
-        well.get("treatment"),
-        bool(well.get("is_blank", False)),
-        _background_group(well),
-        position[0],
-        int(position[1:]),
-        well.get("raw_label"),
-        bool(well.get("plot_selected", False)),
-        well.get("grouping_label"),
-        well.get("replicate"),
-        well.get("notes"),
-        treatment,
-        concentration,
-        unit,
-        _first_value(custom.get("t0_added_min"), 0.0),
-        *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
     )
 
 

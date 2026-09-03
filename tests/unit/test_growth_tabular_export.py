@@ -56,12 +56,9 @@ def test_multi_run_export_preserves_raw_background_and_corrected_od_contract() -
         csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"), newline=""))
     )
     assert tuple(metadata_rows[0]) == GROWTH_METADATA_HEADERS
-    assert bundle.metadata.row_count == len(metadata_rows) == 3
-    assert [row["Metadata Level"] for row in metadata_rows] == ["run", "well", "well"]
-    assert metadata_rows[0]["run_id"] == ""
-    assert metadata_rows[1]["run_id"] == "legacy-run-1"
-    assert metadata_rows[1]["well"] == "A1"
-    assert metadata_rows[1]["treatment_1"] == "Mecillinam"
+    assert bundle.metadata.row_count == len(metadata_rows) == 1
+    assert metadata_rows[0]["Run ID"] == "legacy-run-1"
+    assert metadata_rows[0]["Experiment Name"] == "Experiment 1"
     assert json.loads(metadata_rows[0]["Editable Metadata JSON"])["Culture_volume_uL"] == 200
     assert not bundle.warnings
 
@@ -81,7 +78,7 @@ def test_missing_background_keeps_raw_od_and_exposes_qc_reason() -> None:
     assert any("no current background revision" in warning for warning in bundle.warnings)
 
 
-def test_custom_layout_columns_are_appended_to_both_exports() -> None:
+def test_custom_layout_columns_are_appended_only_to_observation_export() -> None:
     view = _view()
     view.snapshot.wells[0]["custom_json"] = json.dumps(
         {
@@ -98,11 +95,10 @@ def test_custom_layout_columns_are_appended_to_both_exports() -> None:
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
 
     assert tuple(measurement_rows[0]) == (*GROWTH_MEASUREMENT_HEADERS, "Oxygen", "Vessel")
-    assert tuple(metadata_rows[0]) == (*GROWTH_METADATA_HEADERS, "Oxygen", "Vessel")
+    assert tuple(metadata_rows[0]) == GROWTH_METADATA_HEADERS
     assert measurement_rows[0]["Oxygen"] == "anaerobic"
     assert measurement_rows[0]["Vessel"] == ""
-    assert metadata_rows[0]["Oxygen"] == ""
-    assert metadata_rows[1]["Oxygen"] == "anaerobic"
+    assert "Oxygen" not in metadata_rows[0]
 
 
 def test_export_rejects_empty_duplicate_and_non_growth_views() -> None:

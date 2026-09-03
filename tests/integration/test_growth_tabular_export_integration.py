@@ -121,16 +121,20 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
 
     assert counts_after == counts_before
     assert bundle.measurements.row_count == 768
-    assert bundle.metadata.row_count == 194
+    assert bundle.metadata.row_count == 2
     measurement_rows = list(
         csv.DictReader(io.StringIO(bundle.measurements.content.decode("utf-8")))
     )
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"))))
     assert "Vessel" in measurement_rows[0]
-    assert "Vessel" in metadata_rows[0]
+    assert "Vessel" not in metadata_rows[0]
     assert all(row["Vessel"] == "" for row in measurement_rows)
     assert len(measurement_rows) == 768
-    assert len(metadata_rows) == 194
+    assert len(metadata_rows) == 2
+    assert [row["Experiment Name"] for row in metadata_rows] == [
+        "Experiment 0",
+        "Experiment 1",
+    ]
     assert {row["Experiment Name"] for row in measurement_rows} == {
         "Experiment 0",
         "Experiment 1",

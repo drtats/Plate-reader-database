@@ -5,13 +5,15 @@ schema, portable-format, and scientific compatibility impact.
 
 ## Unreleased
 
+- Changed `growth_runs_metadata.csv` to contain exactly one homogeneous
+  experiment-metadata row per selected Growth run. Well/layout data remains in
+  `growth_runs.csv`; the companion file no longer interleaves `run` and `well` rows.
 - Made custom layout-column definitions universal within each assay, including a
   migration that registers columns saved before this feature, while keeping their
-  well values experiment-specific. Growth exports append custom columns to both
-  complete tabular CSV files even when all selected values are blank, and the Run
-  Library and Growth Data Export selector show each custom field as a per-run
-  distinct-value summary alongside strain, media, treatment, concentration, and
-  inoculum metadata.
+  well values experiment-specific. `growth_runs.csv` appends custom columns even
+  when all selected values are blank, and the Run Library and Growth Data Export
+  selector show each custom field as a per-run distinct-value summary alongside
+  strain, media, treatment, concentration, and inoculum metadata.
 - Excluded PyArrow 25.0.0, whose bundled allocator can crash Streamlit across
   script reruns, and moved hosted/local deployments to the fixed 25.0.1 patch.
 - Added a separate multi-run Growth Data Export page that creates the established

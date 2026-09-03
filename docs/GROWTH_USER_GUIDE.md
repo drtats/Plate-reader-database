@@ -96,13 +96,14 @@ Searching and checking rows do not load measurements. Preparation creates two fi
 - `growth_runs.csv`: every OD observation with separate **Raw OD**, **Background
   Mean OD**, and **Background Subtracted OD** columns, plus background SD, blank
   count, group, and QC status;
-- `growth_runs_metadata.csv`: one run row and one row per well for each selected
-  plate.
+- `growth_runs_metadata.csv`: one experiment-metadata row for each selected run;
+  it does not mix experiment rows with well rows.
 
 Custom columns added under **Manage custom columns** are shared by every Growth
-experiment. Their values remain specific to each well and experiment. Both export
-files append the same custom-column headers, including universally registered
-columns whose values are blank in the selected runs.
+experiment. Their values remain specific to each well and experiment, so they are
+appended to `growth_runs.csv`, including universally registered columns whose
+values are blank in the selected runs. They are not experiment metadata and are
+therefore not added to `growth_runs_metadata.csv`.
 
 If a background revision is missing or stale, raw OD is still exported while the
 background and corrected cells remain blank and the QC reason identifies the
