@@ -27,7 +27,9 @@ def render_growth_data_export(context: AppContext) -> None:
     st.header("Growth Data Export")
     st.markdown(
         "Export complete Growth runs in two files: one row per OD observation and a "
-        "companion run/well metadata table. The observation file keeps **Raw OD**, "
+        "companion cultivation metadata table linked by **Cultivation ID** / **Cultivation**. "
+        "Generate IDs in the run workspace Metadata tab. Strain, treatments, concentrations "
+        "and units are separate fields. The observation file keeps **Raw OD**, "
         "**Background Mean OD**, and **Background Subtracted OD** as separate columns."
     )
     with st.form("growth-export-search"):
@@ -108,7 +110,7 @@ def render_growth_data_export(context: AppContext) -> None:
     left, middle, right = st.columns(3)
     left.metric("Runs", len(selected))
     middle.metric("OD observation rows", bundle.measurements.row_count)
-    right.metric("Experiment metadata rows", bundle.metadata.row_count)
+    right.metric("Cultivation metadata rows", bundle.metadata.row_count)
     for warning in bundle.warnings:
         st.warning(warning)
     downloads = st.columns(2)

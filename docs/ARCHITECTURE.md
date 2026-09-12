@@ -245,6 +245,16 @@ Import behavior:
 Legacy growth and MIC databases are accepted through explicit versioned importers,
 not through conditionals scattered across repositories or UI code.
 
+### Growth tabular registry export
+
+The CSV path is separate from portable database backup. The current contract is
+[`GROWTH_TABULAR_EXPORT_V3.md`](contracts/GROWTH_TABULAR_EXPORT_V3.md): observation
+rows carry saved cultivation IDs and the companion file has descriptive metadata
+per well/cultivation. Shared registry descriptions are scoped to a plate under
+`plate_custom_json.cultivation_registry`; identity components and generated IDs are
+well custom metadata. Generation is an explicit, authorized transaction that preserves
+raw observations. Export never generates identities. See ADR 0034.
+
 ## 7. Configuration and secrets
 
 One typed configuration object selects storage mode:

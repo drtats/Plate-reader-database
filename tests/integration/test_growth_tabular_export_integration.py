@@ -121,20 +121,20 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
 
     assert counts_after == counts_before
     assert bundle.measurements.row_count == 768
-    assert bundle.metadata.row_count == 2
+    assert bundle.metadata.row_count == 192
     measurement_rows = list(
         csv.DictReader(io.StringIO(bundle.measurements.content.decode("utf-8")))
     )
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"))))
     assert "Vessel" in measurement_rows[0]
-    assert "Vessel" not in metadata_rows[0]
+    assert "Vessel" in metadata_rows[0]
     assert all(row["Vessel"] == "" for row in measurement_rows)
     assert len(measurement_rows) == 768
-    assert len(metadata_rows) == 2
-    assert [row["Experiment Name"] for row in metadata_rows] == [
+    assert len(metadata_rows) == 192
+    assert {row["Experiment Name"] for row in metadata_rows} == {
         "Experiment 0",
         "Experiment 1",
-    ]
+    }
     assert {row["Experiment Name"] for row in measurement_rows} == {
         "Experiment 0",
         "Experiment 1",
@@ -146,7 +146,7 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
     b1 = next(row for row in measurement_rows if row["Well"] == "B1")
     assert b1["Condition 1 State"] == "Mecillinam 3.0 ug/mL"
     assert json.loads(metadata_rows[0]["Source Metadata JSON"])["Plate Number"] == "Plate 0"
-    assert not bundle.warnings
+    assert all("no cultivation ID" in warning for warning in bundle.warnings)
 
 
 def _table_counts(repository: SqlPlateReaderRepository) -> tuple[int, ...]:

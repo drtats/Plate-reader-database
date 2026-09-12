@@ -95,10 +95,12 @@ Searching and checking rows do not load measurements. Preparation creates two fi
 
 - `growth_runs.csv`: every OD observation with separate **Raw OD**, **Background
   Mean OD**, and **Background Subtracted OD** columns, plus background SD, blank
-  count, group, and QC status. The original laboratory columns come first, followed
-  by every canonical Growth layout field and every universal custom column;
-- `growth_runs_metadata.csv`: one experiment-metadata row for each selected run;
-  it does not mix experiment rows with well rows.
+  count, group, and QC status. **Cultivation ID** links each observation to its
+  metadata row. Every canonical Growth layout field and universal custom column
+  is retained, with separate treatment/concentration/unit fields for combinations;
+- `growth_runs_metadata.csv`: one row per well/cultivation, with **Cultivation**
+  matching the data file ID. It includes the experiment context, objective, protocols,
+  inoculation time, strain, medium, biological replicate, well location and custom metadata.
 
 When exactly one run is selected, both download names use the normalized experiment
 name plus its stable eight-character run hash, for example
@@ -109,8 +111,25 @@ names shown above.
 Custom columns added under **Manage custom columns** are shared by every Growth
 experiment. Their values remain specific to each well and experiment, so they are
 appended to `growth_runs.csv`, including universally registered columns whose
-values are blank in the selected runs. They are not experiment metadata and are
-therefore not added to `growth_runs_metadata.csv`.
+values are blank in the selected runs. They are also retained in the companion
+metadata file, together with full well, plate and experiment custom JSON.
+
+In a saved run, open **Metadata → Cultivation metadata and ID generator**. Enter the
+team and cultivation system/experiment code, then select wells and manually enter
+cultivation run numbers. A run number is separate from the experiment date. The
+saved Layout supplies strain and biological replicate; check these before generation.
+For example team `PN`, strain `11_J3`, system `BRV`, run `2`, replicate `1` generates
+`PN-EXP-11_J3-BRV002R1`. Use **Preview cultivation IDs**, then **Save cultivation
+metadata and IDs**. Descriptive metadata can be saved with all wells unselected.
+
+Shared descriptions apply to this plate; per-well custom columns named
+`InoculationDateTime`, `Local_Cultivation_ID`, `Strain/Strain_Aliases`, `Objective`,
+or the other registry fields override their descriptive defaults. Dates accept
+`YYYY-MM-DD HH:MM` (optionally with seconds/time zone). Culture age uses measurement
+time minus inoculation time when both timestamps exist, otherwise the existing
+elapsed-time plus culture-age-offset convention. Unknown fields and unassigned
+cultivation IDs stay blank, with an export warning. Duplicate IDs across the selected
+runs and IDs that no longer match saved strain/replicate prevent export until corrected.
 
 If a background revision is missing or stale, raw OD is still exported while the
 background and corrected cells remain blank and the QC reason identifies the

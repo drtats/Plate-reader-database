@@ -8,8 +8,9 @@
 - `DOMAIN_V1.md`: validated growth/MIC algorithms, formulas, and intentional
   legacy corrections.
 - `GROWTH_TABULAR_EXPORT_V1.md`: historical mixed run/well metadata export contract.
-- `GROWTH_TABULAR_EXPORT_V2.md`: current multi-run Growth observation export and
-  homogeneous one-row-per-run experiment metadata contract.
+- `GROWTH_TABULAR_EXPORT_V2.md`: historical one-row-per-run metadata contract.
+- `GROWTH_TABULAR_EXPORT_V3.md`: current cultivation-linked observations and
+  per-well registry metadata, with separate values/conditions and preserved custom fields.
 
 The executable counterparts are the typed DTO/repository protocols under
 `src/plate_reader/application`, SQL under `migrations`, and golden fixtures/tests

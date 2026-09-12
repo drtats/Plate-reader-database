@@ -69,11 +69,11 @@ def test_multi_run_export_preserves_raw_background_and_corrected_od_contract() -
         csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"), newline=""))
     )
     assert tuple(metadata_rows[0]) == GROWTH_METADATA_HEADERS
-    assert bundle.metadata.row_count == len(metadata_rows) == 1
+    assert bundle.metadata.row_count == len(metadata_rows) == 2
     assert metadata_rows[0]["Run ID"] == "dbea359c"
     assert metadata_rows[0]["Experiment Name"] == "Experiment 1"
     assert json.loads(metadata_rows[0]["Editable Metadata JSON"])["Culture_volume_uL"] == 200
-    assert not bundle.warnings
+    assert any("no cultivation ID" in warning for warning in bundle.warnings)
 
 
 def test_measurement_export_contains_every_canonical_growth_layout_column() -> None:
@@ -146,7 +146,7 @@ def test_missing_background_keeps_raw_od_and_exposes_qc_reason() -> None:
     assert any("no current background revision" in warning for warning in bundle.warnings)
 
 
-def test_custom_layout_columns_are_appended_only_to_observation_export() -> None:
+def test_custom_layout_columns_are_preserved_in_both_exports() -> None:
     view = _view()
     view.snapshot.wells[0]["custom_json"] = json.dumps(
         {
@@ -163,10 +163,11 @@ def test_custom_layout_columns_are_appended_only_to_observation_export() -> None
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
 
     assert tuple(measurement_rows[0]) == (*GROWTH_MEASUREMENT_HEADERS, "Oxygen", "Vessel")
-    assert tuple(metadata_rows[0]) == GROWTH_METADATA_HEADERS
+    assert tuple(metadata_rows[0]) == (*GROWTH_METADATA_HEADERS, "Oxygen", "Vessel")
     assert measurement_rows[0]["Oxygen"] == "anaerobic"
     assert measurement_rows[0]["Vessel"] == ""
-    assert "Oxygen" not in metadata_rows[0]
+    assert metadata_rows[0]["Oxygen"] == "anaerobic"
+    assert metadata_rows[0]["Vessel"] == ""
 
 
 def test_export_rejects_empty_duplicate_and_non_growth_views() -> None:
@@ -318,3 +319,108 @@ def _view() -> GrowthRunView:
         (),
         False,
     )
+
+
+def _registry_view() -> GrowthRunView:
+    view = _view()
+    plate_custom = json.loads(str(view.snapshot.metadata["plate_custom_json"]))
+    plate_custom["cultivation_registry"] = {
+        "Team_Code": "PN",
+        "CultivationSystemCode": "MP96A",
+        "Objective": "Test combination treatments",
+        "ProgramMetric": "CD2",
+        "CultivationExperiment": "PN-EXP-MG1655-MP96A[023-054]",
+        "CultivationProtocol": "Protocol v1.1",
+        "SampleAnalysisProtocol": "NA",
+        "InoculationDateTime": "2025-09-09 15:00:00",
+    }
+    view.snapshot.metadata["plate_custom_json"] = json.dumps(plate_custom)
+    for index, well in enumerate(view.snapshot.wells, 1):
+        well["strain"] = "MG1655"
+        custom = json.loads(str(well["custom_json"]))
+        custom.update(
+            {
+                "Cultivation": f"PN-EXP-MG1655-MP96A023R{index}",
+                "Team_Code": "PN",
+                "CultivationSystemCode": "MP96A",
+                "CultivationRun": "023",
+                "Strain/Strain_Aliases": "K12",
+                "treatment_2": "Na-sulfadiazine",
+                "conc_2": 1000,
+                "unit_2": "mg/L",
+            }
+        )
+        well["custom_json"] = json.dumps(custom)
+    return view
+
+
+def test_cultivation_metadata_links_every_observation_and_preserves_separate_values() -> None:
+    view = _registry_view()
+    bundle = export_growth_tabular_data((view,))
+    data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    by_id = {row["Cultivation"]: row for row in metadata}
+    assert len(by_id) == 2
+    assert not bundle.warnings
+    assert len(data[0]) == len(GROWTH_MEASUREMENT_HEADERS)
+    assert len(metadata[0]) == len(GROWTH_METADATA_HEADERS)
+    for row in data:
+        assert row["Cultivation ID"] in by_id
+        assert row["Strain"] == by_id[row["Cultivation ID"]]["Strain"] == "MG1655"
+        assert "Cultivation_Registry_Link/Condition" not in row
+        assert row["Raw OD"] and row["Background Mean OD"] and row["Background Subtracted OD"]
+        assert row["Treatment 2"] == "Na-sulfadiazine"
+        assert row["Concentration 2"] == "1000"
+        assert row["Concentration unit 2"] == "mg/L"
+    assert float(data[0]["Culture_Age_h"]) == pytest.approx(12.2 / 60)
+    assert metadata[0]["Local_Cultivation_ID"] == "Plate 58 A01"
+    assert metadata[0]["Vessel_Alphabetical_ID"] == "A"
+    assert metadata[0]["Vessel_Numeric_ID"] == "1"
+    assert metadata[0]["Objective"] == "Test combination treatments"
+    assert metadata[0]["Strain/Strain_Aliases"] == "K12"
+    assert metadata[0]["CultivationRun"] == "023"
+    assert metadata[0]["Treatment 2"] == "Na-sulfadiazine"
+    assert (
+        json.loads(metadata[0]["Plate Metadata JSON"])["cultivation_registry"]["ProgramMetric"]
+        == "CD2"
+    )
+
+
+def test_registry_export_rejects_duplicates_across_runs_and_changed_layout_identity() -> None:
+    view = _registry_view()
+    second = replace(
+        _registry_view(), snapshot=replace(_registry_view().snapshot, plate_id=PlateId("other"))
+    )
+    with pytest.raises(ValueError, match="Duplicate cultivation ID"):
+        export_growth_tabular_data((view, second))
+    view.snapshot.wells[0]["strain"] = "11_J3"
+    with pytest.raises(ValueError, match="no longer matches"):
+        export_growth_tabular_data((view,))
+
+
+def test_registry_export_does_not_invent_missing_ids_or_experiment_descriptions() -> None:
+    bundle = export_growth_tabular_data((_view(),))
+    data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    assert all(row["Cultivation ID"] == "" for row in data)
+    assert all(
+        row["Cultivation"] == row["Objective"] == row["CultivationExperiment"] == ""
+        for row in metadata
+    )
+    assert any("2 wells have no cultivation ID" in warning for warning in bundle.warnings)
+    assert data[0]["Culture_Age_h"] == "2.0"
+
+
+def test_per_well_inoculation_overrides_shared_date_and_bad_dates_fail() -> None:
+    view = _registry_view()
+    custom = json.loads(str(view.snapshot.wells[0]["custom_json"]))
+    custom["InoculationDateTime"] = "2025-09-09 15:12:12"
+    view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
+    bundle = export_growth_tabular_data((view,))
+    data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    assert data[0]["Culture_Age_h"] == "0.0"
+    assert float(data[1]["Culture_Age_h"]) == pytest.approx(1 / 6)
+    custom["InoculationDateTime"] = "invalid"
+    view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
+    with pytest.raises(ValueError, match="valid date and time"):
+        export_growth_tabular_data((view,))

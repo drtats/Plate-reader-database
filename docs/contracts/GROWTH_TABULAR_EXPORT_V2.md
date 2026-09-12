@@ -1,6 +1,6 @@
 # Growth tabular export contract v2
 
-Status: accepted, 2026-09-02.
+Status: superseded by [v3](GROWTH_TABULAR_EXPORT_V3.md), 2026-09-12.
 
 The Growth Data Export page creates two UTF-8 CSV files for one or more explicitly
 selected Growth runs. Both files use LF line endings, contain no UTF-8 byte-order

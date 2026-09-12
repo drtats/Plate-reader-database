@@ -69,6 +69,7 @@ from plate_reader.domain.growth import (
 from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
+from plate_reader.ui.growth_cultivation import render_growth_cultivations
 from plate_reader.ui.growth_display_names import render_growth_display_name_controls
 from plate_reader.ui.growth_history import (
     render_growth_activity_log,
@@ -598,6 +599,11 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
         render_overview(context, plate_id, view)
     with tabs[1]:
         render_metadata_form(context, plate_id, metadata)
+        if render_growth_cultivations(context, plate_id, view):
+            _invalidate_growth_view(plate_id)
+            _invalidate_growth_discovery()
+            st.session_state.commit_message = "Cultivation metadata and IDs saved."
+            st.rerun()
     with tabs[2]:
         render_layout_form(context, plate_id, view)
     with tabs[3]:

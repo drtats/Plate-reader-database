@@ -18,6 +18,36 @@ from plate_reader.application.services.growth_workflow import (
     LoadGrowthRunService,
 )
 from plate_reader.application.services.layout_columns import ListLayoutColumnsService
+from plate_reader.domain.common.errors import DomainIssue, DomainValidationError, IssueCode
+from plate_reader.domain.growth.cultivation import generate_cultivation_id
+
+GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
+    "Cultivation ID",
+    "Culture_Age_h",
+)
+
+GROWTH_REGISTRY_METADATA_HEADERS = (
+    "Cultivation",
+    "Local_Cultivation_ID",
+    "InoculationDateTime",
+    "ProgramMetric",
+    "CultivationExperiment",
+    "Comment",
+    "Team_Code",
+    "Strain",
+    "Strain/Strain_Aliases",
+    "CultivationSystemCode",
+    "CultivationRun",
+    "Replicate",
+    "Vessel_Alphabetical_ID",
+    "Vessel_Numeric_ID",
+    "Objective",
+    "Condition",
+    "Media",
+    "EquipmentMakeModel",
+    "CultivationProtocol",
+    "SampleAnalysisProtocol",
+)
 
 _LEGACY_GROWTH_MEASUREMENT_HEADERS = (
     "Cultivation Short ID",
@@ -53,7 +83,7 @@ _LEGACY_GROWTH_MEASUREMENT_HEADERS = (
 
 # Canonical layout fields that are absent from, or only indirectly represented in,
 # the legacy-compatible block. Together the two tuples expose every fixed Growth
-# layout column without changing the established first 29 columns.
+# layout column while retaining the established legacy block.
 GROWTH_ADDITIONAL_LAYOUT_HEADERS = (
     "Raw label",
     "Display name",
@@ -66,14 +96,22 @@ GROWTH_ADDITIONAL_LAYOUT_HEADERS = (
     "Concentration",
     "Concentration unit",
     "T0 added (min)",
+    "Treatment 2",
+    "Concentration 2",
+    "Concentration unit 2",
+    "Treatment 3",
+    "Concentration 3",
+    "Concentration unit 3",
 )
 
 GROWTH_MEASUREMENT_HEADERS = (
+    *GROWTH_REGISTRY_MEASUREMENT_HEADERS,
     *_LEGACY_GROWTH_MEASUREMENT_HEADERS,
     *GROWTH_ADDITIONAL_LAYOUT_HEADERS,
 )
 
 GROWTH_METADATA_HEADERS = (
+    *GROWTH_REGISTRY_METADATA_HEADERS,
     "Run ID",
     "Project",
     "Experiment Name",
@@ -84,6 +122,19 @@ GROWTH_METADATA_HEADERS = (
     "Source Folder",
     "Editable Metadata JSON",
     "Source Metadata JSON",
+    "Treatment",
+    "Concentration",
+    "Concentration unit",
+    "Treatment 2",
+    "Concentration 2",
+    "Concentration unit 2",
+    "Treatment 3",
+    "Concentration 3",
+    "Concentration unit 3",
+    "Well",
+    "Well Metadata JSON",
+    "Experiment Metadata JSON",
+    "Plate Metadata JSON",
 )
 
 _EDITABLE_METADATA_KEYS = (
@@ -190,15 +241,51 @@ def export_growth_tabular_data(
     measurement_writer = csv.writer(measurement_stream, lineterminator="\n")
     metadata_writer = csv.writer(metadata_stream, lineterminator="\n")
     measurement_writer.writerow((*GROWTH_MEASUREMENT_HEADERS, *exported_custom_columns))
-    metadata_writer.writerow(GROWTH_METADATA_HEADERS)
+    metadata_writer.writerow((*GROWTH_METADATA_HEADERS, *exported_custom_columns))
 
     measurement_count = 0
     metadata_count = 0
     warnings: list[str] = []
+    seen_cultivations: set[str] = set()
     for context in contexts:
         warnings.extend(_run_warnings(context))
-        metadata_writer.writerow(_run_metadata_row(context))
-        metadata_count += 1
+        missing_ids = 0
+        for well in context.view.snapshot.wells:
+            registry = _cultivation_metadata(context, well)
+            cultivation = str(registry["Cultivation"])
+            if cultivation:
+                if cultivation in seen_cultivations:
+                    raise _cultivation_error(
+                        f"Duplicate cultivation ID in selected runs: {cultivation}"
+                    )
+                seen_cultivations.add(cultivation)
+            else:
+                missing_ids += 1
+            metadata_writer.writerow(
+                (
+                    *(registry[header] for header in GROWTH_REGISTRY_METADATA_HEADERS),
+                    *_run_metadata_row(context),
+                    *_separate_conditions(well),
+                    well.get("position"),
+                    _json_cell(_well_custom(well)),
+                    _json_cell(
+                        _json_object(context.view.snapshot.metadata.get("experiment_custom_json"))
+                    ),
+                    _json_cell(
+                        _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
+                    ),
+                    *(
+                        _custom_cell(_custom_value(_well_custom(well), column))
+                        for column in exported_custom_columns
+                    ),
+                )
+            )
+            metadata_count += 1
+        if missing_ids:
+            warnings.append(
+                f"{context.run_id}: {missing_ids} wells have no cultivation ID; "
+                "complete Cultivation metadata in the workspace before registry submission."
+            )
         for row in _measurement_rows(context, exported_custom_columns):
             measurement_writer.writerow(row)
             measurement_count += 1
@@ -381,6 +468,7 @@ def _measurement_rows(
         well = wells_by_id[well_id]
         position = _required_text(well.get("position"), "Growth export well position")
         custom = _well_custom(well)
+        registry = _cultivation_metadata(context, well)
         channel = _required_text(observation.get("channel"), "Growth observation channel")
         time_index = _integer(observation.get("time_index"), "Growth observation time index")
         elapsed = _integer(
@@ -425,6 +513,8 @@ def _measurement_rows(
         )
         result.append(
             (
+                registry["Cultivation"],
+                _culture_age(context, registry, elapsed),
                 _display_name(well, position),
                 date_time,
                 context.culture_age_hours + elapsed_minutes / 60,
@@ -463,10 +553,92 @@ def _measurement_rows(
                 _first_value(well.get("concentration"), custom.get("conc_1")),
                 _first_value(well.get("concentration_unit"), custom.get("unit_1")),
                 custom.get("t0_added_min"),
+                *_separate_conditions(well)[3:],
                 *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
             )
         )
     return tuple(result)
+
+
+def _separate_conditions(well: Mapping[str, object]) -> tuple[object, ...]:
+    custom = _well_custom(well)
+    return (
+        _first_value(well.get("treatment"), custom.get("treatment_1")),
+        _first_value(well.get("concentration"), custom.get("conc_1")),
+        _first_value(well.get("concentration_unit"), custom.get("unit_1")),
+        *(
+            custom.get(f"{field}_{index}")
+            for index in (2, 3)
+            for field in ("treatment", "conc", "unit")
+        ),
+    )
+
+
+def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> dict[str, object]:
+    """Resolve descriptive defaults, keeping saved per-well identity authoritative."""
+
+    plate_custom = _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
+    shared = _json_object(plate_custom.get("cultivation_registry"))
+    custom = _well_custom(well)
+    values = {**shared, **custom}
+    result: dict[str, object] = {
+        header: _first_text(values.get(header)) for header in GROWTH_REGISTRY_METADATA_HEADERS
+    }
+    position = _required_text(well.get("position"), "Growth export well position")
+    result.update(
+        {
+            "Cultivation": _first_text(custom.get("Cultivation")),
+            "Strain": _first_text(well.get("strain")),
+            "Replicate": well.get("replicate"),
+            "Media": _first_text(well.get("medium")),
+            "Local_Cultivation_ID": _first_text(
+                custom.get("Local_Cultivation_ID"),
+                f"{context.microplate_id} {position[0]}{int(position[1:]):02d}".strip(),
+            ),
+            "Vessel_Alphabetical_ID": position[0],
+            "Vessel_Numeric_ID": int(position[1:]),
+            "Comment": _first_text(custom.get("Comment"), well.get("notes"), shared.get("Comment")),
+            "EquipmentMakeModel": _first_text(values.get("EquipmentMakeModel"), context.instrument),
+        }
+    )
+    cultivation = str(result["Cultivation"])
+    if cultivation:
+        # A layout edit must not silently attach an existing ID to a different strain/replicate.
+        expected = generate_cultivation_id(
+            _first_text(custom.get("Team_Code")),
+            str(result["Strain"]),
+            _first_text(custom.get("CultivationSystemCode")),
+            _first_text(custom.get("CultivationRun")),
+            _integer(well.get("replicate"), "Cultivation biological replicate"),
+        )
+        if cultivation != expected:
+            raise _cultivation_error(
+                f"{position}: saved cultivation ID no longer matches the layout; "
+                "regenerate cultivation IDs in Metadata."
+            )
+    return result
+
+
+def _cultivation_error(message: str) -> DomainValidationError:
+    return DomainValidationError(DomainIssue.error(IssueCode.INVALID_VALUE, message))
+
+
+def _culture_age(context: _RunContext, registry: Mapping[str, object], elapsed: int) -> float:
+    inoculation_text = _first_text(registry.get("InoculationDateTime"))
+    if inoculation_text:
+        inoculation = _parse_datetime(inoculation_text)
+        if inoculation is None:
+            raise _cultivation_error("InoculationDateTime must be a valid date and time")
+        if context.start_datetime is not None:
+            try:
+                return (
+                    context.start_datetime + timedelta(microseconds=elapsed) - inoculation
+                ).total_seconds() / 3600
+            except TypeError as error:
+                raise _cultivation_error(
+                    "Source start and inoculation times must use compatible time zones"
+                ) from error
+    return context.culture_age_hours + elapsed / 3_600_000_000
 
 
 def _metadata_payload(
