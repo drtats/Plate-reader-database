@@ -42,3 +42,8 @@ elapsed time when both clocks exist, otherwise recorded initial age plus elapsed
 hours. Malformed or incompatible time-zone timestamps reject preparation. The legacy
 `Culture Age H` keeps its v2 meaning. Local cultivation IDs fall back to microplate
 identity plus zero-padded well position; vessel fields retain physical row/column.
+
+Shared cultivation descriptions can also be patched across selected runs from the
+Growth Run Library (ADR 0035). This uses the same plate registry JSON, so the next
+CSV preparation reflects the saved values with the same per-well override rules.
+Bulk shared metadata edits do not regenerate or alter cultivation IDs.

@@ -15,7 +15,7 @@ from plate_reader.application.services.growth_cultivation import (
 from plate_reader.application.services.growth_workflow import GrowthRunView
 from plate_reader.ui.context import AppContext
 
-_DESCRIPTION_FIELDS = (
+CULTIVATION_DESCRIPTION_FIELDS = (
     ("CultivationExperiment", "Cultivation experiment ID"),
     ("InoculationDateTime", "Inoculation date/time (YYYY-MM-DD HH:MM)"),
     ("ProgramMetric", "Program metric"),
@@ -73,7 +73,7 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
                 value=str(shared.get("CultivationSystemCode") or ""),
                 help="For example MP96A or BRV. No run number or replicate suffix.",
             )
-            for field, label in _DESCRIPTION_FIELDS:
+            for field, label in CULTIVATION_DESCRIPTION_FIELDS:
                 registry[field] = st.text_input(label, value=str(shared.get(field) or ""))
             edited = st.data_editor(
                 pd.DataFrame(rows),

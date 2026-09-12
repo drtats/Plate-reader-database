@@ -255,6 +255,12 @@ per well/cultivation. Shared registry descriptions are scoped to a plate under
 well custom metadata. Generation is an explicit, authorized transaction that preserves
 raw observations. Export never generates identities. See ADR 0034.
 
+The Library also offers shared cultivation metadata editing for selected runs. A
+metadata-only repository projection reads registry defaults without wells or raw
+observations. Bulk patches merge only explicitly chosen fields into each plate
+registry and commit with per-run version checks and provenance in one transaction
+(ADR 0035). Existing cultivation IDs and per-well overrides retain their values.
+
 ## 7. Configuration and secrets
 
 One typed configuration object selects storage mode:

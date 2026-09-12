@@ -114,6 +114,23 @@ appended to `growth_runs.csv`, including universally registered columns whose
 values are blank in the selected runs. They are also retained in the companion
 metadata file, together with full well, plate and experiment custom JSON.
 
+To add shared cultivation information to several experiments, select their entries
+in **Growth Run Library** and press **Edit cultivation metadata**. The editor shows
+the current values for the selected runs. Choose the fields to update, enter their
+shared values, and press **Save cultivation metadata to selected runs**. This works
+for team/system defaults, objective, equipment, protocols, program metric, cultivation
+experiment ID, inoculation date/time and comment.
+
+**Fill empty values only** is enabled initially. Uncheck it to replace the chosen
+fields across the selection; an empty value then clears that field. Fields you did
+not select and per-well metadata remain intact. Team/system changes set defaults for
+future ID generation; saved cultivation IDs retain their components. Per-well
+registry overrides still take precedence in exports. The batch commits together;
+if another session changes a run, reopen the editor to load the new values before
+retrying. Search or Cancel closes the batch without saving. Editors and admins can
+use this action. These shared values are saved on the selected runs and are available
+in each workspace and cultivation export.
+
 In a saved run, open **Metadata → Cultivation metadata and ID generator**. Enter the
 team and cultivation system/experiment code, then select wells and manually enter
 cultivation run numbers. A run number is separate from the experiment date. The

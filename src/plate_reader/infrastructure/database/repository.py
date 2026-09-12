@@ -960,6 +960,36 @@ class SqlPlateReaderRepository:
         )
         return _all_dicts(cursor)
 
+    def growth_cultivation_metadata(
+        self, plate_ids: Sequence[PlateId]
+    ) -> tuple[dict[str, object], ...]:
+        """Read shared registry metadata without loading wells or raw data.
+
+        Missing, deleted and non-Growth plates are omitted. The application
+        checks completeness before presenting or updating a batch.
+        """
+
+        requested = tuple(plate_ids)
+        if not requested or len(requested) > 500:
+            raise InvalidRepositoryValueError("Select between 1 and 500 Growth runs")
+        if any(not isinstance(value, str) or not value.strip() for value in requested):
+            raise InvalidRepositoryValueError("Growth run IDs cannot be empty")
+        if len(set(requested)) != len(requested):
+            raise InvalidRepositoryValueError("Growth run IDs must be unique")
+        placeholders = ", ".join("?" for _ in requested)
+        rows = _all_dicts(
+            self.connection.execute(
+                "SELECT p.plate_id, e.name AS experiment_name, p.plate_name, p.updated_at, "
+                "p.custom_json AS plate_custom_json FROM plates p "
+                "JOIN experiments e ON e.experiment_id = p.experiment_id "
+                f"WHERE p.plate_id IN ({placeholders}) AND p.assay_type = ? "
+                "AND p.deleted_at IS NULL",
+                (*requested, AssayType.GROWTH),
+            )
+        )
+        by_id = {str(row["plate_id"]): row for row in rows}
+        return tuple(by_id[plate_id] for plate_id in requested if plate_id in by_id)
+
     def load_plate(self, plate_id: PlateId) -> PlateSnapshot | None:
         metadata_cursor = self.connection.execute(
             "SELECT e.*, p.*, e.updated_at AS experiment_updated_at, "

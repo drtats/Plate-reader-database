@@ -70,6 +70,11 @@ from plate_reader.infrastructure.database import SqlitePortableRunExporter
 from plate_reader.infrastructure.database.repository import ConcurrencyConflictError
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.growth_cultivation import render_growth_cultivations
+from plate_reader.ui.growth_cultivation_bulk import (
+    clear_bulk_cultivation_editor,
+    open_bulk_cultivation_editor,
+    render_bulk_cultivation_editor,
+)
 from plate_reader.ui.growth_display_names import render_growth_display_name_controls
 from plate_reader.ui.growth_history import (
     render_growth_activity_log,
@@ -124,6 +129,8 @@ class _GrowthPlotFormValues:
 
 def render_run_library(context: AppContext) -> None:
     st.header("Run Library")
+    if message := st.session_state.pop("run_library_message", None):
+        st.success(str(message))
     with st.form("run-search"):
         text = st.text_input(
             "Search experiment, plate, project, strain, treatment, or medium",
@@ -131,6 +138,7 @@ def render_run_library(context: AppContext) -> None:
         )
         submitted = st.form_submit_button("Search")
     if submitted or "run_search_results" not in st.session_state:
+        clear_bulk_cultivation_editor()
         st.session_state.run_search_results = SearchGrowthRunsService(context.repository).execute(
             SearchRuns(actor=context.actor, text=text)
         )
@@ -167,9 +175,13 @@ def render_run_library(context: AppContext) -> None:
                 "Select": st.column_config.CheckboxColumn("Select", default=False),
             },
         )
-        action_left, action_right = st.columns(2)
+        action_left, action_right, action_metadata = st.columns(3)
         open_selected = action_left.form_submit_button("Open selected run", type="primary")
         compare_selected = action_right.form_submit_button("Compare selected")
+        edit_cultivation = action_metadata.form_submit_button(
+            "Edit cultivation metadata",
+            disabled=context.actor.role not in {Role.EDITOR, Role.ADMIN},
+        )
 
     selected_plate_ids = _selected_library_plate_ids(edited_table)
     if open_selected:
@@ -187,6 +199,26 @@ def render_run_library(context: AppContext) -> None:
             return
         st.session_state.growth_comparison_plate_ids = selected_plate_ids
         st.session_state.pending_navigation = "Plate Comparison"
+        st.rerun()
+    if edit_cultivation:
+        try:
+            open_bulk_cultivation_editor(context, selected_plate_ids)
+        except Exception as error:
+            render_exception(error)
+    bulk_editor = st.empty()
+    with bulk_editor.container():
+        saved_ids = render_bulk_cultivation_editor(context)
+    if saved_ids is not None:
+        bulk_editor.empty()
+        for plate_id in saved_ids:
+            _invalidate_growth_view(plate_id)
+        clear_bulk_cultivation_editor()
+        _invalidate_growth_discovery()
+        st.session_state.run_library_message = (
+            f"Cultivation metadata saved for {len(saved_ids)} run(s)."
+            if saved_ids
+            else "Selected runs already match; no cultivation metadata changes were needed."
+        )
         st.rerun()
 
 
