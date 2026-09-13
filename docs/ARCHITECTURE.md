@@ -255,6 +255,13 @@ per well/cultivation. Shared registry descriptions are scoped to a plate under
 well custom metadata. Generation is an explicit, authorized transaction that preserves
 raw observations. Export never generates identities. See ADR 0034.
 
+Per-well pattern and experiment number metadata are optional additions (ADR 0036).
+The recommended pattern uses a simple number starting at 001 plus strain, well and
+replicate. A metadata-only repository projection reads existing numbers, including
+soft-deleted runs, for a read-only suggestion; save checks numeric reservations in
+the write transaction. Saved well identities remain independent of shared defaults.
+Legacy formats remain valid and export uses each well's saved pattern/components.
+
 The Library also offers shared cultivation metadata editing for selected runs. A
 metadata-only repository projection reads registry defaults without wells or raw
 observations. Bulk patches merge only explicitly chosen fields into each plate

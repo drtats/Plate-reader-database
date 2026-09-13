@@ -5,6 +5,7 @@ from streamlit.testing.v1 import AppTest
 
 def test_cultivation_controls_preview_save_and_invalid_inputs() -> None:
     app = _app().run()
+    app.selectbox[0].select("Original laboratory format (manual number)").run()
     assert not app.exception
     assert "saved_registry" not in app.session_state
     for widget in app.text_input:
@@ -35,6 +36,59 @@ def test_cultivation_controls_preview_save_and_invalid_inputs() -> None:
     assert app.session_state["save_count"] == 1
 
 
+def test_default_pattern_uses_simple_number_and_each_wells_strain_and_replicate() -> None:
+    app = _app().run()
+    assert not app.exception
+    number = next(widget for widget in app.text_input if widget.label == "Experiment number")
+    assert number.value == "001"
+    next(widget for widget in app.text_input if widget.label == "Team code").set_value("PN")
+    next(button for button in app.button if button.label == "Preview cultivation IDs").click().run()
+    assert not app.exception and not app.error
+    assert "saved_registry" not in app.session_state
+    assert list(app.dataframe[0].value["Cultivation"]) == [
+        "PN-EXP-MG1655-001-A01-R1",
+        "PN-EXP-MG1655-001-A02-R2",
+        "PN-EXP-11_J3-001-B01-R1",
+    ]
+    next(
+        button for button in app.button if button.label == "Save cultivation metadata and IDs"
+    ).click().run()
+    assert not app.exception and not app.error
+    assert app.session_state["saved_registry"]["CultivationExperimentCode"] == "001"
+    assert all(a.experiment_code == "001" for a in app.session_state["saved_assignments"])
+
+
+def test_custom_pattern_validation_prevents_writes() -> None:
+    app = _app().run()
+    app.selectbox[0].select("Custom pattern").run()
+    next(widget for widget in app.text_input if widget.label == "Team code").set_value("PN")
+    pattern = next(w for w in app.text_input if w.label == "Custom cultivation ID pattern")
+    pattern.set_value("{unknown}-{well}")
+    next(
+        button for button in app.button if button.label == "Save cultivation metadata and IDs"
+    ).click().run()
+    assert not app.exception and app.error
+    assert "saved_registry" not in app.session_state
+    next(w for w in app.text_input if w.label == "Custom cultivation ID pattern").set_value(
+        "{team}-{experiment}-{strain}-{well}"
+    )
+    next(button for button in app.button if button.label == "Preview cultivation IDs").click().run()
+    assert not app.exception and not app.error
+    assert app.dataframe[0].value.iloc[0]["Cultivation"] == "PN-001-MG1655-A01"
+
+
+def test_saved_number_is_reused_without_requesting_a_new_number() -> None:
+    app = _app()
+    app.session_state["initial_registry"] = {"CultivationExperimentCode": "001"}
+    app.run()
+    assert not app.exception
+    assert next(w for w in app.text_input if w.label == "Experiment number").value == "001"
+    assert "number_queries" not in app.session_state
+    app.run()
+    assert next(w for w in app.text_input if w.label == "Experiment number").value == "001"
+    assert "number_queries" not in app.session_state
+
+
 def _app() -> AppTest:
     return AppTest.from_string(
         """
@@ -46,28 +100,40 @@ from plate_reader.ui.context import AppContext
 import plate_reader.ui.growth_cultivation as ui
 
 snapshot = PlateSnapshot(PlateId("p"), {
-    "assay_type": AssayType.GROWTH, "plate_custom_json": "{}", "updated_at": "v1"
+    "assay_type": AssayType.GROWTH,
+    "plate_custom_json": {"cultivation_registry": st.session_state.get("initial_registry", {})},
+    "updated_at": "v1"
 }, ({"well_id": "w1", "position": "A1", "strain": "MG1655", "replicate": 1,
-     "custom_json": "{}"},), (), ())
+     "custom_json": "{}"},
+    {"well_id": "w2", "position": "A2", "strain": "MG1655", "replicate": 2,
+     "custom_json": "{}"},
+    {"well_id": "w3", "position": "B1", "strain": "11_J3", "replicate": 1,
+     "custom_json": "{}"}), (), ())
 class SaveService:
     def __init__(self, repository): pass
     def execute(self, actor, plate_id, version, registry, assignments):
         st.session_state["saved_registry"] = registry
         st.session_state["save_count"] = st.session_state.get("save_count", 0) + 1
-        assert assignments[0].cultivation_run == "23"
+        st.session_state["saved_assignments"] = assignments
+        assert assignments[0].cultivation_run == ("23" if assignments[0].pattern is None else "")
         assert version == "v1"
         return snapshot
 ui.SaveGrowthCultivationsService = SaveService
+class Repository:
+    def growth_cultivation_codes(self):
+        st.session_state["number_queries"] = st.session_state.get("number_queries", 0) + 1
+        return ()
 original_editor = st.data_editor
 def select_well(frame, **kwargs):
     edited = frame.copy()
     edited["Generate"] = True
-    edited["Cultivation run number"] = "23"
+    if "Cultivation run number" in edited:
+        edited["Cultivation run number"] = "23"
     return edited
 st.data_editor = select_well
 try:
     ui.render_growth_cultivations(
-        AppContext(object(), Actor(UserId("u"), "test@example.invalid", Role.EDITOR)),
+        AppContext(Repository(), Actor(UserId("u"), "test@example.invalid", Role.EDITOR)),
         PlateId("p"), GrowthRunView(snapshot, (), ())
     )
 finally:

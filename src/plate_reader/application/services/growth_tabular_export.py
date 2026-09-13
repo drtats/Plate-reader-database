@@ -19,10 +19,16 @@ from plate_reader.application.services.growth_workflow import (
 )
 from plate_reader.application.services.layout_columns import ListLayoutColumnsService
 from plate_reader.domain.common.errors import DomainIssue, DomainValidationError, IssueCode
-from plate_reader.domain.growth.cultivation import generate_cultivation_id
+from plate_reader.domain.growth.cultivation import (
+    LEGACY_CULTIVATION_PATTERN,
+    format_cultivation_id,
+    generate_cultivation_id,
+)
 
 GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
     "Cultivation ID",
+    "Cultivation experiment code",
+    "Cultivation ID pattern",
     "Culture_Age_h",
 )
 
@@ -47,6 +53,8 @@ GROWTH_REGISTRY_METADATA_HEADERS = (
     "EquipmentMakeModel",
     "CultivationProtocol",
     "SampleAnalysisProtocol",
+    "CultivationExperimentCode",
+    "CultivationIDPattern",
 )
 
 _LEGACY_GROWTH_MEASUREMENT_HEADERS = (
@@ -514,6 +522,8 @@ def _measurement_rows(
         result.append(
             (
                 registry["Cultivation"],
+                registry["CultivationExperimentCode"],
+                registry["CultivationIDPattern"],
                 _culture_age(context, registry, elapsed),
                 _display_name(well, position),
                 date_time,
@@ -588,6 +598,8 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
     result.update(
         {
             "Cultivation": _first_text(custom.get("Cultivation")),
+            "CultivationExperimentCode": _first_text(custom.get("CultivationExperimentCode")),
+            "CultivationIDPattern": _first_text(custom.get("CultivationIDPattern")),
             "Strain": _first_text(well.get("strain")),
             "Replicate": well.get("replicate"),
             "Media": _first_text(well.get("medium")),
@@ -604,13 +616,26 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
     cultivation = str(result["Cultivation"])
     if cultivation:
         # A layout edit must not silently attach an existing ID to a different strain/replicate.
-        expected = generate_cultivation_id(
-            _first_text(custom.get("Team_Code")),
-            str(result["Strain"]),
-            _first_text(custom.get("CultivationSystemCode")),
-            _first_text(custom.get("CultivationRun")),
-            _integer(well.get("replicate"), "Cultivation biological replicate"),
-        )
+        if "CultivationIDPattern" in custom:
+            expected = format_cultivation_id(
+                str(result["CultivationIDPattern"]),
+                team_code=_first_text(custom.get("Team_Code")),
+                strain=str(result["Strain"]),
+                system_code=_first_text(custom.get("CultivationSystemCode")),
+                cultivation_run=_first_text(custom.get("CultivationRun")),
+                replicate=_integer(well.get("replicate"), "Cultivation biological replicate"),
+                experiment_code=str(result["CultivationExperimentCode"]),
+                position=position,
+            )
+        else:
+            expected = generate_cultivation_id(
+                _first_text(custom.get("Team_Code")),
+                str(result["Strain"]),
+                _first_text(custom.get("CultivationSystemCode")),
+                _first_text(custom.get("CultivationRun")),
+                _integer(well.get("replicate"), "Cultivation biological replicate"),
+            )
+            result["CultivationIDPattern"] = LEGACY_CULTIVATION_PATTERN
         if cultivation != expected:
             raise _cultivation_error(
                 f"{position}: saved cultivation ID no longer matches the layout; "

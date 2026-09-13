@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 from collections.abc import Callable, Iterator
 from datetime import date
@@ -10,6 +12,7 @@ import pytest
 
 from plate_reader.application.contracts import (
     Actor,
+    ExperimentId,
     GrowthRunMetadata,
     ImportGrowthRun,
     PlateId,
@@ -21,10 +24,14 @@ from plate_reader.application.services.growth_cultivation import (
     CultivationAssignment,
     SaveGrowthCultivationsService,
     json_object,
+    suggested_cultivation_experiment_code,
 )
 from plate_reader.application.services.growth_import import ImportGrowthRunService
+from plate_reader.application.services.growth_tabular_export import export_growth_tabular_data
+from plate_reader.application.services.growth_workflow import GrowthRunView
 from plate_reader.domain.common import DomainValidationError
 from plate_reader.domain.growth import GROWTH_NORMALIZATION_VERSION
+from plate_reader.domain.growth.cultivation import DEFAULT_CULTIVATION_PATTERN
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
@@ -138,6 +145,220 @@ def test_registry_only_save_preserves_existing_per_well_components(
         "CultivationSystemCode": "SYSA",
         "Project": "new shared defaults",
     }
+
+
+def test_pattern_assignments_persist_per_well_while_shared_defaults_change(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = import_run(repository)
+    initial = required_snapshot(repository, plate_id)
+    raw_before = raw_hash(initial)
+    service = SaveGrowthCultivationsService(repository)
+    first = service.execute(
+        ACTOR,
+        plate_id,
+        str(initial.metadata["updated_at"]),
+        {
+            "Team_Code": "PN",
+            "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+            "CultivationExperimentCode": "1",
+        },
+        (
+            CultivationAssignment("A1", "", DEFAULT_CULTIVATION_PATTERN, "1"),
+            CultivationAssignment("A2", "", DEFAULT_CULTIVATION_PATTERN, "1"),
+        ),
+    )
+    a1_before = json_object(well(first, "A1")["custom_json"])
+    a2_before = json_object(well(first, "A2")["custom_json"])
+    assert a1_before["Cultivation"] == "PN-EXP-J3-001-A01-R1"
+    assert a2_before["Cultivation"] == "PN-EXP-MG1655-001-A02-R2"
+    assert a1_before["CultivationIDPattern"] == DEFAULT_CULTIVATION_PATTERN
+    assert a1_before["CultivationExperimentCode"] == "001"
+    assert (
+        json_object(first.metadata["plate_custom_json"])["cultivation_registry"][
+            "CultivationExperimentCode"
+        ]
+        == "001"
+    )
+    assert a1_before["oxygen"] == "low"
+    bundle = export_growth_tabular_data((GrowthRunView(first, (), ()),))
+    metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    observation_rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    by_id = {row["Cultivation"]: row for row in metadata_rows if row["Cultivation"]}
+    assert set(by_id) == {a1_before["Cultivation"], a2_before["Cultivation"]}
+    assert observation_rows
+    assert {row["Well"] for row in observation_rows} >= {"A1", "A2"}
+    for row in observation_rows:
+        if row["Well"] in {"A1", "A2"}:
+            assert row["Cultivation ID"] in by_id
+            assert row["Cultivation experiment code"] == "001"
+            assert by_id[row["Cultivation ID"]]["CultivationExperimentCode"] == "001"
+
+    second = service.execute(
+        ACTOR,
+        plate_id,
+        str(first.metadata["updated_at"]),
+        {
+            "Team_Code": "OTHER",
+            "CultivationIDPattern": "{team}-{well}",
+            "CultivationExperimentCode": "later",
+        },
+        (),
+    )
+    assert json_object(well(second, "A1")["custom_json"]) == a1_before
+    assert json_object(well(second, "A2")["custom_json"]) == a2_before
+    assert raw_hash(second) == raw_before
+    assert sum(len(chunk) for chunk in repository.stream_growth_measurements(plate_id)) == 384
+
+
+def test_pattern_well_can_be_regenerated_as_legacy_without_stale_pattern_metadata(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = import_run(repository)
+    initial = required_snapshot(repository, plate_id)
+    service = SaveGrowthCultivationsService(repository)
+    first = service.execute(
+        ACTOR,
+        plate_id,
+        str(initial.metadata["updated_at"]),
+        {"Team_Code": "PN"},
+        (CultivationAssignment("A1", "", DEFAULT_CULTIVATION_PATTERN, "001"),),
+    )
+    second = service.execute(
+        ACTOR,
+        plate_id,
+        str(first.metadata["updated_at"]),
+        {
+            "Team_Code": "PN",
+            "CultivationSystemCode": "BRV",
+            "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+            "CultivationExperimentCode": "002",
+        },
+        (CultivationAssignment("A1", "2"),),
+    )
+    a1 = json_object(well(second, "A1")["custom_json"])
+    assert a1["Cultivation"] == "PN-EXP-J3-BRV002R1"
+    assert "CultivationIDPattern" not in a1
+    assert "CultivationExperimentCode" not in a1
+
+
+def test_pattern_and_legacy_ids_coexist_without_rewriting_unassigned_wells(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = import_run(repository)
+    initial = required_snapshot(repository, plate_id)
+    service = SaveGrowthCultivationsService(repository)
+    first = service.execute(
+        ACTOR,
+        plate_id,
+        str(initial.metadata["updated_at"]),
+        {"Team_Code": "PN", "CultivationSystemCode": "BRV"},
+        (CultivationAssignment("A1", "2"),),
+    )
+    legacy_custom = json_object(well(first, "A1")["custom_json"])
+    second = service.execute(
+        ACTOR,
+        plate_id,
+        str(first.metadata["updated_at"]),
+        {
+            "Team_Code": "PN",
+            "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+            "CultivationExperimentCode": "001",
+        },
+        (CultivationAssignment("A2", "", DEFAULT_CULTIVATION_PATTERN, "001"),),
+    )
+    assert json_object(well(second, "A1")["custom_json"]) == legacy_custom
+    assert json_object(well(second, "A2")["custom_json"])["Cultivation"] == (
+        "PN-EXP-MG1655-001-A02-R2"
+    )
+
+
+def test_sequential_suggestion_and_stale_number_conflict_are_transactional(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    first_plate_id = import_run(repository)
+    second_plate_id = import_run(repository, unique=2)
+    first_before = required_snapshot(repository, first_plate_id)
+    second_before = required_snapshot(repository, second_plate_id)
+    service = SaveGrowthCultivationsService(repository)
+    stale_suggestion = suggested_cultivation_experiment_code(repository)
+    assert stale_suggestion == "001"
+
+    first = service.execute(
+        ACTOR,
+        first_plate_id,
+        str(first_before.metadata["updated_at"]),
+        {"Team_Code": "PN", "CultivationExperimentCode": stale_suggestion},
+        (CultivationAssignment("A1", "", DEFAULT_CULTIVATION_PATTERN, stale_suggestion),),
+    )
+    assert json_object(well(first, "A1")["custom_json"])["CultivationExperimentCode"] == "001"
+    assert suggested_cultivation_experiment_code(repository) == "002"
+
+    second_events_before = provenance_count(repository, second_plate_id)
+    with pytest.raises(DomainValidationError, match="refresh the suggestion"):
+        service.execute(
+            ACTOR,
+            second_plate_id,
+            str(second_before.metadata["updated_at"]),
+            {"Team_Code": "PN", "CultivationExperimentCode": "0001"},
+            (CultivationAssignment("A1", "", DEFAULT_CULTIVATION_PATTERN, "0001"),),
+        )
+    second_after_failure = required_snapshot(repository, second_plate_id)
+    assert (
+        second_after_failure.metadata["plate_custom_json"]
+        == second_before.metadata["plate_custom_json"]
+    )
+    assert (
+        well(second_after_failure, "A1")["custom_json"] == well(second_before, "A1")["custom_json"]
+    )
+    assert provenance_count(repository, second_plate_id) == second_events_before
+
+    second = service.execute(
+        ACTOR,
+        second_plate_id,
+        str(second_before.metadata["updated_at"]),
+        {"Team_Code": "PN", "CultivationExperimentCode": "002"},
+        (CultivationAssignment("A1", "", DEFAULT_CULTIVATION_PATTERN, "002"),),
+    )
+    assert json_object(well(second, "A1")["custom_json"])["CultivationExperimentCode"] == "002"
+    assert suggested_cultivation_experiment_code(repository) == "003"
+
+    experiment_id = ExperimentId(str(first.metadata["experiment_id"]))
+    experiment_row = repository.connection.execute(
+        "SELECT updated_at FROM experiments WHERE experiment_id = ?", (experiment_id,)
+    ).fetchone()
+    assert experiment_row is not None
+    with repository.transaction():
+        repository.update_experiment_metadata(
+            experiment_id, str(experiment_row[0]), {"experiment_date": "2027-01-01"}
+        )
+    reused = service.execute(
+        ACTOR,
+        first_plate_id,
+        str(first.metadata["updated_at"]),
+        {"Team_Code": "PN", "CultivationExperimentCode": "001"},
+        (),
+    )
+    assert suggested_cultivation_experiment_code(repository) == "003"
+    assert json_object(well(reused, "A1")["custom_json"])["CultivationExperimentCode"] == "001"
+
+    with repository.transaction():
+        repository.update_plate_metadata(
+            first_plate_id,
+            str(reused.metadata["updated_at"]),
+            {"deleted_at": "2027-01-02T00:00:00", "deleted_by": str(ACTOR.user_id)},
+        )
+    assert suggested_cultivation_experiment_code(repository) == "003"
+    third_plate_id = import_run(repository, unique=3)
+    third_before = required_snapshot(repository, third_plate_id)
+    with pytest.raises(DomainValidationError, match="refresh the suggestion"):
+        service.execute(
+            ACTOR,
+            third_plate_id,
+            str(third_before.metadata["updated_at"]),
+            {"Team_Code": "PN", "CultivationExperimentCode": "001"},
+            (),
+        )
 
 
 def test_provenance_preserves_previous_and_replacement_cultivation_ids(
@@ -296,16 +517,17 @@ def test_forced_well_failure_rolls_back_registry_wells_and_provenance(
 
 
 def import_run(
-    repository: SqlPlateReaderRepository, *, duplicate_components: bool = False
+    repository: SqlPlateReaderRepository, *, duplicate_components: bool = False, unique: int = 1
 ) -> PlateId:
     a2_strain = "J3" if duplicate_components else "MG1655"
     a2_replicate = 1 if duplicate_components else 2
-    result = ImportGrowthRunService(repository, id_factory=id_sequence()).execute(
+    result = ImportGrowthRunService(repository, id_factory=id_sequence(unique)).execute(
         ImportGrowthRun(
             actor=ACTOR,
-            source_name="cultivation.csv",
+            source_name=f"cultivation-{unique}.csv",
             source_sha256=hashlib.sha256(CSV_TEXT.encode()).hexdigest(),
             parser_version=GROWTH_NORMALIZATION_VERSION,
+            idempotency_key=f"cultivation-integration-{unique}",
             experiment_name="Cultivation integration",
             plate_name="Plate 1",
             experiment_date=date(2026, 9, 12),
@@ -325,8 +547,8 @@ def import_run(
     return result.plate_id
 
 
-def id_sequence() -> Callable[[], str]:
-    values = iter(range(1000))
+def id_sequence(unique: int = 1) -> Callable[[], str]:
+    values = iter(range((unique - 1) * 1000, unique * 1000))
     return lambda: f"cultivation-{next(values):04d}"
 
 

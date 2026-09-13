@@ -131,13 +131,27 @@ retrying. Search or Cancel closes the batch without saving. Editors and admins c
 use this action. These shared values are saved on the selected runs and are available
 in each workspace and cultivation export.
 
-In a saved run, open **Metadata → Cultivation metadata and ID generator**. Enter the
-team and cultivation system/experiment code, then select wells and manually enter
-cultivation run numbers. A run number is separate from the experiment date. The
-saved Layout supplies strain and biological replicate; check these before generation.
-For example team `PN`, strain `11_J3`, system `BRV`, run `2`, replicate `1` generates
-`PN-EXP-11_J3-BRV002R1`. Use **Preview cultivation IDs**, then **Save cultivation
-metadata and IDs**. Descriptive metadata can be saved with all wells unselected.
+In a saved run, open **Metadata → Cultivation metadata and ID pattern**. Choose the
+recommended **Experiment number + well** pattern and enter your team code. The
+experiment number starts at `001` and the next available number is suggested for
+new runs (`002`, `003`, …); you can edit it. Preview does not consume a number.
+Once saved, the number remains with the run. Dates remain in metadata.
+
+Each well gets its own ID using its saved Layout strain and biological replicate.
+A run can contain multiple strains. For example, `PN-EXP-MG1655-001-A01-R1` and
+`PN-EXP-11_J3-001-B01-R1` belong to different wells of run `001`. Well position
+keeps IDs distinct even when replicate labels repeat across conditions; check the
+biological replicate values in Layout rather than inferring them from positions.
+Sample wells with strains are selected by default; uncheck wells to preserve their IDs.
+Use **Preview cultivation IDs**, then **Save cultivation metadata and IDs**.
+Descriptive metadata can be saved with all wells unselected.
+
+The original laboratory pattern is also available with manual per-well run numbers,
+e.g. `PN-EXP-11_J3-BRV002R1`. **Custom pattern** supports `{team}`, `{strain}`,
+`{system}`, `{run}`, `{experiment}`, `{well}`, and `{replicate}`. The saved pattern
+and number are included in both export files. Existing IDs keep their saved format.
+If another session has taken a suggested number, saving reports the conflict so you
+can use the next number. Numbering is local to the current database.
 
 Shared descriptions apply to this plate; per-well custom columns named
 `InoculationDateTime`, `Local_Cultivation_ID`, `Strain/Strain_Aliases`, `Objective`,

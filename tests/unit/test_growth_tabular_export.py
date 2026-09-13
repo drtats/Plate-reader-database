@@ -386,6 +386,47 @@ def test_cultivation_metadata_links_every_observation_and_preserves_separate_val
     )
 
 
+def test_pattern_ids_export_join_with_per_well_strains_and_persisted_numbers() -> None:
+    from plate_reader.domain.growth.cultivation import DEFAULT_CULTIVATION_PATTERN
+
+    view = _registry_view()
+    for index, well in enumerate(view.snapshot.wells, 1):
+        strain = "MG1655" if index == 1 else "11_J3"
+        well["strain"] = strain
+        custom = json.loads(str(well["custom_json"]))
+        custom.update(
+            {
+                "Cultivation": f"PN-EXP-{strain}-001-A0{index}-R{index}",
+                "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+                "CultivationExperimentCode": "001",
+                "CultivationRun": "",
+            }
+        )
+        well["custom_json"] = json.dumps(custom)
+    shared = json.loads(str(view.snapshot.metadata["plate_custom_json"]))
+    shared["cultivation_registry"]["CultivationExperimentCode"] = "099"
+    shared["cultivation_registry"]["CultivationIDPattern"] = "{well}"
+    view.snapshot.metadata["plate_custom_json"] = json.dumps(shared)
+    bundle = export_growth_tabular_data((view,))
+    data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    by_id = {row["Cultivation"]: row for row in metadata}
+    assert set(by_id) == {"PN-EXP-MG1655-001-A01-R1", "PN-EXP-11_J3-001-A02-R2"}
+    for row in data:
+        saved = by_id[row["Cultivation ID"]]
+        assert row["Strain"] == saved["Strain"]
+        assert row["Cultivation experiment code"] == saved["CultivationExperimentCode"] == "001"
+        assert (
+            row["Cultivation ID pattern"]
+            == saved["CultivationIDPattern"]
+            == DEFAULT_CULTIVATION_PATTERN
+        )
+        assert row["Raw OD"] and row["Background Subtracted OD"]
+    view.snapshot.wells[0]["replicate"] = 2
+    with pytest.raises(ValueError, match="no longer matches"):
+        export_growth_tabular_data((view,))
+
+
 def test_registry_export_rejects_duplicates_across_runs_and_changed_layout_identity() -> None:
     view = _registry_view()
     second = replace(

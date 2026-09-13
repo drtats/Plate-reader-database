@@ -7,19 +7,45 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 
 from plate_reader.application.contracts import Actor, AssayType, PlateId, Role
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services.authorization import require_role
 from plate_reader.application.services.growth_workflow import GrowthWorkflowRepository
 from plate_reader.domain.common import DomainIssue, DomainValidationError, IssueCode, WellPosition
-from plate_reader.domain.growth.cultivation import generate_cultivation_id
+from plate_reader.domain.growth.cultivation import (
+    DEFAULT_CULTIVATION_PATTERN,
+    format_cultivation_id,
+    generate_cultivation_id,
+    normalize_cultivation_experiment_code,
+)
+
+
+class GrowthCultivationRepository(GrowthWorkflowRepository, Protocol):
+    """Growth repository with a metadata-only projection of reserved run codes."""
+
+    def growth_cultivation_codes(self) -> tuple[dict[str, object], ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
 class CultivationAssignment:
     position: str
     cultivation_run: str
+    pattern: str | None = None
+    experiment_code: str | None = None
+
+
+def suggested_cultivation_experiment_code(repository: GrowthCultivationRepository) -> str:
+    """Suggest the next number from saved growth metadata without reserving it."""
+
+    numbers = [
+        number
+        for row in repository.growth_cultivation_codes()
+        if (number := _numeric_experiment_code(_code_from_row(row))) is not None
+    ]
+    largest = max(numbers, key=lambda number: (len(number), number), default="0")
+    return _increment_experiment_code(largest).zfill(3)
 
 
 def json_object(value: object) -> dict[str, object]:
@@ -49,10 +75,12 @@ def preview_cultivations(
 
     registry_json = json_object(registry)
     _validate_registry(registry_json)
+    _normalize_registry_experiment_code(registry_json)
     if not assignments:
         return ()
     team_code = _registry_component(registry_json, "Team_Code")
-    system_code = _registry_component(registry_json, "CultivationSystemCode")
+    system_value = registry_json.get("CultivationSystemCode", "")
+    system_code = system_value if isinstance(system_value, str) else ""
     wells = {_canonical_position(well.get("position")): well for well in snapshot.wells}
     seen_positions: set[str] = set()
     previews: list[dict[str, object]] = []
@@ -70,32 +98,51 @@ def preview_cultivations(
         if not isinstance(strain, str) or not strain:
             raise _domain_error("Assigned well is missing a saved strain.", position=position)
         replicate = well.get("replicate")
-        cultivation = generate_cultivation_id(
-            team_code,
-            strain,
-            system_code,
-            assignment.cultivation_run,
-            _saved_replicate(replicate, position),
-        )
-        run = int(assignment.cultivation_run)
-        previews.append(
-            {
-                **registry_json,
-                "Well": position,
-                "Cultivation": cultivation,
-                "Team_Code": team_code,
-                "Strain": strain,
-                "CultivationSystemCode": system_code,
-                "CultivationRun": f"{run:03d}",
-                "Replicate": replicate,
-            }
-        )
+        saved_replicate = _saved_replicate(replicate, position)
+        if assignment.pattern is None:
+            system_code = _registry_component(registry_json, "CultivationSystemCode")
+            cultivation = generate_cultivation_id(
+                team_code, strain, system_code, assignment.cultivation_run, saved_replicate
+            )
+            run = f"{int(assignment.cultivation_run):03d}"
+        else:
+            experiment_code = normalize_cultivation_experiment_code(
+                assignment.pattern, assignment.experiment_code or ""
+            )
+            cultivation = format_cultivation_id(
+                assignment.pattern,
+                team_code=team_code,
+                strain=strain,
+                system_code=system_code,
+                cultivation_run=assignment.cultivation_run,
+                replicate=saved_replicate,
+                experiment_code=experiment_code,
+                position=position,
+            )
+            run = _optional_run(assignment.cultivation_run)
+        record: dict[str, object] = {
+            **registry_json,
+            "Well": position,
+            "Cultivation": cultivation,
+            "Team_Code": team_code,
+            "Strain": strain,
+            "CultivationSystemCode": system_code,
+            "CultivationRun": run,
+            "Replicate": replicate,
+        }
+        if assignment.pattern is None:
+            record.pop("CultivationIDPattern", None)
+            record.pop("CultivationExperimentCode", None)
+        else:
+            record["CultivationIDPattern"] = assignment.pattern
+            record["CultivationExperimentCode"] = experiment_code
+        previews.append(record)
     _reject_duplicate_ids(previews)
     return tuple(previews)
 
 
 class SaveGrowthCultivationsService:
-    def __init__(self, repository: GrowthWorkflowRepository) -> None:
+    def __init__(self, repository: GrowthCultivationRepository) -> None:
         self.repository = repository
 
     def execute(
@@ -110,6 +157,7 @@ class SaveGrowthCultivationsService:
         snapshot = _growth_snapshot(self.repository, plate_id)
         registry_json = json_object(registry)
         _validate_registry(registry_json)
+        _normalize_registry_experiment_code(registry_json)
         previews = preview_cultivations(snapshot, registry_json, assignments)
         assigned_positions = {str(record["Well"]) for record in previews}
         final_ids: list[dict[str, object]] = list(previews)
@@ -137,6 +185,12 @@ class SaveGrowthCultivationsService:
                         "CultivationRun": record["CultivationRun"],
                     }
                 )
+                if "CultivationIDPattern" in record:
+                    custom["CultivationIDPattern"] = record["CultivationIDPattern"]
+                    custom["CultivationExperimentCode"] = record["CultivationExperimentCode"]
+                else:
+                    custom.pop("CultivationIDPattern", None)
+                    custom.pop("CultivationExperimentCode", None)
                 changes.append({"position": position, "custom_json": custom})
                 continue
             existing_id = _saved_cultivation_id(custom.get("Cultivation"), position)
@@ -149,6 +203,12 @@ class SaveGrowthCultivationsService:
         previous_registry = json_object(plate_custom.get("cultivation_registry", {}))
         plate_custom["cultivation_registry"] = registry_json
         with self.repository.transaction():
+            _validate_experiment_code_reservations(
+                self.repository,
+                plate_id,
+                registry_json,
+                previews,
+            )
             self.repository.update_plate_metadata(
                 plate_id,
                 expected_updated_at,
@@ -181,11 +241,94 @@ def _growth_snapshot(repository: GrowthWorkflowRepository, plate_id: PlateId) ->
     return snapshot
 
 
+def _code_from_row(row: Mapping[str, object]) -> object:
+    return json_object(row.get("custom_json", {})).get("CultivationExperimentCode")
+
+
+def _numeric_experiment_code(value: object) -> str | None:
+    if not isinstance(value, str) or not value or not value.isascii() or not value.isdecimal():
+        return None
+    digits = value.lstrip("0")
+    return digits or None
+
+
+def _normalize_registry_experiment_code(registry: dict[str, object]) -> None:
+    if registry.get("CultivationIDPattern") != DEFAULT_CULTIVATION_PATTERN:
+        return
+    value = registry.get("CultivationExperimentCode")
+    if not isinstance(value, str):
+        raise _domain_error(
+            "CultivationExperimentCode must be a positive decimal integer.",
+            field="CultivationExperimentCode",
+        )
+    registry["CultivationExperimentCode"] = normalize_cultivation_experiment_code(
+        DEFAULT_CULTIVATION_PATTERN,
+        value,
+    )
+
+
+def _increment_experiment_code(value: str) -> str:
+    digits = list(value)
+    for index in range(len(digits) - 1, -1, -1):
+        if digits[index] != "9":
+            digits[index] = str(int(digits[index]) + 1)
+            return "".join(digits)
+        digits[index] = "0"
+    return "1" + "".join(digits)
+
+
+def _validate_experiment_code_reservations(
+    repository: GrowthCultivationRepository,
+    plate_id: PlateId,
+    registry: Mapping[str, object],
+    previews: Sequence[Mapping[str, object]],
+) -> None:
+    candidate_values = [registry.get("CultivationExperimentCode")]
+    candidate_values.extend(
+        record.get("CultivationExperimentCode")
+        for record in previews
+        if "CultivationIDPattern" in record
+    )
+    candidate_numbers = {
+        number
+        for value in candidate_values
+        if (number := _numeric_experiment_code(value)) is not None
+    }
+    if not candidate_numbers:
+        return
+    for row in repository.growth_cultivation_codes():
+        if str(row.get("plate_id")) == str(plate_id):
+            continue
+        reserved_number = _numeric_experiment_code(_code_from_row(row))
+        if reserved_number in candidate_numbers:
+            raise _domain_error(
+                "Cultivation experiment number is already used by another plate; "
+                "refresh the suggestion or use the next number.",
+                experiment_code=reserved_number.zfill(3),
+                conflicting_plate_id=str(row.get("plate_id")),
+            )
+
+
 def _registry_component(registry: Mapping[str, object], field: str) -> str:
     value = registry.get(field)
     if not isinstance(value, str) or not value:
         raise _domain_error("Cultivation registry is missing a required string.", field=field)
     return value
+
+
+def _optional_run(value: str) -> str:
+    if value == "":
+        return ""
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+        raise _domain_error(
+            "CultivationRun must be a positive decimal integer.", field="CultivationRun"
+        )
+    digits = value.lstrip("0")
+    if not digits:
+        raise _domain_error(
+            "CultivationRun must be a positive decimal integer.", field="CultivationRun"
+        )
+    return digits.zfill(3)
 
 
 def _validate_registry(registry: Mapping[str, object]) -> None:

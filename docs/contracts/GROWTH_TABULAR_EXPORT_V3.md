@@ -5,7 +5,8 @@ Status: accepted, 2026-09-12. Replaces v2 (ADR 0034).
 Encoding, deterministic ordering, filenames, raw-value handling and background/QC
 semantics remain as documented in v2. Export is read-only and supports viewers.
 
-The observation CSV starts with `Cultivation ID` and `Culture_Age_h`, followed by
+The observation CSV starts with `Cultivation ID`, `Cultivation experiment code`,
+`Cultivation ID pattern` and `Culture_Age_h`, followed by
 all existing v2 columns. The older `Cultivation Short ID` is retained as a display
 label; it is not the new registry identity. Separate `Treatment 2`, `Concentration 2`,
 `Concentration unit 2` and the corresponding third-treatment fields are included.
@@ -18,7 +19,7 @@ The metadata CSV contains one row per stored well (including wells without an ID
 with these registry columns first:
 
 ```text
-Cultivation,Local_Cultivation_ID,InoculationDateTime,ProgramMetric,CultivationExperiment,Comment,Team_Code,Strain,Strain/Strain_Aliases,CultivationSystemCode,CultivationRun,Replicate,Vessel_Alphabetical_ID,Vessel_Numeric_ID,Objective,Condition,Media,EquipmentMakeModel,CultivationProtocol,SampleAnalysisProtocol
+Cultivation,Local_Cultivation_ID,InoculationDateTime,ProgramMetric,CultivationExperiment,Comment,Team_Code,Strain,Strain/Strain_Aliases,CultivationSystemCode,CultivationRun,Replicate,Vessel_Alphabetical_ID,Vessel_Numeric_ID,Objective,Condition,Media,EquipmentMakeModel,CultivationProtocol,SampleAnalysisProtocol,CultivationExperimentCode,CultivationIDPattern
 ```
 
 All v2 run-metadata columns follow, then separate treatment/concentration/unit fields
@@ -32,10 +33,15 @@ reject preparation. Run ID + Well still identify unassigned wells.
 
 Shared registry descriptions live in `plate_custom_json.cultivation_registry`;
 well custom fields override shared descriptions. Saved identity fields are
-`Cultivation`, `Team_Code`, `CultivationSystemCode`, `CultivationRun`. The generator
-uses the persisted strain/replicate and explicitly supplied positive run number,
-padded to at least three digits, to produce `Team-EXP-Strain-SystemNNNRreplicate`.
-No numbering allocation is inferred from dates, conditions or plate position.
+`Cultivation`, `Team_Code`, `CultivationSystemCode`, `CultivationRun`, plus optional
+`CultivationIDPattern` and `CultivationExperimentCode` (ADR 0036). The recommended
+pattern uses a simple experiment number starting at `001` and zero-padded well
+position: `PN-EXP-MG1655-001-A01-R1`. Each well's saved strain and replicate are used.
+Numbers are suggested from existing database reservations and checked again at save.
+The original format remains supported for IDs without saved pattern metadata:
+`Team-EXP-Strain-SystemNNNRreplicate`, with a positive manually assigned run number.
+Export validates IDs using the pattern and components saved on that well, never
+shared defaults that may have changed. Legacy IDs report their original pattern.
 
 `Culture_Age_h` uses explicit inoculation time and source start plus observation
 elapsed time when both clocks exist, otherwise recorded initial age plus elapsed

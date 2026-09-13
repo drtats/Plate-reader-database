@@ -960,6 +960,31 @@ class SqlPlateReaderRepository:
         )
         return _all_dicts(cursor)
 
+    def growth_cultivation_codes(self) -> tuple[dict[str, object], ...]:
+        """Read saved code reservations, including soft-deleted Growth runs.
+
+        Per-well codes remain reserved when shared defaults change. This query
+        never loads measurements and can run inside the caller's write transaction.
+        """
+
+        rows = _all_dicts(
+            self.connection.execute(
+                "SELECT plate_id, custom_json FROM plates WHERE assay_type = ?",
+                (AssayType.GROWTH,),
+            )
+        )
+        for row in rows:
+            custom = json.loads(str(row["custom_json"]))
+            row["custom_json"] = custom.get("cultivation_registry", {})
+        wells = _all_dicts(
+            self.connection.execute(
+                "SELECT p.plate_id, w.custom_json FROM plates p "
+                "JOIN wells w ON w.plate_id = p.plate_id WHERE p.assay_type = ?",
+                (AssayType.GROWTH,),
+            )
+        )
+        return (*rows, *wells)
+
     def growth_cultivation_metadata(
         self, plate_ids: Sequence[PlateId]
     ) -> tuple[dict[str, object], ...]:
