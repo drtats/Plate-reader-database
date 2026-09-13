@@ -297,7 +297,8 @@ def test_cloud_repository_reconnects_once_after_an_expired_hrana_stream(
     finally:
         fresh_connection.close()
 
-    assert repository is fresh
+    assert isinstance(repository, SqlPlateReaderRepository)
+    assert repository.connection is fresh_connection
     assert factory.calls == 2
     assert factory.clear_calls == 1
 

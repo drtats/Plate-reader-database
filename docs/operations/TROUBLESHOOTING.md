@@ -46,6 +46,15 @@ Another session saved the plate after it was loaded. Reload, compare the latest
 metadata/layout, and reapply the intentional change. Never retry with a fabricated
 timestamp.
 
+## A new feature reports a missing repository method
+
+After a source update, Streamlit can retain a cached repository instance from the
+previous code version, even while showing the new UI. For example, bulk cultivation
+editing can report a missing `growth_cultivation_metadata` method. The app now uses
+the current repository implementation on each rerun over the cached connection,
+without reopening the database or repeating identity initialization. Reload the
+app after updating. This error does not require a database migration.
+
 ## Portable import reports collisions
 
 Normal transfers into a populated database should use safe remapping. Strict

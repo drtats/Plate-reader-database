@@ -74,7 +74,7 @@ def app_context(
     )
     if config.runtime.storage_mode not in {"local", "fake-cloud"}:
         raise ValueError("Sync storage is not enabled; choose local, fake-cloud, or cloud")
-    return _cached_context(
+    cached = _cached_context(
         str(config.database_path),
         backend,
         str(migrations),
@@ -82,6 +82,9 @@ def app_context(
         config.development_user_role,
         config.writes_enabled,
     )
+    # cache_resource survives module reloads and can retain an instance of the
+    # previous repository class. Only reuse its connection, not its methods.
+    return AppContext(SqlPlateReaderRepository(cached.repository.connection), cached.actor)
 
 
 def _hosted_actor(repository: SqlPlateReaderRepository, config: LocalAppConfig) -> Actor:
@@ -101,7 +104,7 @@ def _healthy_cloud_repository(
     hosted_user_email: str,
     hosted_user_role: str,
 ) -> SqlPlateReaderRepository:
-    """Return a live Turso connection, replacing an expired Hrana stream once."""
+    """Use the current repository class over a cached, live Turso connection."""
 
     def open_cached() -> SqlPlateReaderRepository:
         return _cached_cloud_repository(
@@ -121,7 +124,7 @@ def _healthy_cloud_repository(
         _cached_cloud_repository.clear()
         repository = open_cached()
         repository.connection.execute("SELECT 1")
-    return repository
+    return SqlPlateReaderRepository(repository.connection)
 
 
 def _is_expired_hrana_stream(error: Exception) -> bool:
