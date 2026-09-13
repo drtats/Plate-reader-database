@@ -275,7 +275,10 @@ within the selected runs, ignoring saved reservations and leaving stored IDs unt
 missing experiment numbers from one library metadata projection (ADR 0040). Both
 CSVs' primary Replicate column agrees with the ID suffix; local labels have their
 own column. Micro-unit spelling is canonicalized to ASCII u for exported unit fields
-and selection matching, while saved fingerprints keep their literal rules. Local
+and selection matching, while saved fingerprints keep their literal rules. Export
+concentration matching optionally rounds treatment doses to significant figures
+(2 in the UI by default; ADR 0041). Both CSVs retain original doses and expose matching
+doses and precision; saved fingerprints and other numeric conditions remain exact. Local
 replicate labels and original metadata JSON remain available. Missing strain/medium never merges unrelated wells.
 
 The Library also offers shared cultivation metadata editing for selected runs. A

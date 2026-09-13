@@ -101,3 +101,25 @@ scientific case and distinct scales are unchanged; `mg/mL` does not become `ug/m
 Original well/plate/experiment JSON remains unchanged. Saved condition fingerprint
 validation uses its original literal-unit rules to avoid invalidating persisted IDs;
 normalization is opt-in for the selection planner.
+
+ADR 0041 adds optional `concentration_significant_figures` to the export command,
+pure exporter and selection planner. API default `None` preserves exact matching;
+the UI explicitly sends `2` by default (exact, 3 and 4 are selectable). Values must
+be `None` or integers 1–12; booleans are invalid. A non-None precision requires
+selection-based replicate assignment. Validation occurs before raw run loading.
+
+Only treatment doses (slots 1–3) are rounded, using Decimal ROUND_HALF_UP with a
+context independent of other calculations. For example 0.1875 and 0.19 match at two
+significant figures. Unit spelling normalization, treatment matching and combination
+sorting then follow the existing policy. Other numeric condition fields remain
+exact. Unknown dose text is preserved literally; nonfinite doses are rejected.
+The saved cultivation fingerprint path remains exact unless explicitly requested.
+
+Four columns are appended after the observation layout block and after the metadata
+JSON block, before custom columns in both files: `Concentration matching significant
+figures`, `Matching concentration`, `Matching concentration 2`, `Matching concentration
+3`. The first contains the precision or `exact`; the other three contain the readable
+comparison doses and use their respective existing unit columns. Original dose
+columns, stored JSON and raw/background measurements are unchanged. Preview includes
+entered and matching dose summaries and the matching mode. Precision participates
+in the prepared-download signature, so changing it hides outdated files.

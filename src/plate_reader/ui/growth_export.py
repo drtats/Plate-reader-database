@@ -161,6 +161,28 @@ def render_growth_data_export(context: AppContext) -> None:
         if assign_replicates
         else ()
     )
+    concentration_matching = st.selectbox(
+        "Concentration matching",
+        (
+            "2 significant figures (recommended)",
+            "Exact values",
+            "3 significant figures",
+            "4 significant figures",
+        ),
+        key="growth_export_concentration_matching",
+        disabled=not assign_replicates,
+        help="Applies to concentration doses when grouping wells for cultivation R numbers.",
+    )
+    concentration_significant_figures = (
+        {
+            "2 significant figures (recommended)": 2,
+            "Exact values": None,
+            "3 significant figures": 3,
+            "4 significant figures": 4,
+        }[concentration_matching]
+        if assign_replicates
+        else None
+    )
     if assign_replicates:
         st.caption(
             "Matching wells receive R1, R2, … across the selected runs in experiment-date "
@@ -169,6 +191,12 @@ def render_growth_data_export(context: AppContext) -> None:
             "original Layout value. Saved IDs and metadata remain unchanged. "
             "Saved study/group settings limit which wells count together. "
             "Concentration units are normalized to u (for example, ug/mL)."
+        )
+        st.caption(
+            "Only concentration doses use the selected matching precision: 0.1875 and "
+            "0.19 both match as 0.19 at 2 significant figures. Other condition fields "
+            "must still match. Original concentrations remain unchanged in the export; "
+            "Matching concentration columns show the grouping values."
         )
     settings = (
         ExportCultivationSettings(
@@ -183,6 +211,7 @@ def render_growth_data_export(context: AppContext) -> None:
         tuple(map(str, selected)),
         assign_replicates,
         condition_fields,
+        concentration_significant_figures,
         choice if assign_replicates else None,
         settings,
     )
@@ -200,6 +229,7 @@ def render_growth_data_export(context: AppContext) -> None:
                     selected,
                     assign_selected_replicates=assign_replicates,
                     condition_fields=condition_fields,
+                    concentration_significant_figures=concentration_significant_figures,
                     cultivation_settings=settings,
                 )
             )

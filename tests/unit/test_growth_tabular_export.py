@@ -12,6 +12,7 @@ from plate_reader.application.contracts import AssayType, PlateId
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services.growth_tabular_export import (
     GROWTH_ADDITIONAL_LAYOUT_HEADERS,
+    GROWTH_MATCHING_CONCENTRATION_HEADERS,
     GROWTH_MEASUREMENT_HEADERS,
     GROWTH_METADATA_HEADERS,
     GrowthTabularExportBundle,
@@ -102,9 +103,8 @@ def test_measurement_export_contains_every_canonical_growth_layout_column() -> N
     }
 
     assert canonical_layout_columns <= set(GROWTH_MEASUREMENT_HEADERS)
-    assert GROWTH_MEASUREMENT_HEADERS[-len(GROWTH_ADDITIONAL_LAYOUT_HEADERS) :] == (
-        GROWTH_ADDITIONAL_LAYOUT_HEADERS
-    )
+    suffix = (*GROWTH_ADDITIONAL_LAYOUT_HEADERS, *GROWTH_MATCHING_CONCENTRATION_HEADERS)
+    assert GROWTH_MEASUREMENT_HEADERS[-len(suffix) :] == suffix
 
 
 def test_single_run_filename_matches_reference_experiment_name_and_hash_pattern() -> None:
@@ -739,3 +739,68 @@ def test_export_generator_can_override_pattern_team_and_system_without_saving() 
             )
     with pytest.raises(DomainValidationError, match="requires selected-run"):
         export_growth_tabular_data((view,), cultivation_settings=ExportCultivationSettings())
+
+
+@pytest.mark.parametrize("slot", [1, 2, 3])
+def test_rounded_dilutions_share_replicates_and_export_the_matching_doses(slot: int) -> None:
+    early = _selection_view("early", "2026-08-01", "001")
+    late = _selection_view("late", "2026-09-01", "002")
+    for view, dose in ((early, 0.1875), (late, 0.19)):
+        well = view.snapshot.wells[0]
+        if slot == 1:
+            well["concentration"] = dose
+        else:
+            custom = json.loads(str(well["custom_json"]))
+            custom.update(
+                {f"treatment_{slot}": "Drug", f"conc_{slot}": dose, f"unit_{slot}": "ug/mL"}
+            )
+            well["custom_json"] = json.dumps(custom)
+    before = repr((early, late))
+    rounded = export_growth_tabular_data(
+        (late, early),
+        assign_selected_replicates=True,
+        concentration_significant_figures=2,
+    )
+    exact = export_growth_tabular_data((late, early), assign_selected_replicates=True)
+    data, metadata = _csv_rows(rounded)
+    _, exact_meta = _csv_rows(exact)
+    assert {row["Replicate"] for row in exact_meta if row["Well"] == "A1"} == {"1"}
+    suffix = "" if slot == 1 else f" {slot}"
+    for rows in (data, metadata):
+        for row in rows:
+            if row["Well"] != "A1":
+                continue
+            assert row["Replicate"] == ("1" if row["Run ID"] == "early" else "2")
+            assert row["Concentration" + suffix] == (
+                "0.1875" if row["Run ID"] == "early" else "0.19"
+            )
+            assert row["Matching concentration" + suffix] == "0.19"
+            assert row["Concentration matching significant figures"] == "2"
+    assert (
+        "0.1875"
+        in next(row for row in rounded.replicate_preview if row["Run ID"] == "early")[
+            "Entered concentrations"
+        ]
+    )
+    assert all("0.19" in row["Matching concentrations"] for row in rounded.replicate_preview)
+    assert all(
+        row["Concentration matching"] == "2 significant figures"
+        for row in rounded.replicate_preview
+    )
+    for row in exact_meta:
+        if row["Well"] == "A1":
+            assert row["Concentration matching significant figures"] == "exact"
+            assert row["Matching concentration" + suffix] == row["Concentration" + suffix]
+    assert repr((early, late)) == before
+
+
+def test_rounding_setting_rejects_saved_id_mode_and_invalid_precision() -> None:
+    for precision in (0, -1, 13, True, 2.5):
+        with pytest.raises(DomainValidationError):
+            export_growth_tabular_data(
+                (_view(),),
+                assign_selected_replicates=True,
+                concentration_significant_figures=precision,
+            )
+    with pytest.raises(DomainValidationError, match="requires selected-run"):
+        export_growth_tabular_data((_view(),), concentration_significant_figures=2)

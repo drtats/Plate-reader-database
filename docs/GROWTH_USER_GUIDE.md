@@ -168,6 +168,22 @@ blank groups. Apply those shared settings through **Growth Run Library → Edit
 cultivation metadata**. Each matching well counts as one cultivation; choose study
 groups appropriate to your experimental replication design.
 
+**Concentration matching** defaults to **2 significant figures** in Growth Data
+Export. This groups rounding differences such as `0.1875` and `0.19` as `0.19`,
+or `0.09375` and `0.094` as `0.094`. It applies to all three treatment dose columns
+before matching combinations; all other condition fields must still match. The
+preview shows entered and matching concentrations. Choose **Exact values** to keep
+these doses separate, or select 3 or 4 significant figures for finer matching.
+Changing precision requires generating the export again.
+
+Original **Concentration** columns and stored metadata remain unchanged. Both CSVs
+add **Matching concentration**, **Matching concentration 2**, **Matching concentration
+3**, and **Concentration matching significant figures** (`2`, `3`, `4`, or `exact`).
+Use the matching columns when grouping exported data with the same rule as cultivation
+replicates. Significant figures preserve small nonzero doses instead of rounding all
+small values to a fixed number of decimal places. This groups rounded input values;
+it does not infer a dilution series or correct arbitrary entry errors.
+
 Both CSVs link through the exported Cultivation ID and retain the original saved
 ID (`SavedCultivation` / `Saved cultivation ID`). Disable generation to use saved
 IDs. Workspace controls and previously saved condition-numbering settings remain

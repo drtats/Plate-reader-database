@@ -14,6 +14,7 @@ from plate_reader.domain.common import DomainIssue, DomainValidationError, Issue
 from plate_reader.domain.growth.cultivation_conditions import (
     condition_json_object,
     cultivation_condition_key,
+    validate_concentration_precision,
 )
 
 
@@ -143,17 +144,22 @@ def plan_condition_replicates(
 
 
 def plan_export_condition_replicates(
-    rows: Sequence[Mapping[str, object]], *, extra_fields: tuple[str, ...] = ()
+    rows: Sequence[Mapping[str, object]],
+    *,
+    extra_fields: tuple[str, ...] = (),
+    concentration_significant_figures: int | None = None,
 ) -> Mapping[tuple[str, str], ConditionReplicate]:
     """Number only selected active wells, independently of saved cultivation IDs.
 
     The caller supplies flattened metadata for the wells in selected export runs.
     Every selected plate's declared fields, plus the explicit export fields, form
-    one comparison policy. Saved per-well fields contribute only for plates that
+    one comparison policy. Optional significant figures affect treatment doses
+    for this plan only. Saved per-well fields contribute only for plates that
     have no shared field declaration. This function never mutates rows or reserves
     a number outside this one export selection.
     """
 
+    validate_concentration_precision(concentration_significant_figures)
     fields = set(_extra_fields(extra_fields))
     selected: list[tuple[Mapping[str, object], str, str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -186,7 +192,14 @@ def plan_export_condition_replicates(
     active_plates: dict[str, set[str]] = defaultdict(set)
     for row, plate_id, position, scope in selected:
         well_identity = _text(row.get("well_id")) or f"{plate_id}:{position}"
-        key = cultivation_condition_key(row, row, scope, effective_fields, normalize_units=True)
+        key = cultivation_condition_key(
+            row,
+            row,
+            scope,
+            effective_fields,
+            normalize_units=True,
+            concentration_significant_figures=concentration_significant_figures,
+        )
         candidates.append(_Candidate(row, plate_id, position, well_identity, key, scope, None))
         active_counts[key] += 1
         active_plates[key].add(plate_id)

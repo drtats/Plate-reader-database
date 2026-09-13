@@ -6,12 +6,21 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from decimal import Decimal, InvalidOperation
+from decimal import (
+    MAX_EMAX,
+    MIN_EMIN,
+    ROUND_HALF_UP,
+    Context,
+    Decimal,
+    DecimalException,
+    InvalidOperation,
+)
 
 from plate_reader.domain.common import DomainIssue, DomainValidationError, IssueCode
 from plate_reader.domain.growth.units import normalize_growth_unit
 
 _NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
+_NONFINITE = re.compile(r"[+-]?(?:s?nan|inf(?:inity)?)\Z", re.IGNORECASE)
 _EDITABLE_KEYS = (
     "editable_metadata_json",
     "metadata_json_editable",
@@ -53,6 +62,7 @@ def cultivation_condition_key(
     extra_fields: tuple[str, ...] = (),
     *,
     normalize_units: bool = False,
+    concentration_significant_figures: int | None = None,
 ) -> str:
     """Return canonical JSON for cultivation conditions, excluding layout and run identity.
 
@@ -60,9 +70,11 @@ def cultivation_condition_key(
     incomplete records cannot safely be presumed to describe the same culture.
     Units remain literal by default to preserve saved version-1 fingerprints.
     Export comparisons can opt into micro-spelling equivalence; no concentration
-    conversion is made in either mode.
+    conversion is made in either mode. Optional significant-figure matching applies
+    only to treatment concentrations and never changes the saved default key.
     """
 
+    validate_concentration_precision(concentration_significant_figures)
     custom = {
         **_json_object(well.get("condition_custom_json")),
         **_json_object(well.get("custom_json")),
@@ -90,7 +102,12 @@ def cultivation_condition_key(
                 _editable_value(experiment_custom, "Culture_volume_uL", "Culture Volume uL"),
             )
         ),
-        "treatments": _treatments(well, custom, normalize_units=normalize_units),
+        "treatments": _treatments(
+            well,
+            custom,
+            normalize_units=normalize_units,
+            concentration_significant_figures=concentration_significant_figures,
+        ),
         "extra": {name: _json_normal(custom.get(name)) for name in additional},
     }
     if not strain or not medium:
@@ -110,6 +127,45 @@ def condition_json_object(value: object) -> dict[str, object]:
     """Parse a JSON object used by condition projections without application imports."""
 
     return _json_object(value)
+
+
+def validate_concentration_precision(value: int | None) -> None:
+    """Accept only an optional integer precision from one through twelve digits."""
+
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 12
+    ):
+        raise _error("Concentration significant figures must be an integer from 1 to 12")
+
+
+def matching_concentration(value: object, significant_figures: int | None = None) -> str:
+    """Return a readable numeric dose for matching, with optional half-up rounding.
+
+    Unrecognized text stays literal. The independent decimal context makes
+    halfway cases deterministic even if another calculation changes global context.
+    """
+
+    validate_concentration_precision(significant_figures)
+    canonical = _numeric(value)
+    raw = _text(value)
+    if not raw or isinstance(value, bool) or _NUMBER.fullmatch(raw) is None:
+        return canonical
+    try:
+        number = Decimal(raw)
+    except InvalidOperation:
+        return canonical
+    if significant_figures is not None and number:
+        context = Context(
+            prec=significant_figures,
+            rounding=ROUND_HALF_UP,
+            Emin=MIN_EMIN,
+            Emax=MAX_EMAX,
+        )
+        try:
+            number = context.create_decimal(number)
+        except DecimalException as error:
+            raise _error("Concentration cannot be rounded to the requested precision") from error
+    return _readable_number(number)
 
 
 def primary_condition_value(
@@ -135,7 +191,11 @@ def primary_condition_value(
 
 
 def _treatments(
-    well: Mapping[str, object], custom: Mapping[str, object], *, normalize_units: bool
+    well: Mapping[str, object],
+    custom: Mapping[str, object],
+    *,
+    normalize_units: bool,
+    concentration_significant_figures: int | None,
 ) -> list[list[str]]:
     triples: list[list[str]] = []
     for index in range(1, 4):
@@ -146,7 +206,12 @@ def _treatments(
             treatment = primary_condition_value(well, custom, "treatment", "treatment_1")
             concentration = primary_condition_value(well, custom, "concentration", "conc_1")
             unit = primary_condition_value(well, custom, "concentration_unit", "unit_1")
-        triple = [_text(treatment), _numeric(concentration), _unit_text(unit, normalize_units)]
+        numeric = (
+            _numeric(concentration)
+            if concentration_significant_figures is None
+            else matching_concentration(concentration, concentration_significant_figures)
+        )
+        triple = [_text(treatment), numeric, _unit_text(unit, normalize_units)]
         if any(triple):
             triples.append(triple)
     return sorted(triples)
@@ -204,16 +269,7 @@ def _numeric(value: object) -> str:
     raw = _text(value)
     if not raw:
         return ""
-    if raw.casefold() in {
-        "nan",
-        "snan",
-        "inf",
-        "+inf",
-        "-inf",
-        "infinity",
-        "+infinity",
-        "-infinity",
-    }:
+    if _NONFINITE.fullmatch(raw):
         raise _error("Condition numeric values must be finite")
     if isinstance(value, bool) or _NUMBER.fullmatch(raw) is None:
         return raw
@@ -234,6 +290,32 @@ def _numeric(value: object) -> str:
         exponent += 1
     sign = "-" if parts.sign else ""
     return f"{sign}{''.join(str(digit) for digit in digits)}e{exponent}"
+
+
+def _readable_number(number: Decimal) -> str:
+    """Format a Decimal without expanding very large or very small exponents."""
+
+    if not number:
+        return "0"
+    parts = number.as_tuple()
+    digits = list(parts.digits)
+    exponent = parts.exponent
+    assert isinstance(exponent, int)
+    while digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    coefficient = "".join(str(digit) for digit in digits)
+    adjusted = len(coefficient) + exponent - 1
+    sign = "-" if parts.sign else ""
+    if -6 <= adjusted <= 20 and len(coefficient) <= 100:
+        point = len(coefficient) + exponent
+        if point <= 0:
+            return f"{sign}0.{('0' * -point)}{coefficient}"
+        if point >= len(coefficient):
+            return f"{sign}{coefficient}{('0' * (point - len(coefficient)))}"
+        return f"{sign}{coefficient[:point]}.{coefficient[point:]}"
+    tail = f".{coefficient[1:]}" if len(coefficient) > 1 else ""
+    return f"{sign}{coefficient[0]}{tail}e{adjusted}"
 
 
 def _json_normal(value: object) -> object:

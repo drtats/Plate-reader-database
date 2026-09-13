@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from decimal import ROUND_DOWN, Decimal, localcontext
 
 import pytest
 
@@ -14,7 +15,9 @@ from plate_reader.application.services.growth_cultivation_replicates import (
 from plate_reader.domain.common import DomainValidationError
 from plate_reader.domain.growth.cultivation_conditions import (
     cultivation_condition_key,
+    matching_concentration,
     primary_condition_value,
+    validate_concentration_precision,
 )
 
 
@@ -519,3 +522,163 @@ def test_unit_matching_is_opt_in_and_applies_to_secondary_and_other_unit_fields(
     plan = plan_export_condition_replicates([alternate, canonical])
     assert [plan[("p1", "A1")].replicate, plan[("p2", "A1")].replicate] == [1, 2]
     assert (canonical, alternate) == before
+
+
+def test_export_precision_groups_equivalent_doses_across_plates_in_date_order() -> None:
+    rows = [
+        _row("p4", "A01", concentration="0.094", experiment_date="2026-01-04"),
+        _row("p2", "A01", concentration="0.19", experiment_date="2026-01-02"),
+        _row("p3", "A01", concentration="0.09375", experiment_date="2026-01-03"),
+        _row("p1", "A01", concentration=0.1875, experiment_date="2026-01-01"),
+    ]
+    before = deepcopy(rows)
+    plan = plan_export_condition_replicates(rows, concentration_significant_figures=2)
+    assert [
+        (plan[(f"p{n}", "A1")].replicate, plan[(f"p{n}", "A1")].matching_wells) for n in range(1, 5)
+    ] == [
+        (1, 2),
+        (2, 2),
+        (1, 2),
+        (2, 2),
+    ]
+    assert {item.matching_plates for item in plan.values()} == {2}
+    assert plan == plan_export_condition_replicates(
+        list(reversed(rows)), concentration_significant_figures=2
+    )
+    assert rows == before
+
+
+def test_export_precision_keeps_twofold_neighbors_and_exact_mode_separate() -> None:
+    rows = [
+        _row("p1", "A01", concentration="0.1875"),
+        _row("p2", "A01", concentration="0.19"),
+        _row("p3", "A01", concentration="0.09375"),
+        _row("p4", "A01", concentration="0.094"),
+    ]
+    rounded = plan_export_condition_replicates(rows, concentration_significant_figures=2)
+    exact = plan_export_condition_replicates(rows)
+    assert rounded[("p1", "A1")].condition_key == rounded[("p2", "A1")].condition_key
+    assert rounded[("p3", "A1")].condition_key == rounded[("p4", "A1")].condition_key
+    assert rounded[("p1", "A1")].condition_key != rounded[("p3", "A1")].condition_key
+    assert {item.matching_wells for item in exact.values()} == {1}
+
+
+def test_precision_applies_to_secondary_tertiary_and_reordered_treatments() -> None:
+    first = _row(
+        "p1",
+        "A01",
+        custom_json=json.dumps(
+            {
+                "treatment_2": "drug B",
+                "conc_2": "0.1875",
+                "unit_2": "uM",
+                "treatment_3": "drug C",
+                "conc_3": "0.09375",
+                "unit_3": "uM",
+            }
+        ),
+    )
+    reordered = _row(
+        "p2",
+        "A01",
+        treatment="drug C",
+        concentration="0.094",
+        concentration_unit="uM",
+        custom_json=json.dumps(
+            {
+                "treatment_2": "drug A",
+                "conc_2": "0.1",
+                "unit_2": "mg/mL",
+                "treatment_3": "drug B",
+                "conc_3": "0.19",
+                "unit_3": "uM",
+            }
+        ),
+    )
+    assert cultivation_condition_key(
+        first, first, "project-a", concentration_significant_figures=2
+    ) == cultivation_condition_key(
+        reordered, reordered, "project-a", concentration_significant_figures=2
+    )
+    assert _key(first) != _key(reordered)
+
+
+def test_precision_does_not_round_other_scientific_or_additional_fields() -> None:
+    first = _row("p1", "A01", concentration="0.1875", inoculum_size="0.1875")
+    second = _row("p2", "A01", concentration="0.19", inoculum_size="0.19")
+    assert cultivation_condition_key(
+        first, first, "project-a", concentration_significant_figures=2
+    ) != cultivation_condition_key(second, second, "project-a", concentration_significant_figures=2)
+    second["inoculum_size"] = first["inoculum_size"]
+    first["custom_json"] = '{"batch_concentration":"0.1875"}'
+    second["custom_json"] = '{"batch_concentration":"0.19"}'
+    assert cultivation_condition_key(
+        first, first, "project-a", ("batch_concentration",), concentration_significant_figures=2
+    ) != cultivation_condition_key(
+        second, second, "project-a", ("batch_concentration",), concentration_significant_figures=2
+    )
+
+
+def test_matching_concentration_is_readable_half_up_and_context_independent() -> None:
+    with localcontext() as context:
+        context.prec = 2
+        context.rounding = ROUND_DOWN
+        assert matching_concentration("0.1875", 2) == "0.19"
+        assert matching_concentration(0.09375, 2) == "0.094"
+        assert matching_concentration("0.125", 2) == "0.13"
+        assert matching_concentration("-0.125", 2) == "-0.13"
+        assert matching_concentration(Decimal("0.1900"), 2) == "0.19"
+        assert matching_concentration("0.1875") == "0.1875"
+        assert matching_concentration("0.1900") == "0.19"
+    assert matching_concentration(None, 2) == ""
+    assert matching_concentration("", 2) == ""
+    assert matching_concentration("below detection", 2) == "below detection"
+    assert matching_concentration(0, 2) == "0"
+    assert matching_concentration(-0.0, 2) == "0"
+    assert matching_concentration("1e100000", 2) == "1e100000"
+    assert matching_concentration("1e-100000", 2) == "1e-100000"
+    assert matching_concentration("0.000000001", 2) != matching_concentration(0, 2)
+
+
+@pytest.mark.parametrize("precision", (True, False, 0, 13, -1, 2.0, "2", Decimal("2")))
+def test_invalid_concentration_precision_is_structured(precision: object) -> None:
+    with pytest.raises(DomainValidationError, match="significant figures"):
+        validate_concentration_precision(precision)  # type: ignore[arg-type]
+    with pytest.raises(DomainValidationError, match="significant figures"):
+        matching_concentration("0.1875", precision)  # type: ignore[arg-type]
+    row = _row("p1", "A01")
+    with pytest.raises(DomainValidationError, match="significant figures"):
+        plan_export_condition_replicates(
+            [row],
+            concentration_significant_figures=precision,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("dose", (float("nan"), float("inf"), Decimal("-Infinity"), "-sNaN"))
+def test_matching_concentration_rejects_nonfinite_values(dose: object) -> None:
+    with pytest.raises(DomainValidationError, match="finite"):
+        matching_concentration(dose, 2)
+
+
+def test_precision_default_keeps_saved_fingerprint_and_clear_override_behavior() -> None:
+    row = _row("p1", "A01", concentration="0.1875")
+    baseline = cultivation_condition_key(row, row, "project-a")
+    assert baseline == cultivation_condition_key(
+        row, row, "project-a", concentration_significant_figures=None
+    )
+    assert "concentration_significant_figures" not in json.loads(baseline)
+    saved = plan_condition_replicates(
+        [row], target_plate_id="p1", registry={"CultivationReplicateScope": "project-a"}
+    )["A1"]
+    assert saved.condition_key == baseline
+    cleared = _row(
+        "p2",
+        "A01",
+        concentration=None,
+        custom_json='{"conc_1":"0.19"}',
+        condition_custom_json='{"primary_condition_overrides":["concentration"]}',
+    )
+    clear_key = cultivation_condition_key(
+        cleared, cleared, "project-a", concentration_significant_figures=2
+    )
+    assert json.loads(clear_key)["treatments"] == [["drug A", "", "mg/mL"]]

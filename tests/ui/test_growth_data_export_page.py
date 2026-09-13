@@ -207,6 +207,51 @@ def test_saved_pattern_mode_preserves_saved_pattern_choice() -> None:
     assert rows[1]["Saved cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
 
 
+def test_concentration_matching_defaults_to_two_significant_figures_and_can_be_exact() -> None:
+    app = _export_page_app()
+    app.session_state["rounded_concentrations"] = True
+    app.run()
+    matching = next(w for w in app.selectbox if w.label == "Concentration matching")
+    assert matching.value == "2 significant figures (recommended)"
+    assert "raw_load_calls" not in app.session_state
+
+    _prepare_button(app).click().run()
+    assert not app.exception and not app.error
+    bundle = app.session_state["growth_tabular_export_bundle"]
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    assert [row["Replicate"] for row in rows] == ["1", "2"]
+    assert [row["Concentration"] for row in rows] == ["0.1875", "0.19"]
+    assert [row["Concentration matching significant figures"] for row in rows] == ["2", "2"]
+    assert [row["Matching concentration"] for row in rows] == ["0.19", "0.19"]
+    assert [row["Concentration"] for row in metadata] == ["0.1875", "0.19"]
+    assert [row["Matching concentration"] for row in metadata] == ["0.19", "0.19"]
+    assert all("Entered concentrations" in preview for preview in bundle.replicate_preview)
+    assert all("Matching concentrations" in preview for preview in bundle.replicate_preview)
+    assert app.session_state["raw_load_calls"] == 2
+
+    next(w for w in app.selectbox if w.label == "Concentration matching").select(
+        "Exact values"
+    ).run()
+    assert not app.get("download_button")
+    assert app.session_state["raw_load_calls"] == 2
+    _prepare_button(app).click().run()
+    assert not app.exception and not app.error
+    rows = list(
+        csv.DictReader(
+            io.StringIO(
+                app.session_state["growth_tabular_export_bundle"].measurements.content.decode()
+            )
+        )
+    )
+    assert [row["Replicate"] for row in rows] == ["1", "1"]
+    assert [row["Concentration matching significant figures"] for row in rows] == [
+        "exact",
+        "exact",
+    ]
+    assert [row["Matching concentration"] for row in rows] == ["0.1875", "0.19"]
+
+
 def _prepare_button(app: AppTest):
     return next(
         button
@@ -294,6 +339,7 @@ class Repository:
         index = key.rsplit("-", 1)[1]
         empty_cultivation = bool(st.session_state.get("empty_cultivation_metadata"))
         saved_legacy = bool(st.session_state.get("saved_legacy_pattern"))
+        rounded_concentrations = bool(st.session_state.get("rounded_concentrations"))
         saved_pattern = (
             "{team}-EXP-{strain}-{system}{run}R{replicate}"
             if saved_legacy
@@ -346,9 +392,11 @@ class Repository:
                 "replicate": 1,
                 "inoculum_size": None,
                 "grouping_label": None,
-                "treatment": None,
-                "concentration": None,
-                "concentration_unit": None,
+                "treatment": "Ciprofloxacin" if rounded_concentrations else None,
+                "concentration": (
+                    (0.1875, 0.19)[int(index)] if rounded_concentrations else None
+                ),
+                "concentration_unit": "ug/mL" if rounded_concentrations else None,
             },),
             ({
                 "well_id": f"well-{index}",

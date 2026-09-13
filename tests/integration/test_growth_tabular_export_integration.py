@@ -198,7 +198,7 @@ def test_selected_run_replicates_are_stable_and_read_only(
                     medium="LB",
                     replicate=1,
                     treatment="Drug",
-                    concentration=1.0,
+                    concentration=(0.1875, 0.19)[index],
                     concentration_unit=("ug/mL", "Œºg/mL")[index],
                 ),
             ),
@@ -231,16 +231,25 @@ def test_selected_run_replicates_are_stable_and_read_only(
             tuple(reversed(plate_ids)),
             assign_selected_replicates=True,
             cultivation_settings=settings,
+            concentration_significant_figures=2,
         )
     )
     forward = service.execute(
         ExportGrowthTabularData(
-            ACTOR, tuple(plate_ids), assign_selected_replicates=True, cultivation_settings=settings
+            ACTOR,
+            tuple(plate_ids),
+            assign_selected_replicates=True,
+            cultivation_settings=settings,
+            concentration_significant_figures=2,
         )
     )
     late_only = service.execute(
         ExportGrowthTabularData(
-            ACTOR, (plate_ids[1],), assign_selected_replicates=True, cultivation_settings=settings
+            ACTOR,
+            (plate_ids[1],),
+            assign_selected_replicates=True,
+            cultivation_settings=settings,
+            concentration_significant_figures=2,
         )
     )
     assert persisted_state() == before
@@ -270,6 +279,9 @@ def test_selected_run_replicates_are_stable_and_read_only(
             assert {row["Replicate"] for row in samples} == {str(i)}
             assert {row["Local replicate"] for row in samples} == {"1"}
             assert {row["Concentration unit"] for row in samples} == {"ug/mL"}
+            assert {row["Concentration"] for row in samples} == {("0.1875", "0.19")[i - 1]}
+            assert {row["Matching concentration"] for row in samples} == {"0.19"}
+            assert {row["Concentration matching significant figures"] for row in samples} == {"2"}
         assert bundle.measurements.row_count == 768
         assert bundle.metadata.row_count == 192
         assert all(row["Saved cultivation ID"] == "" for row in bundle.replicate_preview)

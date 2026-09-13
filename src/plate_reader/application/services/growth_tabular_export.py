@@ -37,7 +37,9 @@ from plate_reader.domain.growth.cultivation import (
 )
 from plate_reader.domain.growth.cultivation_conditions import (
     cultivation_condition_key,
+    matching_concentration,
     primary_condition_value,
+    validate_concentration_precision,
 )
 from plate_reader.domain.growth.units import normalize_growth_unit
 
@@ -82,6 +84,13 @@ GROWTH_REGISTRY_METADATA_HEADERS = (
     "CultivationConditionKey",
     "CultivationConditionFields",
     "CultivationReplicateMode",
+)
+
+GROWTH_MATCHING_CONCENTRATION_HEADERS = (
+    "Concentration matching significant figures",
+    "Matching concentration",
+    "Matching concentration 2",
+    "Matching concentration 3",
 )
 
 _LEGACY_GROWTH_MEASUREMENT_HEADERS = (
@@ -144,6 +153,7 @@ GROWTH_MEASUREMENT_HEADERS = (
     *GROWTH_REGISTRY_MEASUREMENT_HEADERS,
     *_LEGACY_GROWTH_MEASUREMENT_HEADERS,
     *GROWTH_ADDITIONAL_LAYOUT_HEADERS,
+    *GROWTH_MATCHING_CONCENTRATION_HEADERS,
 )
 
 GROWTH_METADATA_HEADERS = (
@@ -171,6 +181,7 @@ GROWTH_METADATA_HEADERS = (
     "Well Metadata JSON",
     "Experiment Metadata JSON",
     "Plate Metadata JSON",
+    *GROWTH_MATCHING_CONCENTRATION_HEADERS,
 )
 
 _EDITABLE_METADATA_KEYS = (
@@ -213,6 +224,7 @@ class ExportGrowthTabularData:
     assign_selected_replicates: bool = False
     condition_fields: tuple[str, ...] = ()
     cultivation_settings: ExportCultivationSettings | None = None
+    concentration_significant_figures: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +261,7 @@ class _RunContext:
     culture_volume_ul: object | None
     microplate_id: str
     effective_identities: Mapping[str, Mapping[str, object]] | None = None
+    concentration_significant_figures: int | None = None
 
 
 class ExportGrowthTabularDataService:
@@ -258,6 +271,9 @@ class ExportGrowthTabularDataService:
         self.repository = repository
 
     def execute(self, command: ExportGrowthTabularData) -> GrowthTabularExportBundle:
+        _validate_matching_mode(
+            command.assign_selected_replicates, command.concentration_significant_figures
+        )
         if not command.plate_ids:
             raise ValueError("Select at least one Growth run to export")
         if len(set(command.plate_ids)) != len(command.plate_ids):
@@ -282,6 +298,7 @@ class ExportGrowthTabularDataService:
             condition_fields=command.condition_fields,
             cultivation_settings=command.cultivation_settings,
             experiment_codes=experiment_codes,
+            concentration_significant_figures=command.concentration_significant_figures,
         )
 
 
@@ -293,9 +310,11 @@ def export_growth_tabular_data(
     condition_fields: tuple[str, ...] = (),
     cultivation_settings: ExportCultivationSettings | None = None,
     experiment_codes: Mapping[str, str] | None = None,
+    concentration_significant_figures: int | None = None,
 ) -> GrowthTabularExportBundle:
     """Build deterministic multi-run measurement and metadata CSV files."""
 
+    _validate_matching_mode(assign_selected_replicates, concentration_significant_figures)
     if not views:
         raise ValueError("Growth tabular export requires at least one run")
     plate_ids = tuple(str(view.snapshot.plate_id) for view in views)
@@ -319,7 +338,11 @@ def export_growth_tabular_data(
     if assign_selected_replicates:
         contexts, selection_warnings, replicate_preview, effective_condition_fields = (
             _selection_contexts(
-                contexts, condition_fields, cultivation_settings, experiment_codes or {}
+                contexts,
+                condition_fields,
+                cultivation_settings,
+                experiment_codes or {},
+                concentration_significant_figures,
             )
         )
     exported_custom_columns = _custom_column_names(views, custom_columns)
@@ -363,6 +386,7 @@ def export_growth_tabular_data(
                     _json_cell(
                         _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
                     ),
+                    *_matching_concentration_row(well, context.concentration_significant_figures),
                     *(
                         _custom_cell(_custom_value(_well_custom(well), column))
                         for column in exported_custom_columns
@@ -393,6 +417,44 @@ def export_growth_tabular_data(
         warnings=tuple(warnings),
         replicate_preview=replicate_preview,
         effective_condition_fields=effective_condition_fields,
+    )
+
+
+def _validate_matching_mode(assign_replicates: bool, precision: int | None) -> None:
+    validate_concentration_precision(precision)
+    if precision is not None and not assign_replicates:
+        raise _cultivation_error(
+            "Concentration rounding requires selected-run replicate assignment"
+        )
+
+
+def _matching_concentration_row(
+    well: Mapping[str, object],
+    precision: int | None,
+) -> tuple[object, ...]:
+    """Expose comparison doses alongside unchanged entered doses in each CSV."""
+
+    conditions = _separate_conditions(well)
+    return (
+        "exact" if precision is None else precision,
+        *(matching_concentration(conditions[index], precision) for index in (1, 4, 7)),
+    )
+
+
+def _concentration_summary(well: Mapping[str, object], precision: int | None) -> str:
+    conditions = _separate_conditions(well)
+    return "; ".join(
+        " ".join(
+            part
+            for part in (
+                _cell_text(conditions[index]),
+                matching_concentration(conditions[index + 1], precision),
+                _cell_text(conditions[index + 2]),
+            )
+            if part
+        )
+        for index in (0, 3, 6)
+        if any(_cell_text(value) for value in conditions[index : index + 3])
     )
 
 
@@ -428,6 +490,7 @@ def _selection_contexts(
     condition_fields: tuple[str, ...],
     settings: ExportCultivationSettings | None,
     experiment_codes: Mapping[str, str],
+    concentration_significant_figures: int | None,
 ) -> tuple[
     tuple[_RunContext, ...],
     tuple[str, ...],
@@ -452,7 +515,11 @@ def _selection_contexts(
                     "experiment_custom_json": metadata.get("experiment_custom_json"),
                 }
             )
-    plans = plan_export_condition_replicates(rows, extra_fields=condition_fields)
+    plans = plan_export_condition_replicates(
+        rows,
+        extra_fields=condition_fields,
+        concentration_significant_figures=concentration_significant_figures,
+    )
     fields = (
         next(iter(plans.values())).extra_fields if plans else tuple(sorted(set(condition_fields)))
     )
@@ -481,6 +548,13 @@ def _selection_contexts(
                         "Strain": _first_text(well.get("strain")),
                         "Local replicate": well.get("replicate"),
                         "Export replicate": plan.replicate,
+                        "Concentration matching": "Exact values"
+                        if concentration_significant_figures is None
+                        else f"{concentration_significant_figures} significant figures",
+                        "Entered concentrations": _concentration_summary(well, None),
+                        "Matching concentrations": _concentration_summary(
+                            well, concentration_significant_figures
+                        ),
                         "Experiment number": identity["CultivationExperimentCode"],
                         "Matching wells": plan.matching_wells,
                         "Matching plates": plan.matching_plates,
@@ -488,7 +562,13 @@ def _selection_contexts(
                         "Cultivation ID": identity["Cultivation"],
                     }
                 )
-        selected_contexts.append(replace(context, effective_identities=identities))
+        selected_contexts.append(
+            replace(
+                context,
+                effective_identities=identities,
+                concentration_significant_figures=concentration_significant_figures,
+            )
+        )
     warnings = tuple(
         f"{run_id}: {count} selected well(s) have no export cultivation ID; missing "
         f"{', '.join(missing)}."
@@ -888,6 +968,7 @@ def _measurement_rows(
                 ),
                 custom.get("t0_added_min"),
                 *_separate_conditions(well)[3:],
+                *_matching_concentration_row(well, context.concentration_significant_figures),
                 *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
             )
         )
