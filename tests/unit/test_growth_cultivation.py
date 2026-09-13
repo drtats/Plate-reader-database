@@ -108,32 +108,87 @@ class CodeProjection:
         return self.rows
 
 
-def test_suggested_experiment_code_starts_at_001_and_uses_saved_numeric_max() -> None:
-    empty = cast(GrowthCultivationRepository, CodeProjection(()))
-    assert suggested_cultivation_experiment_code(empty) == "001"
+def _code_plate(
+    plate_id: str,
+    experiment_date: str | None,
+    created_at: str,
+    code: str | None = None,
+) -> dict[str, object]:
+    return {
+        "record_type": "plate",
+        "plate_id": plate_id,
+        "experiment_date": experiment_date,
+        "created_at": created_at,
+        "custom_json": {} if code is None else {"CultivationExperimentCode": code},
+    }
 
-    projection = cast(
-        GrowthCultivationRepository,
-        CodeProjection(
-            (
-                {"plate_id": "plate-1", "custom_json": {"CultivationExperimentCode": "007"}},
-                {"plate_id": "plate-2", "custom_json": '{"CultivationExperimentCode":"0010"}'},
-                {"plate_id": "plate-3", "custom_json": {"CultivationExperimentCode": "custom"}},
-                {"plate_id": "plate-4", "custom_json": {"CultivationExperimentCode": "000"}},
-            )
-        ),
+
+def _code_well(plate_id: str, code: str) -> dict[str, object]:
+    return {
+        "record_type": "well",
+        "plate_id": plate_id,
+        "custom_json": {"CultivationExperimentCode": code},
+    }
+
+
+def _projection(*rows: dict[str, object]) -> GrowthCultivationRepository:
+    return cast(GrowthCultivationRepository, CodeProjection(rows))
+
+
+def test_suggestions_assign_each_unsaved_plate_by_date_before_any_save() -> None:
+    projection = _projection(
+        _code_plate("late", "2026-09-12", "2026-01-01T10:00:00Z"),
+        _code_plate("early", "2026-08-12", "2026-08-12T10:00:00Z"),
     )
-    assert suggested_cultivation_experiment_code(projection) == "011"
+    assert suggested_cultivation_experiment_code(projection, PlateId("early")) == "001"
+    assert suggested_cultivation_experiment_code(projection, PlateId("late")) == "002"
+    assert suggested_cultivation_experiment_code(projection, PlateId("early")) == "001"
 
 
-def test_suggested_experiment_code_expands_beyond_999() -> None:
-    projection = cast(
-        GrowthCultivationRepository,
-        CodeProjection(
-            ({"plate_id": "plate-1", "custom_json": {"CultivationExperimentCode": "999"}},)
-        ),
+def test_suggestion_ties_use_created_at_then_plate_id_and_invalid_dates_go_last() -> None:
+    projection = _projection(
+        _code_plate("missing", None, "2026-01-01T00:00:00Z"),
+        _code_plate("b", "2026-09-12", "2026-09-12T08:00:00Z"),
+        _code_plate("a", "2026-09-12", "2026-09-12T08:00:00Z"),
+        _code_plate("earliest", "2026-09-12", "2026-09-12T07:00:00Z"),
+        _code_plate("invalid", "2026-99-99", "2026-01-02T00:00:00Z"),
     )
-    assert suggested_cultivation_experiment_code(projection) == "1000"
+    assert suggested_cultivation_experiment_code(projection, PlateId("earliest")) == "001"
+    assert suggested_cultivation_experiment_code(projection, PlateId("a")) == "002"
+    assert suggested_cultivation_experiment_code(projection, PlateId("b")) == "003"
+    assert suggested_cultivation_experiment_code(projection, PlateId("missing")) == "004"
+    assert suggested_cultivation_experiment_code(projection, PlateId("invalid")) == "005"
+
+
+def test_saved_codes_are_reserved_once_and_custom_shared_plate_is_excluded() -> None:
+    projection = _projection(
+        _code_plate("saved", "2026-09-12", "2026-09-12T00:00:00Z", "0001"),
+        _code_well("saved", "001"),
+        _code_well("saved", "001"),
+        _code_plate("custom", "2026-09-11", "2026-09-11T00:00:00Z", "manual"),
+        _code_plate("well-only", "2026-09-13", "2026-09-13T00:00:00Z"),
+        _code_well("well-only", "4"),
+        _code_plate("pending", "2026-09-14", "2026-09-14T00:00:00Z"),
+    )
+    assert suggested_cultivation_experiment_code(projection, PlateId("saved")) == "001"
+    assert suggested_cultivation_experiment_code(projection, PlateId("well-only")) == "004"
+    assert suggested_cultivation_experiment_code(projection, PlateId("custom")) == "manual"
+    assert suggested_cultivation_experiment_code(projection, PlateId("pending")) == "002"
+
+
+def test_suggestion_expands_beyond_999_when_all_lower_numbers_are_reserved() -> None:
+    rows = tuple(
+        _code_plate(f"saved-{number}", "2026-01-01", f"2026-01-01T00:00:{number:04d}Z", str(number))
+        for number in range(1, 1000)
+    )
+    projection = _projection(*rows, _code_plate("pending", "2026-09-12", "2026-09-12T00:00:00Z"))
+    assert suggested_cultivation_experiment_code(projection, PlateId("pending")) == "1000"
+
+
+def test_suggestion_rejects_unknown_plate() -> None:
+    projection = _projection(_code_plate("present", "2026-09-12", "2026-09-12T00:00:00Z"))
+    with pytest.raises(DomainValidationError, match="no cultivation code suggestion"):
+        suggested_cultivation_experiment_code(projection, PlateId("missing"))
 
 
 @pytest.mark.parametrize(
@@ -185,6 +240,50 @@ def test_preview_uses_persisted_strain_and_replicate_and_retains_descriptives() 
             "Replicate": 2,
         },
     )
+
+
+def test_condition_override_changes_legacy_r_suffix_without_editing_local_label() -> None:
+    preview = preview_cultivations(
+        snapshot(),
+        {
+            "Team_Code": "PN",
+            "CultivationSystemCode": "BRV",
+            "CultivationReplicateMode": "condition",
+        },
+        (CultivationAssignment("A1", "2", cultivation_replicate=3, condition_key="key"),),
+    )[0]
+    assert preview["Cultivation"] == "PN-EXP-J3-BRV002R3"
+    assert preview["Replicate"] == 3
+    assert preview["LocalReplicate"] == 2
+    assert preview["CultivationReplicate"] == 3
+
+
+def test_condition_override_allows_missing_local_replicate_label() -> None:
+    base = snapshot()
+    no_local_label = PlateSnapshot(
+        base.plate_id,
+        base.metadata,
+        ({"position": "A1", "strain": "J3", "replicate": None, "custom_json": "{}"},),
+        base.raw_observations,
+        base.revisions,
+    )
+    preview = preview_cultivations(
+        no_local_label,
+        {"Team_Code": "PN", "CultivationReplicateMode": "condition"},
+        (
+            CultivationAssignment(
+                "A1",
+                "",
+                DEFAULT_CULTIVATION_PATTERN,
+                "001",
+                cultivation_replicate=2,
+                condition_key="key",
+            ),
+        ),
+    )[0]
+    assert preview["Cultivation"] == "PN-EXP-J3-001-A01-R2"
+    assert preview["LocalReplicate"] is None
+    assert preview["Replicate"] == 2
 
 
 def test_preview_allows_no_assignments_for_registry_only_save() -> None:

@@ -652,7 +652,9 @@ class SqlPlateReaderRepository:
         for change in changes:
             position = _required_str(change, "position")
             well_id_row = self.connection.execute(
-                "SELECT well_id FROM wells WHERE plate_id = ? AND position = ? COLLATE NOCASE",
+                "SELECT w.well_id, p.assay_type FROM wells w "
+                "JOIN plates p ON p.plate_id = w.plate_id "
+                "WHERE w.plate_id = ? AND w.position = ? COLLATE NOCASE",
                 (plate_id, position),
             ).fetchone()
             if well_id_row is None:
@@ -680,6 +682,32 @@ class SqlPlateReaderRepository:
                 self.connection.execute(
                     "INSERT OR IGNORE INTO well_conditions(well_id) VALUES (?)", (well_id,)
                 )
+                primary_fields = ("treatment", "concentration", "concentration_unit")
+                if (
+                    well_id_row[1] == AssayType.GROWTH
+                    and set(primary_fields) & condition_changes.keys()
+                ):
+                    previous = self.connection.execute(
+                        "SELECT treatment, concentration, concentration_unit, custom_json "
+                        "FROM well_conditions WHERE well_id = ?",
+                        (well_id,),
+                    ).fetchone()
+                    assert previous is not None  # ensured by INSERT above
+                    explicit = {
+                        name
+                        for index, name in enumerate(primary_fields)
+                        if name in condition_changes
+                        and (condition_changes[name] is not None or previous[index] is not None)
+                    }
+                    if explicit:
+                        condition_custom = json.loads(str(previous[3]))
+                        overrides = condition_custom.get("primary_condition_overrides", [])
+                        # Remember genuine structured edits, including clears. An unchanged
+                        # NULL must still permit historical custom-only treatment metadata.
+                        condition_custom["primary_condition_overrides"] = sorted(
+                            set(overrides) | explicit
+                        )
+                        condition_changes["custom_json"] = condition_custom
                 columns = sorted(condition_changes)
                 parameters = [_database_value(condition_changes[column]) for column in columns]
                 parameters.append(well_id)
@@ -960,16 +988,44 @@ class SqlPlateReaderRepository:
         )
         return _all_dicts(cursor)
 
+    def growth_cultivation_wells(self) -> tuple[dict[str, object], ...]:
+        """Read cross-plate condition metadata and saved replicate reservations.
+
+        Deleted plates are included for reservations; the application excludes
+        them from new assignments. Raw observations are never loaded here.
+        """
+
+        return _all_dicts(
+            self.connection.execute(
+                "SELECT p.plate_id, p.created_at, p.deleted_at, e.experiment_date, "
+                "p.temperature, p.temperature_unit, p.custom_json AS plate_custom_json, "
+                "e.custom_json AS experiment_custom_json, w.well_id, w.position, "
+                "w.row_index, w.column_index, w.is_blank, w.display_name, w.custom_json, "
+                "wc.strain, wc.medium, wc.replicate, wc.treatment, wc.concentration, "
+                "wc.concentration_unit, wc.inoculum_size, wc.inoculum_unit, "
+                "wc.custom_json AS condition_custom_json "
+                "FROM plates p JOIN experiments e ON e.experiment_id = p.experiment_id "
+                "JOIN wells w ON w.plate_id = p.plate_id "
+                "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
+                "WHERE p.assay_type = ?",
+                (AssayType.GROWTH,),
+            )
+        )
+
     def growth_cultivation_codes(self) -> tuple[dict[str, object], ...]:
         """Read saved code reservations, including soft-deleted Growth runs.
 
-        Per-well codes remain reserved when shared defaults change. This query
-        never loads measurements and can run inside the caller's write transaction.
+        Plate records include experiment date and creation time for chronological
+        suggestions before any code is saved. Well records reserve existing codes
+        when shared defaults change. Neither projection loads measurements.
         """
 
         rows = _all_dicts(
             self.connection.execute(
-                "SELECT plate_id, custom_json FROM plates WHERE assay_type = ?",
+                "SELECT p.plate_id, p.custom_json, e.experiment_date, p.created_at, "
+                "'plate' AS record_type FROM plates p "
+                "JOIN experiments e ON e.experiment_id = p.experiment_id "
+                "WHERE p.assay_type = ?",
                 (AssayType.GROWTH,),
             )
         )
@@ -978,7 +1034,7 @@ class SqlPlateReaderRepository:
             row["custom_json"] = custom.get("cultivation_registry", {})
         wells = _all_dicts(
             self.connection.execute(
-                "SELECT p.plate_id, w.custom_json FROM plates p "
+                "SELECT p.plate_id, w.custom_json, 'well' AS record_type FROM plates p "
                 "JOIN wells w ON w.plate_id = p.plate_id WHERE p.assay_type = ?",
                 (AssayType.GROWTH,),
             )

@@ -8,32 +8,53 @@ import io
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from string import Formatter
 
 from plate_reader.application.contracts import Actor, AssayType, PlateId
+from plate_reader.application.services.growth_cultivation import (
+    GrowthCultivationRepository,
+    plan_cultivation_experiment_codes,
+)
+from plate_reader.application.services.growth_cultivation_replicates import (
+    ConditionReplicate,
+    plan_export_condition_replicates,
+)
 from plate_reader.application.services.growth_workflow import (
     GrowthRunView,
-    GrowthWorkflowRepository,
     LoadGrowthRunService,
 )
 from plate_reader.application.services.layout_columns import ListLayoutColumnsService
 from plate_reader.domain.common.errors import DomainIssue, DomainValidationError, IssueCode
+from plate_reader.domain.common.plate import WellPosition
 from plate_reader.domain.growth.cultivation import (
+    DEFAULT_CULTIVATION_PATTERN,
     LEGACY_CULTIVATION_PATTERN,
     format_cultivation_id,
     generate_cultivation_id,
+    normalize_cultivation_experiment_code,
 )
+from plate_reader.domain.growth.cultivation_conditions import (
+    cultivation_condition_key,
+    primary_condition_value,
+)
+from plate_reader.domain.growth.units import normalize_growth_unit
 
 GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
     "Cultivation ID",
+    "Saved cultivation ID",
     "Cultivation experiment code",
     "Cultivation ID pattern",
+    "Cultivation replicate",
+    "Cultivation replicate scope",
+    "Cultivation condition key",
     "Culture_Age_h",
 )
 
 GROWTH_REGISTRY_METADATA_HEADERS = (
     "Cultivation",
+    "SavedCultivation",
     "Local_Cultivation_ID",
     "InoculationDateTime",
     "ProgramMetric",
@@ -55,6 +76,12 @@ GROWTH_REGISTRY_METADATA_HEADERS = (
     "SampleAnalysisProtocol",
     "CultivationExperimentCode",
     "CultivationIDPattern",
+    "CultivationReplicate",
+    "LocalReplicate",
+    "CultivationReplicateScope",
+    "CultivationConditionKey",
+    "CultivationConditionFields",
+    "CultivationReplicateMode",
 )
 
 _LEGACY_GROWTH_MEASUREMENT_HEADERS = (
@@ -93,6 +120,7 @@ _LEGACY_GROWTH_MEASUREMENT_HEADERS = (
 # the legacy-compatible block. Together the two tuples expose every fixed Growth
 # layout column while retaining the established legacy block.
 GROWTH_ADDITIONAL_LAYOUT_HEADERS = (
+    "Local replicate",
     "Raw label",
     "Display name",
     "Background group",
@@ -164,12 +192,27 @@ _STRUCTURED_CUSTOM_KEYS = {
     "t0_added_min",
     *(f"{prefix}_{index}" for prefix in ("treatment", "conc", "unit") for index in range(1, 4)),
 }
+_CULTIVATION_PATTERN_FIELDS = frozenset(
+    {"team", "strain", "system", "run", "experiment", "well", "replicate"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExportCultivationSettings:
+    """Output-only ID settings; blank components fall back to saved well/run metadata."""
+
+    pattern: str | None = DEFAULT_CULTIVATION_PATTERN
+    team_code: str = ""
+    system_code: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class ExportGrowthTabularData:
     actor: Actor
     plate_ids: tuple[PlateId, ...]
+    assign_selected_replicates: bool = False
+    condition_fields: tuple[str, ...] = ()
+    cultivation_settings: ExportCultivationSettings | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +227,8 @@ class GrowthTabularExportBundle:
     measurements: GrowthTabularCsvArtifact
     metadata: GrowthTabularCsvArtifact
     warnings: tuple[str, ...]
+    replicate_preview: tuple[dict[str, object], ...] = ()
+    effective_condition_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,12 +248,13 @@ class _RunContext:
     culture_age_hours: float
     culture_volume_ul: object | None
     microplate_id: str
+    effective_identities: Mapping[str, Mapping[str, object]] | None = None
 
 
 class ExportGrowthTabularDataService:
     """Load selected Growth runs and create the two read-only CSV artifacts."""
 
-    def __init__(self, repository: GrowthWorkflowRepository) -> None:
+    def __init__(self, repository: GrowthCultivationRepository) -> None:
         self.repository = repository
 
     def execute(self, command: ExportGrowthTabularData) -> GrowthTabularExportBundle:
@@ -224,13 +270,29 @@ class ExportGrowthTabularDataService:
                 command.actor, AssayType.GROWTH
             )
         )
-        return export_growth_tabular_data(views, custom_columns=custom_columns)
+        experiment_codes = (
+            plan_cultivation_experiment_codes(self.repository.growth_cultivation_codes())
+            if command.assign_selected_replicates and command.cultivation_settings is not None
+            else None
+        )
+        return export_growth_tabular_data(
+            views,
+            custom_columns=custom_columns,
+            assign_selected_replicates=command.assign_selected_replicates,
+            condition_fields=command.condition_fields,
+            cultivation_settings=command.cultivation_settings,
+            experiment_codes=experiment_codes,
+        )
 
 
 def export_growth_tabular_data(
     views: Sequence[GrowthRunView],
     *,
     custom_columns: Sequence[str] = (),
+    assign_selected_replicates: bool = False,
+    condition_fields: tuple[str, ...] = (),
+    cultivation_settings: ExportCultivationSettings | None = None,
+    experiment_codes: Mapping[str, str] | None = None,
 ) -> GrowthTabularExportBundle:
     """Build deterministic multi-run measurement and metadata CSV files."""
 
@@ -240,7 +302,26 @@ def export_growth_tabular_data(
     if len(set(plate_ids)) != len(plate_ids):
         raise ValueError("Growth tabular export views must have unique plate IDs")
 
+    if cultivation_settings is not None and not assign_selected_replicates:
+        raise _cultivation_error(
+            "Cultivation generation requires selected-run replicate assignment"
+        )
+    if cultivation_settings is not None and cultivation_settings.pattern is not None:
+        _pattern_fields(cultivation_settings.pattern)
+        if "R{replicate}" not in cultivation_settings.pattern:
+            raise _cultivation_error("Cultivation ID pattern must include the R{replicate} suffix")
     contexts = tuple(_run_context(view) for view in views)
+    if cultivation_settings is not None and experiment_codes is None:
+        experiment_codes = _selected_experiment_codes(contexts)
+    selection_warnings: tuple[str, ...] = ()
+    replicate_preview: tuple[dict[str, object], ...] = ()
+    effective_condition_fields: tuple[str, ...] = ()
+    if assign_selected_replicates:
+        contexts, selection_warnings, replicate_preview, effective_condition_fields = (
+            _selection_contexts(
+                contexts, condition_fields, cultivation_settings, experiment_codes or {}
+            )
+        )
     exported_custom_columns = _custom_column_names(views, custom_columns)
     single_run_name = _single_run_filename_stem(contexts)
 
@@ -253,7 +334,7 @@ def export_growth_tabular_data(
 
     measurement_count = 0
     metadata_count = 0
-    warnings: list[str] = []
+    warnings: list[str] = list(selection_warnings)
     seen_cultivations: set[str] = set()
     for context in contexts:
         warnings.extend(_run_warnings(context))
@@ -292,7 +373,7 @@ def export_growth_tabular_data(
         if missing_ids:
             warnings.append(
                 f"{context.run_id}: {missing_ids} wells have no cultivation ID; "
-                "complete Cultivation metadata in the workspace before registry submission."
+                "check the export ID settings and saved well strain before registry submission."
             )
         for row in _measurement_rows(context, exported_custom_columns):
             measurement_writer.writerow(row)
@@ -310,7 +391,243 @@ def export_growth_tabular_data(
             metadata_count,
         ),
         warnings=tuple(warnings),
+        replicate_preview=replicate_preview,
+        effective_condition_fields=effective_condition_fields,
     )
+
+
+def _selected_experiment_codes(contexts: Sequence[_RunContext]) -> Mapping[str, str]:
+    """Use available views as the numbering universe for direct in-memory exports."""
+
+    rows: list[dict[str, object]] = []
+    for context in contexts:
+        snapshot = context.view.snapshot
+        plate_custom = _json_object(snapshot.metadata.get("plate_custom_json"))
+        rows.append(
+            {
+                "record_type": "plate",
+                "plate_id": str(snapshot.plate_id),
+                "experiment_date": snapshot.metadata.get("experiment_date"),
+                "created_at": snapshot.metadata.get("created_at"),
+                "custom_json": _json_object(plate_custom.get("cultivation_registry")),
+            }
+        )
+        rows.extend(
+            {
+                "record_type": "well",
+                "plate_id": str(snapshot.plate_id),
+                "custom_json": _well_custom(well),
+            }
+            for well in snapshot.wells
+        )
+    return plan_cultivation_experiment_codes(rows)
+
+
+def _selection_contexts(
+    contexts: tuple[_RunContext, ...],
+    condition_fields: tuple[str, ...],
+    settings: ExportCultivationSettings | None,
+    experiment_codes: Mapping[str, str],
+) -> tuple[
+    tuple[_RunContext, ...],
+    tuple[str, ...],
+    tuple[dict[str, object], ...],
+    tuple[str, ...],
+]:
+    rows: list[dict[str, object]] = []
+    for context in contexts:
+        metadata = context.view.snapshot.metadata
+        plate_id = str(context.view.snapshot.plate_id)
+        for well in context.view.snapshot.wells:
+            rows.append(
+                {
+                    **well,
+                    "plate_id": plate_id,
+                    "experiment_date": metadata.get("experiment_date"),
+                    "created_at": metadata.get("created_at"),
+                    "deleted_at": metadata.get("deleted_at"),
+                    "temperature": metadata.get("temperature"),
+                    "temperature_unit": metadata.get("temperature_unit"),
+                    "plate_custom_json": metadata.get("plate_custom_json"),
+                    "experiment_custom_json": metadata.get("experiment_custom_json"),
+                }
+            )
+    plans = plan_export_condition_replicates(rows, extra_fields=condition_fields)
+    fields = (
+        next(iter(plans.values())).extra_fields if plans else tuple(sorted(set(condition_fields)))
+    )
+    selected_contexts: list[_RunContext] = []
+    previews: list[dict[str, object]] = []
+    missing_counts: dict[tuple[str, tuple[str, ...]], int] = {}
+    for context in contexts:
+        plate_id = str(context.view.snapshot.plate_id)
+        identities: dict[str, Mapping[str, object]] = {}
+        for well in context.view.snapshot.wells:
+            raw_position = _required_text(well.get("position"), "Growth export well position")
+            position = WellPosition.parse(raw_position).label
+            plan = plans.get((plate_id, position))
+            identity, missing = _selection_identity(
+                context, well, plan, settings, experiment_codes.get(plate_id, "")
+            )
+            identities[position] = identity
+            if missing:
+                key = (context.run_id, missing)
+                missing_counts[key] = missing_counts.get(key, 0) + 1
+            if plan is not None:
+                previews.append(
+                    {
+                        "Run ID": plate_id,
+                        "Well": position,
+                        "Strain": _first_text(well.get("strain")),
+                        "Local replicate": well.get("replicate"),
+                        "Export replicate": plan.replicate,
+                        "Experiment number": identity["CultivationExperimentCode"],
+                        "Matching wells": plan.matching_wells,
+                        "Matching plates": plan.matching_plates,
+                        "Saved cultivation ID": identity["SavedCultivation"],
+                        "Cultivation ID": identity["Cultivation"],
+                    }
+                )
+        selected_contexts.append(replace(context, effective_identities=identities))
+    warnings = tuple(
+        f"{run_id}: {count} selected well(s) have no export cultivation ID; missing "
+        f"{', '.join(missing)}."
+        for (run_id, missing), count in sorted(missing_counts.items())
+    )
+    return tuple(selected_contexts), warnings, tuple(previews), fields
+
+
+def _selection_identity(
+    context: _RunContext,
+    well: Mapping[str, object],
+    plan: ConditionReplicate | None,
+    settings: ExportCultivationSettings | None,
+    suggested_code: str,
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    custom = _well_custom(well)
+    plate_custom = _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
+    shared = _json_object(plate_custom.get("cultivation_registry"))
+    saved = _first_text(custom.get("Cultivation"))
+    if plan is None:
+        return (
+            {
+                "Cultivation": "",
+                "SavedCultivation": saved,
+                "CultivationReplicate": "",
+                "CultivationReplicateScope": "",
+                "CultivationConditionKey": "",
+                "CultivationConditionFields": "",
+                "CultivationReplicateMode": "",
+                "Replicate": well.get("replicate"),
+                "LocalReplicate": well.get("replicate"),
+            },
+            (),
+        )
+
+    pattern = (
+        settings.pattern
+        if settings is not None and settings.pattern is not None
+        else _selection_pattern(custom, shared, saved)
+    )
+    fields = _pattern_fields(pattern)
+    components = {
+        "team": _first_text(
+            settings.team_code if settings is not None else "",
+            custom.get("Team_Code"),
+            shared.get("Team_Code"),
+        ),
+        "strain": _first_text(well.get("strain")),
+        "system": _first_text(
+            settings.system_code if settings is not None else "",
+            custom.get("CultivationSystemCode"),
+            shared.get("CultivationSystemCode"),
+        ),
+        "run": _first_text(
+            custom.get("CultivationRun"), shared.get("CultivationRun"), suggested_code
+        ),
+        "experiment": _first_text(
+            custom.get("CultivationExperimentCode"),
+            shared.get("CultivationExperimentCode"),
+            suggested_code,
+        ),
+    }
+    if components["experiment"]:
+        components["experiment"] = normalize_cultivation_experiment_code(
+            pattern, components["experiment"]
+        )
+    missing_fields = {field for field in fields if field in components and not components[field]}
+    if not components["strain"]:
+        missing_fields.add("strain")
+    missing = tuple(sorted(missing_fields))
+    cultivation = ""
+    if not missing:
+        cultivation = format_cultivation_id(
+            pattern,
+            team_code=components["team"],
+            strain=components["strain"],
+            system_code=components["system"],
+            cultivation_run=components["run"],
+            replicate=plan.replicate,
+            experiment_code=components["experiment"],
+            position=_required_text(well.get("position"), "Growth export well position"),
+        )
+    run = components["run"]
+    if run.isascii() and run.isdecimal() and run.lstrip("0"):
+        run = run.lstrip("0").zfill(3)
+    return (
+        {
+            "Cultivation": cultivation,
+            "SavedCultivation": saved,
+            "Team_Code": components["team"],
+            "CultivationSystemCode": components["system"],
+            "CultivationRun": run,
+            "CultivationExperimentCode": components["experiment"],
+            "CultivationIDPattern": pattern,
+            "Replicate": plan.replicate,
+            "LocalReplicate": well.get("replicate"),
+            "CultivationReplicate": plan.replicate,
+            "CultivationReplicateScope": plan.scope,
+            "CultivationConditionKey": plan.condition_key,
+            "CultivationConditionFields": json.dumps(plan.extra_fields, separators=(",", ":")),
+            "CultivationReplicateMode": "export_selection",
+        },
+        missing,
+    )
+
+
+def _selection_pattern(
+    custom: Mapping[str, object], shared: Mapping[str, object], saved: str
+) -> str:
+    if "CultivationIDPattern" in custom:
+        pattern = custom["CultivationIDPattern"]
+    elif saved:
+        pattern = LEGACY_CULTIVATION_PATTERN
+    elif "CultivationIDPattern" in shared:
+        pattern = shared["CultivationIDPattern"]
+    else:
+        pattern = DEFAULT_CULTIVATION_PATTERN
+    if not isinstance(pattern, str) or not pattern:
+        raise _cultivation_error("Cultivation ID pattern must be non-empty")
+    return pattern
+
+
+def _pattern_fields(pattern: str) -> frozenset[str]:
+    if ":" in pattern:
+        raise _cultivation_error("Cultivation ID pattern has an unsupported format specification")
+    try:
+        parts = tuple(Formatter().parse(pattern))
+    except ValueError as error:
+        raise _cultivation_error("Cultivation ID pattern has invalid braces") from error
+    fields: set[str] = set()
+    for _, field, spec, conversion in parts:
+        if field is None:
+            continue
+        if field not in _CULTIVATION_PATTERN_FIELDS or spec or conversion is not None:
+            raise _cultivation_error("Cultivation ID pattern has an unsupported placeholder")
+        fields.add(field)
+    if "replicate" not in fields:
+        raise _cultivation_error("Cultivation ID pattern must include {replicate} for export R")
+    return frozenset(fields)
 
 
 def _single_run_filename_stem(contexts: Sequence[_RunContext]) -> str:
@@ -522,8 +839,12 @@ def _measurement_rows(
         result.append(
             (
                 registry["Cultivation"],
+                registry["SavedCultivation"],
                 registry["CultivationExperimentCode"],
                 registry["CultivationIDPattern"],
+                registry["CultivationReplicate"],
+                registry["CultivationReplicateScope"],
+                registry["CultivationConditionKey"],
                 _culture_age(context, registry, elapsed),
                 _display_name(well, position),
                 date_time,
@@ -550,18 +871,21 @@ def _measurement_rows(
                 group,
                 well.get("strain"),
                 well.get("medium"),
-                well.get("replicate"),
+                registry["Replicate"],
                 well.get("notes"),
+                well.get("replicate"),
                 well.get("raw_label"),
                 well.get("display_name"),
                 group,
                 bool(well.get("plot_selected", False)),
                 well.get("grouping_label"),
                 well.get("inoculum_size"),
-                well.get("inoculum_unit"),
-                _first_value(well.get("treatment"), custom.get("treatment_1")),
-                _first_value(well.get("concentration"), custom.get("conc_1")),
-                _first_value(well.get("concentration_unit"), custom.get("unit_1")),
+                normalize_growth_unit(well.get("inoculum_unit")),
+                primary_condition_value(well, custom, "treatment", "treatment_1"),
+                primary_condition_value(well, custom, "concentration", "conc_1"),
+                normalize_growth_unit(
+                    primary_condition_value(well, custom, "concentration_unit", "unit_1")
+                ),
                 custom.get("t0_added_min"),
                 *_separate_conditions(well)[3:],
                 *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
@@ -573,11 +897,15 @@ def _measurement_rows(
 def _separate_conditions(well: Mapping[str, object]) -> tuple[object, ...]:
     custom = _well_custom(well)
     return (
-        _first_value(well.get("treatment"), custom.get("treatment_1")),
-        _first_value(well.get("concentration"), custom.get("conc_1")),
-        _first_value(well.get("concentration_unit"), custom.get("unit_1")),
+        primary_condition_value(well, custom, "treatment", "treatment_1"),
+        primary_condition_value(well, custom, "concentration", "conc_1"),
+        normalize_growth_unit(
+            primary_condition_value(well, custom, "concentration_unit", "unit_1")
+        ),
         *(
-            custom.get(f"{field}_{index}")
+            normalize_growth_unit(custom.get(f"{field}_{index}"))
+            if field == "unit"
+            else custom.get(f"{field}_{index}")
             for index in (2, 3)
             for field in ("treatment", "conc", "unit")
         ),
@@ -598,10 +926,17 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
     result.update(
         {
             "Cultivation": _first_text(custom.get("Cultivation")),
+            "SavedCultivation": _first_text(custom.get("Cultivation")),
             "CultivationExperimentCode": _first_text(custom.get("CultivationExperimentCode")),
             "CultivationIDPattern": _first_text(custom.get("CultivationIDPattern")),
             "Strain": _first_text(well.get("strain")),
             "Replicate": well.get("replicate"),
+            "LocalReplicate": well.get("replicate"),
+            "CultivationReplicate": well.get("replicate") if custom.get("Cultivation") else "",
+            "CultivationReplicateScope": _first_text(custom.get("CultivationReplicateScope")),
+            "CultivationConditionKey": _first_text(custom.get("CultivationConditionKey")),
+            "CultivationConditionFields": "",
+            "CultivationReplicateMode": _first_text(custom.get("CultivationReplicateMode")),
             "Media": _first_text(well.get("medium")),
             "Local_Cultivation_ID": _first_text(
                 custom.get("Local_Cultivation_ID"),
@@ -613,9 +948,39 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
             "EquipmentMakeModel": _first_text(values.get("EquipmentMakeModel"), context.instrument),
         }
     )
+    if context.effective_identities is not None:
+        override = context.effective_identities.get(WellPosition.parse(position).label)
+        if override is None:
+            raise _cultivation_error(f"{position}: missing export selection identity")
+        result.update(override)
+        return result
     cultivation = str(result["Cultivation"])
     if cultivation:
-        # A layout edit must not silently attach an existing ID to a different strain/replicate.
+        if custom.get("CultivationReplicateMode") == "condition":
+            id_replicate = _integer(custom.get("CultivationReplicate"), "Cultivation replicate")
+            if id_replicate < 1:
+                raise _cultivation_error("Cultivation replicate must be positive")
+            fields = custom.get("CultivationConditionFields", [])
+            if not isinstance(fields, list) or any(not isinstance(field, str) for field in fields):
+                raise _cultivation_error("Cultivation condition fields must be a list of names")
+            scope = str(result["CultivationReplicateScope"])
+            current_key = cultivation_condition_key(
+                {**well, "plate_id": str(context.view.snapshot.plate_id)},
+                context.view.snapshot.metadata,
+                scope,
+                tuple(fields),
+            )
+            if current_key != result["CultivationConditionKey"]:
+                raise _cultivation_error(
+                    f"{position}: saved cultivation conditions changed; "
+                    "preview and save cultivation IDs again in Metadata."
+                )
+            result["Replicate"] = id_replicate
+            result["CultivationReplicate"] = id_replicate
+            result["CultivationConditionFields"] = json.dumps(fields, separators=(",", ":"))
+        else:
+            id_replicate = _integer(well.get("replicate"), "Cultivation biological replicate")
+        # Condition-based IDs use the saved global number, independent of local labels.
         if "CultivationIDPattern" in custom:
             expected = format_cultivation_id(
                 str(result["CultivationIDPattern"]),
@@ -623,7 +988,7 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
                 strain=str(result["Strain"]),
                 system_code=_first_text(custom.get("CultivationSystemCode")),
                 cultivation_run=_first_text(custom.get("CultivationRun")),
-                replicate=_integer(well.get("replicate"), "Cultivation biological replicate"),
+                replicate=id_replicate,
                 experiment_code=str(result["CultivationExperimentCode"]),
                 position=position,
             )
@@ -633,7 +998,7 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
                 str(result["Strain"]),
                 _first_text(custom.get("CultivationSystemCode")),
                 _first_text(custom.get("CultivationRun")),
-                _integer(well.get("replicate"), "Cultivation biological replicate"),
+                id_replicate,
             )
             result["CultivationIDPattern"] = LEGACY_CULTIVATION_PATTERN
         if cultivation != expected:
@@ -724,9 +1089,10 @@ def _condition_state(well: Mapping[str, object], custom: Mapping[str, object], i
     concentration = custom.get(f"conc_{index}")
     unit = custom.get(f"unit_{index}")
     if index == 1:
-        treatment = _first_value(treatment, well.get("treatment"))
-        concentration = _first_value(concentration, well.get("concentration"))
-        unit = _first_value(unit, well.get("concentration_unit"))
+        treatment = primary_condition_value(well, custom, "treatment", "treatment_1")
+        concentration = primary_condition_value(well, custom, "concentration", "conc_1")
+        unit = primary_condition_value(well, custom, "concentration_unit", "unit_1")
+    unit = normalize_growth_unit(unit)
     parts = tuple(text for value in (treatment, concentration, unit) if (text := _cell_text(value)))
     return " ".join(parts)
 

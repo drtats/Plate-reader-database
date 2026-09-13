@@ -14,6 +14,8 @@ from plate_reader.application.services.growth_cultivation import json_object, pr
 from plate_reader.domain.common import DomainIssue, DomainValidationError, IssueCode
 
 CULTIVATION_SHARED_FIELDS = (
+    "CultivationReplicateScope",
+    "CultivationConditionFields",
     "Team_Code",
     "CultivationSystemCode",
     "CultivationExperiment",

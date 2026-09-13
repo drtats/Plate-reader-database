@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import io
 import json
@@ -13,9 +14,12 @@ from plate_reader.application.services.growth_tabular_export import (
     GROWTH_ADDITIONAL_LAYOUT_HEADERS,
     GROWTH_MEASUREMENT_HEADERS,
     GROWTH_METADATA_HEADERS,
+    GrowthTabularExportBundle,
     export_growth_tabular_data,
 )
 from plate_reader.application.services.growth_workflow import GrowthRunView
+from plate_reader.domain.common import DomainValidationError
+from plate_reader.domain.growth.cultivation import DEFAULT_CULTIVATION_PATTERN
 
 
 def test_multi_run_export_preserves_raw_background_and_corrected_od_contract() -> None:
@@ -427,6 +431,195 @@ def test_pattern_ids_export_join_with_per_well_strains_and_persisted_numbers() -
         export_growth_tabular_data((view,))
 
 
+def test_condition_replicate_exports_global_number_and_keeps_local_label() -> None:
+    from plate_reader.domain.growth.cultivation import DEFAULT_CULTIVATION_PATTERN
+    from plate_reader.domain.growth.cultivation_conditions import cultivation_condition_key
+
+    view = _registry_view()
+    well = view.snapshot.wells[0]
+    custom = json.loads(str(well["custom_json"]))
+    custom.update(
+        {
+            "Cultivation": "PN-EXP-MG1655-001-A01-R3",
+            "CultivationExperimentCode": "001",
+            "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+            "CultivationReplicate": 3,
+            "CultivationReplicateScope": "study-a",
+            "CultivationConditionFields": ["oxygen"],
+            "CultivationReplicateMode": "condition",
+        }
+    )
+    well["custom_json"] = json.dumps(custom)
+    custom["CultivationConditionKey"] = cultivation_condition_key(
+        {**well, "plate_id": str(view.snapshot.plate_id)},
+        view.snapshot.metadata,
+        "study-a",
+        ("oxygen",),
+    )
+    well["custom_json"] = json.dumps(custom)
+    # The local label can change or be absent without changing the saved global R.
+    for local in (99, None):
+        well["replicate"] = local
+        bundle = export_growth_tabular_data((view,))
+        data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+        metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+        assert data[0]["Cultivation ID"] == "PN-EXP-MG1655-001-A01-R3"
+        assert data[0]["Cultivation replicate"] == metadata[0]["Replicate"] == "3"
+        assert (
+            data[0]["Local replicate"]
+            == metadata[0]["LocalReplicate"]
+            == ("" if local is None else str(local))
+        )
+        assert metadata[0]["CultivationConditionFields"] == '["oxygen"]'
+        assert data[0]["Cultivation replicate scope"] == "study-a"
+    well["concentration"] = 99
+    with pytest.raises(ValueError, match="conditions changed"):
+        export_growth_tabular_data((view,))
+
+
+def _selection_view(plate_id: str, experiment_date: str, code: str) -> GrowthRunView:
+    view = copy.deepcopy(_view())
+    view.snapshot.metadata["experiment_date"] = experiment_date
+    view.snapshot.metadata["created_at"] = f"{experiment_date}T09:00:00Z"
+    view.snapshot.metadata["legacy_run_id"] = plate_id
+    plate_custom = json.loads(str(view.snapshot.metadata["plate_custom_json"]))
+    plate_custom["cultivation_registry"] = {
+        "Team_Code": "PN",
+        "CultivationExperimentCode": code,
+        "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+    }
+    view.snapshot.metadata["plate_custom_json"] = json.dumps(plate_custom)
+    for well in view.snapshot.wells:
+        well["well_id"] = f"{plate_id}-{well['well_id']}"
+    for observation in view.snapshot.raw_observations:
+        observation["well_id"] = f"{plate_id}-{observation['well_id']}"
+    return replace(view, snapshot=replace(view.snapshot, plate_id=PlateId(plate_id)))
+
+
+def _csv_rows(
+    bundle: GrowthTabularExportBundle,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    return (
+        list(csv.DictReader(io.StringIO(bundle.measurements.content.decode()))),
+        list(csv.DictReader(io.StringIO(bundle.metadata.content.decode()))),
+    )
+
+
+def test_selection_export_assigns_r_within_only_selected_runs_and_preserves_saved_values() -> None:
+    early = _selection_view("early", "2026-08-01", "001")
+    late = _selection_view("late", "2026-09-01", "002")
+    late_a1 = late.snapshot.wells[0]
+    saved_custom = json.loads(str(late_a1["custom_json"]))
+    saved_custom.update(
+        {
+            "Cultivation": "PN-EXP-NCM3722-002-A01-R9",
+            "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+            "CultivationExperimentCode": "002",
+            "CultivationReplicate": 9,
+        }
+    )
+    late_a1["custom_json"] = json.dumps(saved_custom)
+    originals = (repr(early.snapshot), repr(late.snapshot))
+
+    pair = export_growth_tabular_data(
+        (late, early), assign_selected_replicates=True, condition_fields=("oxygen",)
+    )
+    reversed_pair = export_growth_tabular_data(
+        (early, late), assign_selected_replicates=True, condition_fields=("oxygen",)
+    )
+    single = export_growth_tabular_data((late,), assign_selected_replicates=True)
+    pair_data, pair_meta = _csv_rows(pair)
+    reverse_data, reverse_meta = _csv_rows(reversed_pair)
+    single_data, single_meta = _csv_rows(single)
+    expected = {
+        "early": "PN-EXP-NCM3722-001-A01-R1",
+        "late": "PN-EXP-NCM3722-002-A01-R2",
+    }
+    by_run = {row["Run ID"]: row for row in pair_meta if row["Well"] == "A1"}
+    assert {run_id: row["Cultivation"] for run_id, row in by_run.items()} == expected
+    assert {
+        row["Run ID"]: row["Cultivation"] for row in reverse_meta if row["Well"] == "A1"
+    } == expected
+    assert next(row for row in single_meta if row["Well"] == "A1")["Cultivation"] == (
+        "PN-EXP-NCM3722-002-A01-R1"
+    )
+    assert by_run["late"]["SavedCultivation"] == "PN-EXP-NCM3722-002-A01-R9"
+    assert by_run["late"]["LocalReplicate"] == "1"
+    assert by_run["late"]["Replicate"] == by_run["late"]["CultivationReplicate"] == "2"
+    assert by_run["late"]["CultivationReplicateMode"] == "export_selection"
+    assert by_run["late"]["CultivationConditionFields"] == '["oxygen"]'
+    assert pair.effective_condition_fields == ("oxygen",)
+    assert len(pair.replicate_preview) == 2
+    assert {row["Cultivation ID"] for row in pair.replicate_preview} == set(expected.values())
+    for rows, metadata in (
+        (pair_data, pair_meta),
+        (reverse_data, reverse_meta),
+        (single_data, single_meta),
+    ):
+        by_id = {row["Cultivation"]: row for row in metadata if row["Cultivation"]}
+        for row in rows:
+            if row["Well"] == "A1":
+                assert row["Cultivation ID"] in by_id
+                assert row["Replicate"] == by_id[row["Cultivation ID"]]["Replicate"]
+                assert row["Local replicate"] == "1"
+                assert row["Raw OD"] in {"0.088", "0.1"}
+    assert (repr(early.snapshot), repr(late.snapshot)) == originals
+
+
+def test_selection_export_resets_r_for_distinct_condition_or_scope() -> None:
+    early = _selection_view("early", "2026-08-01", "001")
+    late = _selection_view("late", "2026-09-01", "002")
+    late.snapshot.wells[0]["concentration"] = 4.0
+    bundle = export_growth_tabular_data((early, late), assign_selected_replicates=True)
+    _, metadata = _csv_rows(bundle)
+    assert {row["Replicate"] for row in metadata if row["Well"] == "A1"} == {"1"}
+
+    late.snapshot.wells[0]["concentration"] = None
+    plate_custom = json.loads(str(late.snapshot.metadata["plate_custom_json"]))
+    plate_custom["cultivation_registry"]["CultivationReplicateScope"] = "different"
+    late.snapshot.metadata["plate_custom_json"] = json.dumps(plate_custom)
+    scoped = export_growth_tabular_data((early, late), assign_selected_replicates=True)
+    _, scoped_meta = _csv_rows(scoped)
+    assert {row["Replicate"] for row in scoped_meta if row["Well"] == "A1"} == {"1"}
+
+
+def test_selection_export_keeps_od_when_id_settings_missing_and_rejects_bad_pattern() -> None:
+    view = _selection_view("only", "2026-08-01", "001")
+    plate_custom = json.loads(str(view.snapshot.metadata["plate_custom_json"]))
+    plate_custom["cultivation_registry"].pop("Team_Code")
+    view.snapshot.metadata["plate_custom_json"] = json.dumps(plate_custom)
+    bundle = export_growth_tabular_data((view,), assign_selected_replicates=True)
+    data, metadata = _csv_rows(bundle)
+    a1 = next(row for row in metadata if row["Well"] == "A1")
+    assert a1["Cultivation"] == ""
+    assert a1["CultivationReplicate"] == "1"
+    assert any("missing team" in warning for warning in bundle.warnings)
+    assert any(row["Raw OD"] for row in data if row["Well"] == "A1")
+
+    plate_custom["cultivation_registry"]["Team_Code"] = "PN"
+    plate_custom["cultivation_registry"]["CultivationIDPattern"] = "{team}-{well}"
+    view.snapshot.metadata["plate_custom_json"] = json.dumps(plate_custom)
+    with pytest.raises(DomainValidationError, match=r"include.*replicate"):
+        export_growth_tabular_data((view,), assign_selected_replicates=True)
+
+
+def test_selection_export_requires_strain_even_when_custom_pattern_omits_it() -> None:
+    view = _selection_view("only", "2026-08-01", "001")
+    plate_custom = json.loads(str(view.snapshot.metadata["plate_custom_json"]))
+    plate_custom["cultivation_registry"]["CultivationIDPattern"] = "{team}-{well}-R{replicate}"
+    view.snapshot.metadata["plate_custom_json"] = json.dumps(plate_custom)
+    view.snapshot.wells[0]["strain"] = None
+
+    bundle = export_growth_tabular_data((view,), assign_selected_replicates=True)
+    data, metadata = _csv_rows(bundle)
+    a1 = next(row for row in metadata if row["Well"] == "A1")
+    assert a1["Cultivation"] == ""
+    assert a1["CultivationReplicate"] == "1"
+    assert a1["CultivationReplicateMode"] == "export_selection"
+    assert any("missing strain" in warning for warning in bundle.warnings)
+    assert any(row["Raw OD"] for row in data if row["Well"] == "A1")
+
+
 def test_registry_export_rejects_duplicates_across_runs_and_changed_layout_identity() -> None:
     view = _registry_view()
     second = replace(
@@ -465,3 +658,84 @@ def test_per_well_inoculation_overrides_shared_date_and_bad_dates_fail() -> None
     view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
     with pytest.raises(ValueError, match="valid date and time"):
         export_growth_tabular_data((view,))
+
+
+def test_export_generator_works_without_saved_ids_and_normalizes_units() -> None:
+    from plate_reader.application.services.growth_tabular_export import ExportCultivationSettings
+
+    views = tuple(_selection_view(f"plate-{i}", f"2026-08-{i + 1:02d}", "") for i in range(4))
+    for view, unit in zip(views, ("ug/mL", "µg/mL", "μg/mL", "Œºg/mL"), strict=True):
+        view.snapshot.metadata["plate_custom_json"] = "{}"
+        well = view.snapshot.wells[0]
+        well["concentration_unit"] = unit
+        well["concentration"] = 2.0
+        well["inoculum_unit"] = unit.replace("g/mL", "L")
+        custom = json.loads(str(well["custom_json"]))
+        custom.update({"unit_2": unit, "unit_3": unit, "conc_2": 3.0, "conc_3": 4.0})
+        well["custom_json"] = json.dumps(custom)
+    originals = repr(views)
+    bundle = export_growth_tabular_data(
+        tuple(reversed(views)),
+        assign_selected_replicates=True,
+        cultivation_settings=ExportCultivationSettings(team_code="PN"),
+    )
+    data, metadata = _csv_rows(bundle)
+    for i, view in enumerate(views, 1):
+        run = str(view.snapshot.plate_id)
+        meta = next(row for row in metadata if row["Run ID"] == run and row["Well"] == "A1")
+        assert meta["Cultivation"] == f"PN-EXP-NCM3722-{i:03d}-A01-R{i}"
+        assert meta["Replicate"] == meta["CultivationReplicate"] == str(i)
+        assert meta["LocalReplicate"] == "1"
+        assert meta["SavedCultivation"] == ""
+        assert json.loads(meta["Well Metadata JSON"])["unit_2"] in (
+            "ug/mL",
+            "µg/mL",
+            "μg/mL",
+            "Œºg/mL",
+        )
+        for row in (meta, *(row for row in data if row["Run ID"] == run and row["Well"] == "A1")):
+            assert (
+                row["Concentration unit"]
+                == row["Concentration unit 2"]
+                == row["Concentration unit 3"]
+                == "ug/mL"
+            )
+            assert row["Replicate"] == str(i)
+        for row in data:
+            if row["Run ID"] == run and row["Well"] == "A1":
+                assert row["Cultivation ID"] == meta["Cultivation"]
+                assert row["Local replicate"] == "1"
+                assert row["Inoculum unit"] == "uL"
+                assert "ug/mL" in row["Condition 1 State"]
+                assert "ug/mL" in row["Condition 2 State"]
+                assert "ug/mL" in row["Condition 3 State"]
+                assert row["Raw OD"] in {"0.088", "0.1"}
+    assert repr(views) == originals
+
+
+def test_export_generator_can_override_pattern_team_and_system_without_saving() -> None:
+    from plate_reader.application.services.growth_tabular_export import ExportCultivationSettings
+    from plate_reader.domain.growth.cultivation import LEGACY_CULTIVATION_PATTERN
+
+    view = _selection_view("only", "2026-08-01", "007")
+    original = repr(view)
+    bundle = export_growth_tabular_data(
+        (view,),
+        assign_selected_replicates=True,
+        cultivation_settings=ExportCultivationSettings(
+            pattern=LEGACY_CULTIVATION_PATTERN, team_code="AB", system_code="BRV"
+        ),
+    )
+    data, metadata = _csv_rows(bundle)
+    assert data[0]["Cultivation ID"] == "AB-EXP-NCM3722-BRV007R1"
+    assert metadata[0]["CultivationRun"] == "007"
+    assert repr(view) == original
+    for pattern in ("{team}-{well}", "{team}-{well}-{replicate}", "{team.__class__}-R{replicate}"):
+        with pytest.raises(DomainValidationError):
+            export_growth_tabular_data(
+                (view,),
+                assign_selected_replicates=True,
+                cultivation_settings=ExportCultivationSettings(pattern=pattern),
+            )
+    with pytest.raises(DomainValidationError, match="requires selected-run"):
+        export_growth_tabular_data((view,), cultivation_settings=ExportCultivationSettings())

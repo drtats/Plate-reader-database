@@ -28,7 +28,9 @@ from plate_reader.application.services import (
     ImportGrowthRunService,
     SaveLayoutColumnService,
 )
+from plate_reader.application.services.growth_tabular_export import GrowthTabularExportBundle
 from plate_reader.domain.growth import GROWTH_BACKGROUND_VERSION, GROWTH_NORMALIZATION_VERSION
+from plate_reader.domain.growth.cultivation import DEFAULT_CULTIVATION_PATTERN
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
@@ -147,6 +149,138 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
     assert b1["Condition 1 State"] == "Mecillinam 3.0 ug/mL"
     assert json.loads(metadata_rows[0]["Source Metadata JSON"])["Plate Number"] == "Plate 0"
     assert all("no cultivation ID" in warning for warning in bundle.warnings)
+
+
+@pytest.mark.parametrize("generate", [False, True])
+def test_selected_run_replicates_are_stable_and_read_only(
+    repository: SqlPlateReaderRepository,
+    generate: bool,
+) -> None:
+    from plate_reader.application.services.growth_tabular_export import ExportCultivationSettings
+
+    settings = ExportCultivationSettings(team_code="PN") if generate else None
+    identifiers = itertools.count()
+    importer = ImportGrowthRunService(
+        repository, id_factory=lambda: f"selected-{next(identifiers):05d}"
+    )
+    plate_ids = []
+    for index, experiment_date in enumerate((date(2026, 8, 18), date(2026, 8, 19))):
+        result = importer.execute(
+            ImportGrowthRun(
+                ACTOR,
+                f"selected-{index}.csv",
+                hashlib.sha256(CSV_TEXT.encode()).hexdigest(),
+                GROWTH_NORMALIZATION_VERSION,
+                f"Selected {index}",
+                f"Selected Plate {index}",
+                experiment_date,
+                idempotency_key=f"selected-export-{index}",
+            ),
+            CSV_TEXT,
+            metadata=GrowthRunMetadata(
+                project="SMS",
+                plate_custom_json={}
+                if generate
+                else {
+                    "cultivation_registry": {
+                        "Team_Code": "PN",
+                        "CultivationExperimentCode": f"{index + 1:03d}",
+                        "CultivationIDPattern": DEFAULT_CULTIVATION_PATTERN,
+                    }
+                },
+            ),
+            layout_changes=(
+                WellLayoutChange("A1", is_blank=True, background_group="plate"),
+                WellLayoutChange("A2", is_blank=True, background_group="plate"),
+                WellLayoutChange(
+                    "B1",
+                    strain="J3",
+                    medium="LB",
+                    replicate=1,
+                    treatment="Drug",
+                    concentration=1.0,
+                    concentration_unit=("ug/mL", "Œºg/mL")[index],
+                ),
+            ),
+        )
+        plate_ids.append(result.plate_id)
+        ComputeGrowthBackgroundService(repository).execute(
+            ComputeGrowthBackgroundRevision(ACTOR, result.plate_id, GROWTH_BACKGROUND_VERSION)
+        )
+
+    def persisted_state() -> tuple[tuple[tuple[object, ...], ...], ...]:
+        return tuple(
+            tuple(tuple(row) for row in repository.connection.execute(query))
+            for query in (
+                "SELECT plate_id, custom_json FROM plates ORDER BY plate_id",
+                "SELECT well_id, custom_json FROM wells ORDER BY well_id",
+                "SELECT * FROM well_conditions ORDER BY well_id",
+                "SELECT * FROM growth_measurements ORDER BY plate_id, well_id, channel, time_index",
+                "SELECT * FROM growth_backgrounds "
+                "ORDER BY revision_id, background_group, channel, time_index",
+                "SELECT * FROM analysis_revisions ORDER BY revision_id",
+                "SELECT * FROM provenance_events ORDER BY event_id",
+            )
+        )
+
+    before = persisted_state()
+    service = ExportGrowthTabularDataService(repository)
+    pair = service.execute(
+        ExportGrowthTabularData(
+            ACTOR,
+            tuple(reversed(plate_ids)),
+            assign_selected_replicates=True,
+            cultivation_settings=settings,
+        )
+    )
+    forward = service.execute(
+        ExportGrowthTabularData(
+            ACTOR, tuple(plate_ids), assign_selected_replicates=True, cultivation_settings=settings
+        )
+    )
+    late_only = service.execute(
+        ExportGrowthTabularData(
+            ACTOR, (plate_ids[1],), assign_selected_replicates=True, cultivation_settings=settings
+        )
+    )
+    assert persisted_state() == before
+
+    def b1_rows(bundle: GrowthTabularExportBundle) -> tuple[dict[str, str], dict[str, str]]:
+        data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+        metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+        return (
+            next(row for row in data if row["Well"] == "B1"),
+            next(row for row in metadata if row["Well"] == "B1"),
+        )
+
+    expected = {
+        str(plate_ids[0]): "PN-EXP-J3-001-B01-R1",
+        str(plate_ids[1]): "PN-EXP-J3-002-B01-R2",
+    }
+    for bundle in (pair, forward):
+        metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+        assert {
+            row["Run ID"]: row["Cultivation"] for row in metadata if row["Well"] == "B1"
+        } == expected
+        data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+        for i, plate_id in enumerate(plate_ids, 1):
+            samples = [
+                row for row in data if row["Run ID"] == str(plate_id) and row["Well"] == "B1"
+            ]
+            assert {row["Replicate"] for row in samples} == {str(i)}
+            assert {row["Local replicate"] for row in samples} == {"1"}
+            assert {row["Concentration unit"] for row in samples} == {"ug/mL"}
+        assert bundle.measurements.row_count == 768
+        assert bundle.metadata.row_count == 192
+        assert all(row["Saved cultivation ID"] == "" for row in bundle.replicate_preview)
+    late_data, late_meta = b1_rows(late_only)
+    assert late_meta["Cultivation"] == "PN-EXP-J3-002-B01-R1"
+    assert late_meta["CultivationReplicate"] == "1"
+    assert late_meta["LocalReplicate"] == "1"
+    assert late_data["Cultivation ID"] == late_meta["Cultivation"]
+    assert late_data["Replicate"] == "1"
+    assert late_data["Raw OD"] and late_data["Background Subtracted OD"]
+    assert json.loads(late_meta["Well Metadata JSON"]).get("Cultivation") is None
 
 
 def _table_counts(repository: SqlPlateReaderRepository) -> tuple[int, ...]:

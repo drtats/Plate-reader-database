@@ -87,6 +87,8 @@ def test_bulk_patch_persists_for_distinct_runs_without_raw_reads_and_flows_to_ex
             "CultivationSystemCode": "NEWSYS",
             "Objective": "bulk objective",
             "CultivationProtocol": "bulk protocol",
+            "CultivationReplicateScope": "study-a",
+            "CultivationConditionFields": "oxygen, shaking",
         },
         fill_missing_only=False,
     )
@@ -101,6 +103,10 @@ def test_bulk_patch_persists_for_distinct_runs_without_raw_reads_and_flows_to_ex
     assert all(item.registry["CultivationProtocol"] == "bulk protocol" for item in reloaded)
     assert all(item.registry["Team_Code"] == "NEWTEAM" for item in reloaded)
     assert all(item.registry["CultivationSystemCode"] == "NEWSYS" for item in reloaded)
+    assert all(item.registry["CultivationReplicateScope"] == "study-a" for item in reloaded)
+    assert all(
+        item.registry["CultivationConditionFields"] == "oxygen, shaking" for item in reloaded
+    )
     for plate_id in plate_ids:
         custom = json.loads(
             cast(

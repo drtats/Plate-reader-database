@@ -133,25 +133,57 @@ in each workspace and cultivation export.
 
 In a saved run, open **Metadata → Cultivation metadata and ID pattern**. Choose the
 recommended **Experiment number + well** pattern and enter your team code. The
-experiment number starts at `001` and the next available number is suggested for
-new runs (`002`, `003`, …); you can edit it. Preview does not consume a number.
+experiment number is suggested in chronological order across unnumbered Growth runs:
+oldest experiment `001`, next `002`, and so on, even before any IDs are saved.
+Experiment date sets the order; ties use creation time and run ID. Missing or invalid
+dates come last. Already saved numbers are kept and skipped when suggesting numbers
+for other runs. You can edit the suggestion. Preview does not consume a number.
 Once saved, the number remains with the run. Dates remain in metadata.
 
-Each well gets its own ID using its saved Layout strain and biological replicate.
-A run can contain multiple strains. For example, `PN-EXP-MG1655-001-A01-R1` and
-`PN-EXP-11_J3-001-B01-R1` belong to different wells of run `001`. Well position
-keeps IDs distinct even when replicate labels repeat across conditions; check the
-biological replicate values in Layout rather than inferring them from positions.
-Sample wells with strains are selected by default; uncheck wells to preserve their IDs.
-Use **Preview cultivation IDs**, then **Save cultivation metadata and IDs**.
-Descriptive metadata can be saved with all wells unselected.
+Generate IDs directly in **Growth Data Export**: select the runs, open the
+**Cultivation ID generation** controls, choose a pattern and enter a team code
+(or leave it blank to use saved team codes). The recommended pattern includes the
+experiment number, well position and required `R` suffix. Missing experiment
+numbers are suggested across the Growth library in chronological order, beginning
+at `001`; saved numbers remain fixed. No workspace ID-generation step is required.
+Press **Generate cultivation IDs and prepare export** to see each well's ID,
+experiment number, local label, export replicate and matching counts before download.
 
-The original laboratory pattern is also available with manual per-well run numbers,
-e.g. `PN-EXP-11_J3-BRV002R1`. **Custom pattern** supports `{team}`, `{strain}`,
-`{system}`, `{run}`, `{experiment}`, `{well}`, and `{replicate}`. The saved pattern
-and number are included in both export files. Existing IDs keep their saved format.
-If another session has taken a suggested number, saving reports the conflict so you
-can use the next number. Numbering is local to the current database.
+Matching wells across the selected plates receive cumulative `R1`, `R2`, and so on.
+Each distinct condition group starts at R1. Selecting a different subset recalculates
+the R numbers; it never changes saved IDs, labels or raw measurements. **Replicate**
+in both CSVs is the cultivation replicate used in the ID. The observation file's
+**Local replicate** and metadata's **LocalReplicate** retain your original Layout label.
+
+Matching uses strain, medium, treatment doses and units (including combinations),
+inoculum, temperature and culture volume. The unit spellings `u`, `µ`, and `μ` are
+equivalent; known encoding artifacts such as `Œºg/mL` are repaired to `ug/mL`.
+Concentration unit columns and composite condition text use `u` in both files.
+No concentration values or scales are converted: `mg/mL` remains distinct from
+`ug/mL`. Original metadata JSON is retained. Wells with missing strain or medium
+are treated individually. Additional well custom condition fields can be specified
+on the export page; saved matching fields are also included. A shared **Replicate
+study/group** limits which selected plates count together; blank groups match other
+blank groups. Apply those shared settings through **Growth Run Library → Edit
+cultivation metadata**. Each matching well counts as one cultivation; choose study
+groups appropriate to your experimental replication design.
+
+Both CSVs link through the exported Cultivation ID and retain the original saved
+ID (`SavedCultivation` / `Saved cultivation ID`). Disable generation to use saved
+IDs. Workspace controls and previously saved condition-numbering settings remain
+available. Missing required ID components are reported with blank IDs while OD and
+metadata rows remain available. Shared scientific descriptions continue to come
+from the saved metadata.
+
+The export generator also supports the original laboratory pattern, e.g.
+`PN-EXP-11_J3-BRV002R1`, with a system code and a saved cultivation run number
+(or the chronological number when absent). **Custom pattern** supports `{team}`,
+`{strain}`, `{system}`, `{run}`, `{experiment}`, `{well}`, and `{replicate}` and
+must include `R{replicate}`. Choose saved patterns to retain each well's naming
+format while assigning selected-run replicates. Pattern, team and system controls
+affect only this export. Changing settings or selection hides old downloads until
+you generate again. Numbering is local to the current database; exporting does not
+reserve numbers. To persist a number, use the workspace metadata controls.
 
 Shared descriptions apply to this plate; per-well custom columns named
 `InoculationDateTime`, `Local_Cultivation_ID`, `Strain/Strain_Aliases`, `Objective`,
@@ -160,7 +192,8 @@ or the other registry fields override their descriptive defaults. Dates accept
 time minus inoculation time when both timestamps exist, otherwise the existing
 elapsed-time plus culture-age-offset convention. Unknown fields and unassigned
 cultivation IDs stay blank, with an export warning. Duplicate IDs across the selected
-runs and IDs that no longer match saved strain/replicate prevent export until corrected.
+runs and IDs that no longer match their saved identity or condition metadata prevent
+export until corrected. Exports keep both the cultivation replicate and local label.
 
 If a background revision is missing or stale, raw OD is still exported while the
 background and corrected cells remain blank and the QC reason identifies the

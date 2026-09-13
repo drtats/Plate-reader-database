@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime
+from contextlib import suppress
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from typing import Protocol
 
 from plate_reader.application.contracts import Actor, AssayType, PlateId, Role
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services.authorization import require_role
+from plate_reader.application.services.growth_cultivation_replicates import (
+    plan_condition_replicates,
+)
 from plate_reader.application.services.growth_workflow import GrowthWorkflowRepository
 from plate_reader.domain.common import DomainIssue, DomainValidationError, IssueCode, WellPosition
 from plate_reader.domain.growth.cultivation import (
@@ -21,11 +26,22 @@ from plate_reader.domain.growth.cultivation import (
     normalize_cultivation_experiment_code,
 )
 
+_CONDITION_WELL_KEYS = (
+    "LocalReplicate",
+    "CultivationReplicate",
+    "CultivationConditionKey",
+    "CultivationReplicateScope",
+    "CultivationConditionFields",
+    "CultivationReplicateMode",
+)
+
 
 class GrowthCultivationRepository(GrowthWorkflowRepository, Protocol):
     """Growth repository with a metadata-only projection of reserved run codes."""
 
     def growth_cultivation_codes(self) -> tuple[dict[str, object], ...]: ...
+
+    def growth_cultivation_wells(self) -> tuple[dict[str, object], ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,18 +50,116 @@ class CultivationAssignment:
     cultivation_run: str
     pattern: str | None = None
     experiment_code: str | None = None
+    cultivation_replicate: int | None = None
+    condition_key: str | None = None
+    replicate_scope: str = ""
+    condition_fields: tuple[str, ...] = ()
+    matching_wells: int = 0
+    matching_plates: int = 0
 
 
-def suggested_cultivation_experiment_code(repository: GrowthCultivationRepository) -> str:
-    """Suggest the next number from saved growth metadata without reserving it."""
+def prepare_condition_replicate_assignments(
+    repository: GrowthCultivationRepository,
+    snapshot: PlateSnapshot,
+    registry: Mapping[str, object],
+    assignments: Sequence[CultivationAssignment],
+) -> tuple[CultivationAssignment, ...]:
+    """Attach planned cross-plate replicate identities to selected wells for preview."""
 
-    numbers = [
-        number
-        for row in repository.growth_cultivation_codes()
-        if (number := _numeric_experiment_code(_code_from_row(row))) is not None
-    ]
-    largest = max(numbers, key=lambda number: (len(number), number), default="0")
-    return _increment_experiment_code(largest).zfill(3)
+    if not assignments:
+        return ()
+    registry_json = json_object(registry)
+    plans = plan_condition_replicates(
+        repository.growth_cultivation_wells(),
+        target_plate_id=str(snapshot.plate_id),
+        registry=registry_json,
+    )
+    prepared: list[CultivationAssignment] = []
+    for assignment in assignments:
+        position = _canonical_position(assignment.position)
+        planned = plans.get(position)
+        if planned is None:
+            raise _domain_error(
+                "Condition replicate assignment references a blank or unknown well.",
+                position=position,
+            )
+        prepared.append(
+            replace(
+                assignment,
+                position=position,
+                cultivation_replicate=planned.replicate,
+                condition_key=planned.condition_key,
+                replicate_scope=planned.scope,
+                condition_fields=planned.extra_fields,
+                matching_wells=planned.matching_wells,
+                matching_plates=planned.matching_plates,
+            )
+        )
+    return tuple(prepared)
+
+
+def suggested_cultivation_experiment_code(
+    repository: GrowthCultivationRepository, plate_id: PlateId
+) -> str:
+    """Suggest a chronological number for an unsaved plate without reserving it."""
+
+    suggestions = plan_cultivation_experiment_codes(repository.growth_cultivation_codes())
+    try:
+        return suggestions[str(plate_id)]
+    except KeyError as error:
+        raise _domain_error(
+            "Growth plate has no cultivation code suggestion.", plate_id=str(plate_id)
+        ) from error
+
+
+def plan_cultivation_experiment_codes(
+    rows: Sequence[Mapping[str, object]],
+) -> Mapping[str, str]:
+    """Plan all chronological numbers in one pass, preserving saved reservations."""
+
+    plates: dict[str, Mapping[str, object]] = {}
+    shared_values: dict[str, str] = {}
+    shared_codes: dict[str, str] = {}
+    well_codes: dict[str, set[str]] = {}
+    reserved: set[str] = set()
+    for row in rows:
+        row_plate_id = str(row.get("plate_id", ""))
+        record_type = row.get("record_type")
+        if record_type == "plate":
+            plates[row_plate_id] = row
+        raw_code = _code_from_row(row)
+        if record_type == "plate" and isinstance(raw_code, str) and raw_code:
+            shared_values[row_plate_id] = raw_code
+        code = _numeric_experiment_code(raw_code)
+        if code is None:
+            continue
+        reserved.add(code)
+        if record_type == "plate":
+            shared_codes[row_plate_id] = code
+        elif record_type == "well":
+            well_codes.setdefault(row_plate_id, set()).add(code)
+
+    suggestions = dict(shared_values)
+    suggestions.update({key: value.zfill(3) for key, value in shared_codes.items()})
+    for key, codes in well_codes.items():
+        if key not in suggestions and len(codes) == 1:
+            suggestions[key] = next(iter(codes)).zfill(3)
+
+    unnumbered = sorted(
+        (
+            row
+            for row_plate_id, row in plates.items()
+            if row_plate_id not in shared_values and len(well_codes.get(row_plate_id, set())) != 1
+        ),
+        key=_plate_code_order,
+    )
+    number = "1"
+    for plate_row in unnumbered:
+        while number in reserved:
+            number = _increment_experiment_code(number)
+        suggestions[str(plate_row["plate_id"])] = number.zfill(3)
+        number = _increment_experiment_code(number)
+    return suggestions
 
 
 def json_object(value: object) -> dict[str, object]:
@@ -98,11 +212,16 @@ def preview_cultivations(
         if not isinstance(strain, str) or not strain:
             raise _domain_error("Assigned well is missing a saved strain.", position=position)
         replicate = well.get("replicate")
-        saved_replicate = _saved_replicate(replicate, position)
+        condition_replicate = _condition_replicate(assignment, position)
+        actual_replicate = (
+            condition_replicate
+            if condition_replicate is not None
+            else _saved_replicate(replicate, position)
+        )
         if assignment.pattern is None:
             system_code = _registry_component(registry_json, "CultivationSystemCode")
             cultivation = generate_cultivation_id(
-                team_code, strain, system_code, assignment.cultivation_run, saved_replicate
+                team_code, strain, system_code, assignment.cultivation_run, actual_replicate
             )
             run = f"{int(assignment.cultivation_run):03d}"
         else:
@@ -115,7 +234,7 @@ def preview_cultivations(
                 strain=strain,
                 system_code=system_code,
                 cultivation_run=assignment.cultivation_run,
-                replicate=saved_replicate,
+                replicate=actual_replicate,
                 experiment_code=experiment_code,
                 position=position,
             )
@@ -128,8 +247,26 @@ def preview_cultivations(
             "Strain": strain,
             "CultivationSystemCode": system_code,
             "CultivationRun": run,
-            "Replicate": replicate,
+            "Replicate": actual_replicate,
         }
+        if condition_replicate is not None:
+            record.update(
+                {
+                    "LocalReplicate": replicate,
+                    "CultivationReplicate": condition_replicate,
+                    "CultivationConditionKey": assignment.condition_key,
+                    "CultivationReplicateScope": assignment.replicate_scope,
+                    "CultivationConditionFields": list(assignment.condition_fields),
+                    "CultivationReplicateMode": "condition",
+                    "MatchingWells": assignment.matching_wells,
+                    "MatchingPlates": assignment.matching_plates,
+                }
+            )
+        else:
+            for key in _CONDITION_WELL_KEYS:
+                record.pop(key, None)
+            record.pop("MatchingWells", None)
+            record.pop("MatchingPlates", None)
         if assignment.pattern is None:
             record.pop("CultivationIDPattern", None)
             record.pop("CultivationExperimentCode", None)
@@ -154,10 +291,29 @@ class SaveGrowthCultivationsService:
         assignments: Sequence[CultivationAssignment],
     ) -> PlateSnapshot:
         actor_id = require_role(self.repository, actor, {Role.EDITOR, Role.ADMIN})
+        with self.repository.transaction():
+            self._save_in_transaction(
+                actor_id,
+                plate_id,
+                expected_updated_at,
+                registry,
+                assignments,
+            )
+        return _growth_snapshot(self.repository, plate_id)
+
+    def _save_in_transaction(
+        self,
+        actor_id: str,
+        plate_id: PlateId,
+        expected_updated_at: str,
+        registry: Mapping[str, object],
+        assignments: Sequence[CultivationAssignment],
+    ) -> None:
         snapshot = _growth_snapshot(self.repository, plate_id)
         registry_json = json_object(registry)
         _validate_registry(registry_json)
         _normalize_registry_experiment_code(registry_json)
+        _validate_condition_assignments(self.repository, snapshot, registry_json, assignments)
         previews = preview_cultivations(snapshot, registry_json, assignments)
         assigned_positions = {str(record["Well"]) for record in previews}
         final_ids: list[dict[str, object]] = list(previews)
@@ -191,6 +347,12 @@ class SaveGrowthCultivationsService:
                 else:
                     custom.pop("CultivationIDPattern", None)
                     custom.pop("CultivationExperimentCode", None)
+                if record.get("CultivationReplicateMode") == "condition":
+                    for key in _CONDITION_WELL_KEYS:
+                        custom[key] = record[key]
+                else:
+                    for key in _CONDITION_WELL_KEYS:
+                        custom.pop(key, None)
                 changes.append({"position": position, "custom_json": custom})
                 continue
             existing_id = _saved_cultivation_id(custom.get("Cultivation"), position)
@@ -202,34 +364,32 @@ class SaveGrowthCultivationsService:
         plate_custom = json_object(snapshot.metadata.get("plate_custom_json", {}))
         previous_registry = json_object(plate_custom.get("cultivation_registry", {}))
         plate_custom["cultivation_registry"] = registry_json
-        with self.repository.transaction():
-            _validate_experiment_code_reservations(
-                self.repository,
-                plate_id,
-                registry_json,
-                previews,
-            )
-            self.repository.update_plate_metadata(
-                plate_id,
-                expected_updated_at,
-                {"custom_json": plate_custom},
-            )
-            if changes:
-                self.repository.update_well_layout(plate_id, changes)
-            self.repository.append_provenance(
-                {
-                    "actor_id": actor_id,
-                    "event_type": "cultivation_metadata_updated",
-                    "entity_type": "plate",
-                    "entity_id": plate_id,
-                    "details_json": {
-                        "positions": [str(record["Well"]) for record in previews],
-                        "registry": {"before": previous_registry, "after": registry_json},
-                        "cultivations": audit_changes,
-                    },
-                }
-            )
-        return _growth_snapshot(self.repository, plate_id)
+        _validate_experiment_code_reservations(
+            self.repository,
+            plate_id,
+            registry_json,
+            previews,
+        )
+        self.repository.update_plate_metadata(
+            plate_id,
+            expected_updated_at,
+            {"custom_json": plate_custom},
+        )
+        if changes:
+            self.repository.update_well_layout(plate_id, changes)
+        self.repository.append_provenance(
+            {
+                "actor_id": actor_id,
+                "event_type": "cultivation_metadata_updated",
+                "entity_type": "plate",
+                "entity_id": plate_id,
+                "details_json": {
+                    "positions": [str(record["Well"]) for record in previews],
+                    "registry": {"before": previous_registry, "after": registry_json},
+                    "cultivations": audit_changes,
+                },
+            }
+        )
 
 
 def _growth_snapshot(repository: GrowthWorkflowRepository, plate_id: PlateId) -> PlateSnapshot:
@@ -243,6 +403,25 @@ def _growth_snapshot(repository: GrowthWorkflowRepository, plate_id: PlateId) ->
 
 def _code_from_row(row: Mapping[str, object]) -> object:
     return json_object(row.get("custom_json", {})).get("CultivationExperimentCode")
+
+
+def _plate_code_order(row: Mapping[str, object]) -> tuple[int, str, int, str, str]:
+    raw_date = row.get("experiment_date")
+    valid_date: date | None = None
+    if isinstance(raw_date, date) and not isinstance(raw_date, datetime):
+        valid_date = raw_date
+    elif isinstance(raw_date, str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw_date):
+        with suppress(ValueError):
+            valid_date = date.fromisoformat(raw_date)
+    created_at = row.get("created_at")
+    valid_created = isinstance(created_at, str) and bool(created_at)
+    return (
+        0 if valid_date is not None else 1,
+        valid_date.isoformat() if valid_date is not None else "",
+        0 if valid_created else 1,
+        created_at if isinstance(created_at, str) else "",
+        str(row["plate_id"]),
+    )
 
 
 def _numeric_experiment_code(value: object) -> str | None:
@@ -364,6 +543,62 @@ def _saved_replicate(value: object, position: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise _domain_error("Assigned well has no valid saved replicate.", position=position)
     return value
+
+
+def _condition_replicate(assignment: CultivationAssignment, position: str) -> int | None:
+    if not _condition_fields_supplied(assignment):
+        return None
+    value = assignment.cultivation_replicate
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise _domain_error("Invalid cultivation condition replicate.", position=position)
+    if not isinstance(assignment.condition_key, str) or not assignment.condition_key:
+        raise _domain_error("Missing cultivation condition key.", position=position)
+    if (
+        not isinstance(assignment.replicate_scope, str)
+        or not isinstance(assignment.condition_fields, tuple)
+        or any(not isinstance(field, str) or not field for field in assignment.condition_fields)
+    ):
+        raise _domain_error("Invalid cultivation condition settings.", position=position)
+    return value
+
+
+def _condition_fields_supplied(assignment: CultivationAssignment) -> bool:
+    return (
+        assignment.cultivation_replicate is not None
+        or assignment.condition_key is not None
+        or assignment.replicate_scope != ""
+        or assignment.condition_fields != ()
+        or assignment.matching_wells != 0
+        or assignment.matching_plates != 0
+    )
+
+
+def _validate_condition_assignments(
+    repository: GrowthCultivationRepository,
+    snapshot: PlateSnapshot,
+    registry: Mapping[str, object],
+    assignments: Sequence[CultivationAssignment],
+) -> None:
+    if registry.get("CultivationReplicateMode") != "condition":
+        if any(_condition_fields_supplied(assignment) for assignment in assignments):
+            raise _domain_error(
+                "Condition replicate overrides require condition mode; refresh preview."
+            )
+        return
+    if not assignments:
+        return
+    planned = prepare_condition_replicate_assignments(repository, snapshot, registry, assignments)
+    for original, current in zip(assignments, planned, strict=True):
+        if (
+            original.cultivation_replicate != current.cultivation_replicate
+            or original.condition_key != current.condition_key
+            or original.replicate_scope != current.replicate_scope
+            or original.condition_fields != current.condition_fields
+        ):
+            raise _domain_error(
+                "Condition replicate preview is stale; refresh preview before saving.",
+                position=_canonical_position(original.position),
+            )
 
 
 def _saved_cultivation_id(value: object, position: str) -> str | None:

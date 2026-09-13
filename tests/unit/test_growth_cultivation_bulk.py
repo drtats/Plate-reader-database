@@ -231,6 +231,8 @@ def test_invalid_semantic_inputs_are_structured_domain_errors(
 
 def test_maximum_target_count_and_shared_field_contract() -> None:
     assert CULTIVATION_SHARED_FIELDS == (
+        "CultivationReplicateScope",
+        "CultivationConditionFields",
         "Team_Code",
         "CultivationSystemCode",
         "CultivationExperiment",

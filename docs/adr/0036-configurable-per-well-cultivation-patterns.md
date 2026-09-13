@@ -2,6 +2,9 @@
 
 Status: accepted, 2026-09-12.
 
+The suggestion policy below is superseded by ADR 0037: unnumbered runs receive
+distinct suggestions in experiment-date order before any IDs are saved.
+
 Cultivation IDs identify wells, not experiments. A run can contain multiple strains,
 conditions and biological replicates; shared descriptions remain plate defaults.
 The existing well-level storage and separate exported metadata rows are retained.

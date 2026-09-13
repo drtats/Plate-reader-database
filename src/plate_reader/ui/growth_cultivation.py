@@ -10,6 +10,7 @@ from plate_reader.application.services.growth_cultivation import (
     CultivationAssignment,
     SaveGrowthCultivationsService,
     json_object,
+    prepare_condition_replicate_assignments,
     preview_cultivations,
     suggested_cultivation_experiment_code,
 )
@@ -21,6 +22,8 @@ from plate_reader.domain.growth.cultivation import (
 from plate_reader.ui.context import AppContext
 
 CULTIVATION_DESCRIPTION_FIELDS = (
+    ("CultivationReplicateScope", "Replicate study/group (optional)"),
+    ("CultivationConditionFields", "Additional condition fields (comma-separated)"),
     ("CultivationExperiment", "Cultivation experiment ID"),
     ("InoculationDateTime", "Inoculation date/time (YYYY-MM-DD HH:MM)"),
     ("ProgramMetric", "Program metric"),
@@ -43,13 +46,13 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
     with st.expander("Cultivation metadata and ID pattern", expanded=False):
         st.markdown(
             "**Each well has its own cultivation ID.** A run may contain multiple strains, "
-            "conditions and biological replicates. The pattern uses each well's saved "
-            "**Strain** and **Replicate** from Layout."
+            "conditions and replicates. The required **R** suffix can use a cultivation "
+            "replicate number across matching wells on multiple plates. "
+            "Your Layout replicate entries remain separate local labels."
         )
         st.caption(
-            "Experiment numbers start at 001. Dates remain in metadata. "
-            "Well position keeps IDs distinct even when replicate labels repeat across conditions. "
-            "Set biological replicate values in Layout; they are not inferred from well positions."
+            "Experiment numbers are suggested oldest first by experiment date, starting at 001. "
+            "Well position keeps IDs distinct even when local replicate labels repeat."
         )
         snapshot = view.snapshot
         shared = json_object(
@@ -73,6 +76,26 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
             index=options.index(initial),
             key=f"cultivation-pattern-choice-{plate_id}-{version}",
         )
+        st.caption(
+            "Assign final condition-based R numbers in Growth Data Export after selecting runs. "
+            "This workspace preserves local labels and any existing saved numbering settings."
+        )
+        saved_mode = shared.get("CultivationReplicateMode") or "local"
+        replicate_mode = st.selectbox(
+            "Number the R suffix using",
+            ("Matching conditions across plates", "Local replicate labels"),
+            index=0 if saved_mode == "condition" else 1,
+            key=f"cultivation-replicate-mode-{plate_id}-{version}",
+        )
+        condition_mode = replicate_mode == "Matching conditions across plates"
+        if condition_mode:
+            st.caption(
+                "Each matching well counts as one cultivation replicate. Matching uses strain, "
+                "medium, treatment doses and units, inoculum, temperature and culture volume. "
+                "Missing strain or medium prevents matching. Use a shared study/group to limit "
+                "which runs count together; blank groups match other blank groups. "
+                "Add custom condition column names below when relevant."
+            )
         select_samples = st.checkbox(
             "Select all sample wells with a strain",
             value=True,
@@ -87,7 +110,7 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
                 ),
                 "Well": str(well["position"]),
                 "Strain": str(well.get("strain") or ""),
-                "Biological replicate": well.get("replicate"),
+                "Local replicate label": well.get("replicate"),
                 "Saved cultivation ID": str(custom.get("Cultivation") or ""),
             }
             if choice != _AUTOMATIC:
@@ -95,6 +118,7 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
             rows.append(row)
         with st.form(f"cultivation-form-{plate_id}-{version}-{choice}"):
             registry = dict(shared)
+            registry["CultivationReplicateMode"] = "condition" if condition_mode else "local"
             pattern = (
                 DEFAULT_CULTIVATION_PATTERN if choice == _AUTOMATIC else LEGACY_CULTIVATION_PATTERN
             )
@@ -113,18 +137,20 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
             experiment_code = str(shared.get("CultivationExperimentCode") or "")
             if choice != _LABORATORY:
                 experiment_code = experiment_code or suggested_cultivation_experiment_code(
-                    context.repository
+                    context.repository, plate_id
                 )
                 experiment_code = st.text_input(
                     "Experiment number",
                     value=experiment_code,
                     help=(
-                        "The next available number is suggested automatically (001, 002, …). "
-                        "It is saved with this run; you can edit it."
+                        "Unnumbered runs are ordered by experiment date (001, 002, …). "
+                        "Runs without a valid date come last. Saved numbers stay fixed; "
+                        "you can edit this suggestion."
                     ),
                 )
                 st.caption(
-                    "The number is reserved when you save. Previewing does not use up a number."
+                    "Suggestions include all Growth runs, even before any IDs are saved. "
+                    "Saving reserves the number."
                 )
             if choice == _LABORATORY:
                 registry.pop("CultivationExperimentCode", None)
@@ -149,7 +175,7 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
                 hide_index=True,
                 width="stretch",
                 key=f"cultivation-wells-{plate_id}-{version}-{choice}-{select_samples}",
-                disabled=["Well", "Strain", "Biological replicate", "Saved cultivation ID"],
+                disabled=["Well", "Strain", "Local replicate label", "Saved cultivation ID"],
                 column_config={
                     "Generate": st.column_config.CheckboxColumn("Apply pattern"),
                     "Cultivation run number": st.column_config.TextColumn(
@@ -172,6 +198,10 @@ def render_growth_cultivations(context: AppContext, plate_id: PlateId, view: Gro
                     for row in edited.to_dict(orient="records")
                     if row["Generate"]
                 )
+                if condition_mode and assignments:
+                    assignments = prepare_condition_replicate_assignments(
+                        context.repository, snapshot, registry, assignments
+                    )
                 generated = preview_cultivations(snapshot, registry, assignments)
                 if generated:
                     st.dataframe(pd.DataFrame(generated), hide_index=True, width="stretch")
