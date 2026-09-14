@@ -263,8 +263,11 @@ only metadata, with provenance, preserving old IDs as history. Assigned numbers 
 stable; deleted plates retain reservations. Raw observations and original Layout
 replicate labels are unchanged. There is no schema migration or rerun write.
 
-The exporter reads saved identities, validates current conditions against the stored
-rules, and joins both CSVs through the same per-well cultivation ID. Internal well
+The default saved-ID export requires committed per-well assignments; previewing alone
+cannot produce a registry download with missing assignments. An explicit combined UI
+action saves the preview before preparing CSVs. The exporter reads saved identities,
+validates current conditions against the stored rules, and joins both CSVs through
+the same per-well cultivation ID. Internal well
 identity is also present for every observation and metadata row, including controls
 without an external ID. Both original and matching concentration values are exported.
 Two-significant-figure matching and micro-unit spelling normalization apply to group
@@ -325,6 +328,13 @@ acceptable; its configured role applies to every allowed viewer.
 The UI follows the experimental workflow instead of exposing storage mechanics.
 
 ### Run Library
+
+`RunSummary.growth_readiness` adds metadata-only availability for background
+subtraction, QC flags, saved cultivation IDs and missing strains (ADR 0044). New
+background revisions store a blank/group assignment fingerprint alongside the
+existing full input hash. Library search compares metadata only; older revisions
+without this fingerprint remain explicitly unverified. Search remains one paginated
+query without raw measurements or series decoding.
 
 - searchable/filterable run list;
 - clear assay/status/date/user columns;

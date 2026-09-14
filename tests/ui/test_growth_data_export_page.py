@@ -12,6 +12,7 @@ from streamlit.testing.v1 import AppTest
 def test_default_registry_preview_is_metadata_only_and_viewer_cannot_save() -> None:
     app = _export_page_app(legacy=False, registry=True).run()
     assert not app.exception and not app.error
+    assert next(b for b in app.button if b.label == "Save IDs and prepare export").disabled
     assert next(w for w in app.selectbox if w.label == "Cultivation workflow").value == (
         "Saved experiment + condition IDs (recommended)"
     )
@@ -35,7 +36,132 @@ def test_default_registry_preview_is_metadata_only_and_viewer_cannot_save() -> N
     assert preview.plates[0].registry["CultivationExperiment"] == ("ST-EXP-MG1655-MP96A[0101-0102]")
     assert preview.plates[0].assignments[0]["PreviousCultivationIDs"] == ["OLD-CULT-1"]
     assert next(b for b in app.button if b.label == "Save cultivation IDs").disabled
+    assert next(b for b in app.button if b.label == "Save IDs and prepare export").disabled
     assert len(app.dataframe) >= 3
+
+
+def test_preview_only_prepare_rejects_unsaved_ids_without_downloads() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    assert not next(b for b in app.button if b.label == "Save IDs and prepare export").disabled
+    next(b for b in app.button if b.label == "Prepare selected runs").click().run()
+    assert not app.exception and app.error
+    assert not app.get("download_button")
+    assert "growth_tabular_export_bundle" not in app.session_state
+    assert "registry_plate_writes" not in app.session_state
+
+
+def test_search_failure_and_empty_search_show_no_prepared_download() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    app.session_state["fail_search"] = True
+    next(b for b in app.button if b.label == "Search runs").click().run()
+    assert not app.exception and app.error
+    assert "Unable to search Growth runs" in app.error[0].value
+    assert not app.get("download_button")
+    app.session_state["fail_search"] = False
+    app.session_state["empty_search"] = True
+    next(b for b in app.button if b.label == "Search runs").click().run()
+    assert not app.exception and not app.error
+    assert any("No Growth runs match" in item.value for item in app.info)
+    assert not app.get("download_button")
+    assert not app.get("data_editor")
+
+
+def test_cached_results_report_layout_column_failure() -> None:
+    app = _export_page_app(legacy=False, registry=True).run()
+    del app.session_state["growth_export_custom_columns"]
+    app.session_state["fail_layout_columns"] = True
+    app.run()
+    assert not app.exception and app.error
+    assert "Unable to load Growth layout columns" in app.error[0].value
+    assert not app.get("download_button")
+
+
+def test_editor_combined_action_saves_and_exports_once_without_refreshing_selector() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    selector_revision = app.session_state["growth_export_table_revision"]
+    selector_arrow = app.session_state["export_table_arrow"]
+    next(b for b in app.button if b.label == "Save IDs and prepare export").click().run()
+    assert not app.exception and not app.error
+    assert app.get("download_button")
+    assert app.session_state["registry_plate_writes"] == 2
+    assert app.session_state["registry_well_writes"] == 2
+    assert app.session_state["registry_provenance_writes"] == 2
+    assert app.session_state["raw_load_calls"] == 2
+    assert app.session_state["search_calls"] == 1
+    assert app.session_state["growth_export_table_revision"] == selector_revision
+    assert app.session_state["export_table_arrow"] == selector_arrow
+    app.run()
+    assert not app.exception and not app.error and app.get("download_button")
+    assert app.session_state["registry_plate_writes"] == 2
+    assert app.session_state["raw_load_calls"] == 2
+    assert next(b for b in app.button if b.label == "Save IDs and prepare export").disabled
+    next(w for w in app.text_input if w.label == "Team code (optional)").set_value("NEW").run()
+    assert not app.get("download_button")
+    assert "growth_tabular_export_bundle" not in app.session_state
+
+
+def test_failed_combined_save_never_exports_or_exposes_stale_download() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    app.session_state["fail_registry_save"] = True
+    next(b for b in app.button if b.label == "Save IDs and prepare export").click().run()
+    assert not app.exception and app.error
+    assert "Unable to save cultivation IDs" in app.error[0].value
+    assert not app.get("download_button")
+    assert "growth_tabular_export_bundle" not in app.session_state
+    assert "raw_load_calls" not in app.session_state
+    app.run()
+    assert next(b for b in app.button if b.label == "Save IDs and prepare export").disabled
+
+
+def test_registry_preview_groups_notices_and_keeps_missing_strain_visible() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    store = app.session_state["registry_store"]
+    for record in store.values():
+        for well in record["wells"]:
+            well["strain"] = "E. coli MG1655"
+    store["plate-0"]["wells"][2]["strain"] = ""
+    app.session_state["registry_store"] = store
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    assert not app.exception and not app.error
+    assert (
+        len([item for item in app.expander if item.label.startswith("Normalization details")]) == 1
+    )
+    notices = app.dataframe[-1].value
+    assert len(notices) == 1
+    assert notices.iloc[0]["Experiments"] == "Experiment 0, Experiment 1"
+    assert len(app.warning) == 1
+    assert "Experiment 0" in app.warning[0].value
+    assert "A3" in app.warning[0].value
+
+
+def test_failed_export_after_combined_save_reports_persisted_ids() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    app.session_state["fail_raw_load"] = True
+    next(b for b in app.button if b.label == "Save IDs and prepare export").click().run()
+    assert not app.exception and app.error
+    assert "Cultivation IDs were saved" in app.error[0].value
+    assert "saved IDs remain available" in app.error[0].value
+    assert app.session_state["registry_plate_writes"] == 2
+    assert not app.get("download_button")
+    assert "growth_tabular_export_bundle" not in app.session_state
+
+
+def test_resaving_unchanged_preview_does_not_write_again() -> None:
+    app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    next(b for b in app.button if b.label == "Save cultivation IDs").click().run()
+    assert app.session_state["registry_plate_writes"] == 2
+    next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
+    next(b for b in app.button if b.label == "Save cultivation IDs").click().run()
+    assert not app.exception and not app.error
+    assert any("already saved" in item.value for item in app.success)
+    assert app.session_state["registry_plate_writes"] == 2
+    assert "raw_load_calls" not in app.session_state
 
 
 def test_editor_save_is_explicit_once_and_viewer_exports_saved_new_ids() -> None:
@@ -176,6 +302,12 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
         "Treatments",
         "Concentration range",
         "Inoculum size",
+        "Background subtraction",
+        "Background calculated",
+        "Background QC flags",
+        "Cultivation IDs",
+        "Missing strain",
+        "Experiment number",
         "Oxygen",
         "Last updated",
     )
@@ -215,6 +347,28 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
     assert any(
         item.proto.id.endswith("-growth-tabular-metadata-download") for item in download_buttons
     )
+
+
+def test_legacy_prepare_failure_clears_previous_download() -> None:
+    app = _export_page_app().run()
+    _prepare_button(app).click().run()
+    assert app.get("download_button")
+    app.session_state["fail_raw_load"] = True
+    _prepare_button(app).click().run()
+    assert not app.exception and app.error
+    assert "Unable to prepare Growth CSV export" in app.error[0].value
+    assert not app.get("download_button")
+    assert "growth_tabular_export_bundle" not in app.session_state
+
+
+def test_repeated_export_warnings_are_collapsed_with_details_available() -> None:
+    app = _export_page_app().run()
+    _prepare_button(app).click().run()
+    bundle = app.session_state["growth_tabular_export_bundle"]
+    assert len(bundle.warnings) > 1
+    assert len(app.warning) == 1
+    assert any(item.label == "Export warning details" for item in app.expander)
+    assert app.get("download_button")
 
 
 def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloads() -> None:
@@ -578,6 +732,8 @@ class Repository:
         }
 
     def list_saved_options(self, option_type=None):
+        if st.session_state.get("fail_layout_columns"):
+            raise RuntimeError("simulated layout option failure")
         if option_type == "layout_column:growth":
             return ({
                 "option_type": option_type,
@@ -588,7 +744,11 @@ class Repository:
         return ()
 
     def search_runs(self, _filters):
+        if st.session_state.get("fail_search"):
+            raise RuntimeError("simulated search failure")
         st.session_state["search_calls"] = st.session_state.get("search_calls", 0) + 1
+        if st.session_state.get("empty_search"):
+            return ()
         return tuple(
             RunSummary(
                 ExperimentId(f"experiment-{index}"),
@@ -647,6 +807,8 @@ class Repository:
         return nullcontext()
 
     def update_plate_metadata(self, plate_id, expected_version, changes):
+        if st.session_state.get("fail_registry_save"):
+            raise RuntimeError("simulated registry save failure")
         record = registry_store()[str(plate_id)]
         assert record["metadata"]["updated_at"] == expected_version
         record["metadata"]["plate_custom_json"] = changes["custom_json"]
@@ -688,6 +850,8 @@ class Repository:
         )
 
     def load_plate(self, plate_id):
+        if st.session_state.get("fail_raw_load"):
+            raise RuntimeError("simulated raw load failure")
         st.session_state["raw_load_calls"] = st.session_state.get("raw_load_calls", 0) + 1
         key = str(plate_id)
         if st.session_state.get("registry_mode_data"):

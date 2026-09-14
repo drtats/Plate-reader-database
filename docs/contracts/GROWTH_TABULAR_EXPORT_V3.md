@@ -185,3 +185,22 @@ hyphens, and `d` for `Δ`/`δ` (for example `ΔacrB MG 1-2` becomes `dacrB_MG_1_
 Original strain metadata and condition fingerprints are unchanged. Preview reports
 the name-to-code mapping; save, ranges, validation and export use the same rule.
 Nonprinting characters fail with the strain label, experiment number and well.
+
+### Saved-ID export readiness and warning presentation
+
+`ExportGrowthTabularData.require_saved_cultivation_ids` (default false for legacy
+callers) is true in the default saved-ID UI. It requires the persisted registry,
+per-well internal/local assignments, and external identities for eligible cultures.
+Missing assignments reject the export before CSV artifacts are built. Missing-strain
+wells retain internal links and observations with an actionable warning. Blank
+controls are excluded from missing-ID counts. A separate explicit combined UI action
+saves a reviewed preview, then invokes the read-only export; export failure does not
+roll back already committed IDs. No rerun performs a save.
+
+`RegistryPlatePlan.notices` contains expected strain substitutions, separately from
+actionable `warnings`; the UI deduplicates them. Missing-strain warnings name wells.
+The observation CSV adds `Experiment Date` after matching concentrations and before
+custom columns. A calendar date never supplies an invented absolute start timestamp.
+Warning details use experiment names when available and describe retained values and
+remedies. Legacy local-label fallback uses the experiment name rather than generic
+plate labels. Existing saved local IDs remain authoritative.

@@ -32,6 +32,23 @@ flowchart LR
 
 ## Browse the Run Library
 
+Readiness columns show background subtraction status and calculation time, background
+QC flags, saved cultivation IDs, missing strain names and the assigned experiment
+number. This lets you choose experiments to revisit without opening their datasets.
+
+- **Current**: the background calculation matches the current blank/group layout.
+- **Needs recalculation**: blanks or background groups changed after calculation.
+- **Calculated (verify)**: older results exist, but their freshness cannot be checked
+  from metadata alone. Open the workspace to verify, or recalculate there.
+- **Not calculated / No current revision / No results**: background subtraction is
+  unavailable; open the workspace to compute it.
+
+QC flags count background result records, not wells. Cultivation counts exclude blank
+controls; missing-strain wells are included as incomplete. Saved ID counts describe
+what is stored; the export still validates its IDs against the current conditions.
+Press **Search** to refresh these statuses after making changes.
+
+
 The Run Library includes each universal Growth custom-layout column. Since a run
 can assign different values to different wells, its Library cell shows the
 distinct values as a comma-separated summary; an em dash means that run has no
@@ -135,9 +152,13 @@ Use **Growth Data Export → Saved experiment + condition IDs (recommended)** fo
 persistent cultivation registry. Select one or multiple experiments, enter the team and
 cultivation system codes (or leave them blank to use saved metadata), and press
 **Preview cultivation IDs**. Preview reads metadata only. Review the per-well IDs
-and cultivation-experiment ranges, then press **Save cultivation IDs**. Editors and
-admins can save; viewers can preview and export existing assignments. Saving is
-atomic across selected experiments and preserves raw measurements and other metadata.
+and cultivation-experiment ranges, then press **Save IDs and prepare export** to save
+and build both CSV files. **Save cultivation IDs** also remains available separately;
+**Prepare selected runs** exports existing saved assignments. Preview alone does not
+save IDs. The default workflow blocks export when assignments have not been saved,
+instead of producing empty cultivation columns. Editors and admins can save; viewers
+can export existing saved assignments. Saving is atomic across selected experiments
+and preserves raw measurements and other metadata.
 
 The required-style ID is `ST-EXP-MG1655-MP96A0101R1`:
 
@@ -174,8 +195,10 @@ The first part of the code is exported as `CultivationExperimentNumber`.
 
 In the strain part of a cultivation ID, spaces and hyphens become underscores,
 and `Δ` or `δ` becomes `d`: `ΔacrB MG 1-2` becomes `dacrB_MG_1_2`. Preview shows
-these substitutions. Original strain names remain unchanged in layout and exported
-metadata.
+these substitutions once in an informational section. Original strain names remain
+unchanged in layout and exported metadata. Missing-strain warnings identify specific
+wells; their measurements and internal IDs remain in the files. Blank controls do
+not produce missing-cultivation-ID warnings.
 
 Matching uses strain, medium, treatment doses and units (including combinations),
 inoculum, temperature, culture volume and chosen additional condition fields.
@@ -237,3 +260,11 @@ new run.
 5. Export long CSV for the record and wide CSV for downstream plotting, or use
    Growth Data Export when combining complete runs.
 6. Check Activity log after any saved metadata or layout correction.
+
+The measurement CSV retains **Experiment Date** even when a source start clock time
+is unavailable. **Date Time** then stays blank; elapsed **Time Min** and culture-age
+values remain available. An experiment date or inoculation time is not assumed to be
+the reader start time. If corrected OD is missing because there is no current
+background revision, compute the background in the run workspace and prepare the
+export again. Raw OD is retained. Descriptive fields such as objective and protocol
+remain blank until supplied through the cultivation metadata editor.

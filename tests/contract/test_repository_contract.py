@@ -10,9 +10,22 @@ from pathlib import Path
 import pytest
 import turso
 
-from plate_reader.application.contracts import ExperimentId, PlateId
+from plate_reader.application.contracts import Actor, ExperimentId, PlateId, Role, UserId
 from plate_reader.application.ports import PlateReaderRepository
-from plate_reader.application.ports.repositories import ConcentrationRange, InoculumRange
+from plate_reader.application.ports.repositories import (
+    ConcentrationRange,
+    GrowthRunReadiness,
+    InoculumRange,
+)
+from plate_reader.application.services.growth_cultivation_registry import (
+    PreviewGrowthCultivationRegistryService,
+    SaveGrowthCultivationRegistryService,
+)
+from plate_reader.domain.growth.cultivation_registry import RegistrySettings
+from plate_reader.domain.growth.readiness import (
+    BACKGROUND_ASSIGNMENT_HASH_KEY,
+    background_assignment_hash,
+)
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
@@ -90,6 +103,10 @@ def test_complete_growth_repository_flow(harness: RepositoryHarness) -> None:
     assert runs[0].media == ("Synthetic medium",)
     assert runs[0].concentration_ranges == (ConcentrationRange(0.0, 0.0, "ug/mL"),)
     assert runs[0].inoculum_ranges == (InoculumRange(5.0, 5.0, "x10^6 CFU/mL"),)
+    assert runs[0].growth_readiness is not None
+    assert runs[0].growth_readiness.background_status == "Not calculated"
+    assert runs[0].growth_readiness.cultivation_status == "Not saved"
+    assert runs[0].growth_readiness.cultivation_total == 2
     filtered = repository.search_runs(
         {"strain": "Synthetic strain", "medium": "Synthetic medium", "treatment": "none"}
     )
@@ -207,6 +224,7 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
 
     assert len(recorded.statements) == 1
     assert "growth_measurements" not in recorded.statements[0].lower()
+    assert "growth_series_chunks" not in recorded.statements[0].lower()
     by_plate = {str(summary.plate_id): summary for summary in summaries}
     assert by_plate["plate-growth"].strains == ("Alpha", "Beta", "No unit")
     assert by_plate["plate-growth"].treatments == ("Drug", "none")
@@ -231,6 +249,8 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
     assert by_plate["plate-without-conditions"].concentration_ranges == ()
     assert by_plate["plate-without-conditions"].inoculum_ranges == ()
     assert by_plate["plate-without-conditions"].custom_fields == ()
+    assert by_plate["plate-without-conditions"].growth_readiness is not None
+    assert by_plate["plate-without-conditions"].growth_readiness.cultivation_status == "No cultures"
     assert [summary.plate_id for summary in repository.search_runs({"limit": 1, "offset": 0})] == [
         "plate-without-conditions"
     ]
@@ -244,6 +264,184 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
         summary.plate_id for summary in repository.search_runs({"text": "synthetic medium"})
     ] == ["plate-growth"]
     assert repository.search_runs({"text": "hidden"}) == ()
+
+
+def test_growth_library_background_revision_readiness(harness: RepositoryHarness) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+
+    def readiness() -> GrowthRunReadiness:
+        recorded = RecordingConnection(harness.connection)
+        result = SqlPlateReaderRepository(recorded).search_runs({"limit": 1})[0]
+        assert len(recorded.statements) == 1
+        assert "growth_measurements" not in recorded.statements[0].lower()
+        assert "growth_series_chunks" not in recorded.statements[0].lower()
+        assert result.growth_readiness is not None
+        return result.growth_readiness
+
+    assert readiness().background_status == "Not calculated"
+    with repository.transaction():
+        old = repository.add_analysis_revision(revision_values("old"))
+        repository.insert_growth_backgrounds(old, [_background_result(0, "good")])
+        harness.connection.execute(
+            "UPDATE analysis_revisions SET is_current = 0 WHERE revision_id = ?", (old,)
+        )
+    assert readiness().background_status == "No current revision"
+
+    with repository.transaction():
+        current = repository.add_analysis_revision(revision_values("empty"))
+    empty = readiness()
+    assert empty.background_status == "No results"
+    assert empty.background_qc_flags == 0
+    assert empty.background_calculated_at is not None
+
+    with repository.transaction():
+        repository.insert_growth_backgrounds(current, [_background_result(0, "high_cv")])
+    legacy = readiness()
+    assert legacy.background_status == "Calculated (verify)"
+    assert legacy.background_qc_flags == 1
+
+    fingerprint = background_assignment_hash(
+        (
+            {
+                "position": "A1",
+                "well_id": "well-a1",
+                "is_blank": False,
+                "background_group": "plate",
+            },
+            {
+                "position": "A2",
+                "well_id": "well-a2",
+                "is_blank": False,
+                "background_group": "plate",
+            },
+        )
+    )
+    with repository.transaction():
+        revision = repository.add_analysis_revision(
+            {
+                **revision_values("fingerprinted"),
+                "parameters_json": {BACKGROUND_ASSIGNMENT_HASH_KEY: fingerprint},
+                "created_at": "2026-01-04T12:00:00+00:00",
+            }
+        )
+        repository.insert_growth_backgrounds(
+            revision, [_background_result(0, "good"), _background_result(1, "caution")]
+        )
+    ready = readiness()
+    assert ready.background_status == "Current"
+    assert ready.background_calculated_at == "2026-01-04T12:00:00+00:00"
+    assert ready.background_qc_flags == 1
+
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"), [{"position": "A1", "strain": "other"}]
+        )
+        harness.connection.execute(
+            "UPDATE plates SET updated_at = ? WHERE plate_id = ?",
+            ("2026-02-01T00:00:00+00:00", "plate-growth"),
+        )
+    assert readiness().background_status == "Current"
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"), [{"position": "A2", "background_group": "new group"}]
+        )
+    assert readiness().background_status == "Needs recalculation"
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": "A1", "custom_json": {"Cultivation": "id-a1"}},
+                {"position": "A2", "custom_json": {"Cultivation": "id-a2"}},
+            ],
+        )
+    saved = readiness()
+    assert saved.background_status == "Needs recalculation"
+    assert saved.cultivation_status == "Saved"
+    assert saved.cultivation_saved == saved.cultivation_total == 2
+
+
+def test_growth_library_cultivation_counts_and_result_join_cardinality(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.update_plate_metadata(
+            PlateId("plate-growth"),
+            "2026-01-01T00:00:00+00:00",
+            {
+                "custom_json": {
+                    "cultivation_registry": {
+                        "CultivationPlateNumber": "007",
+                        "CultivationExperimentCode": "legacy",
+                    }
+                }
+            },
+        )
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": "A1", "custom_json": {"Cultivation": "  saved-id  "}},
+                {"position": "A2", "strain": "   ", "custom_json": {"Cultivation": "  "}},
+            ],
+        )
+        repository.insert_wells(
+            PlateId("plate-growth"),
+            [
+                {
+                    **well_values(f"well-{row}{col}", f"{row}{col}", ord(row) - ord("A"), col - 1),
+                    "is_blank": row == "H" and col == 12,
+                }
+                for row in "ABCDEFGH"
+                for col in range(1, 13)
+                if not (row == "A" and col in (1, 2))
+            ],
+        )
+        revision = repository.add_analysis_revision(revision_values("many-results"))
+        repository.insert_growth_backgrounds(
+            revision,
+            [_background_result(index, "caution" if index % 2 else "good") for index in range(5)],
+        )
+    recorded = RecordingConnection(harness.connection)
+    summary = SqlPlateReaderRepository(recorded).search_runs({"assay_type": "growth"})[0]
+    assert len(recorded.statements) == 1
+    assert "growth_measurements" not in recorded.statements[0].lower()
+    assert "growth_series_chunks" not in recorded.statements[0].lower()
+    readiness = summary.growth_readiness
+    assert readiness is not None
+    assert readiness.background_qc_flags == 2
+    assert readiness.cultivation_status == "Partial"
+    assert readiness.cultivation_saved == 1
+    assert readiness.cultivation_total == 95
+    assert readiness.missing_strain == 94
+    assert readiness.cultivation_experiment_number == "007"
+
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"), [{"position": "A2", "custom_json": {"Cultivation": "id-2"}}]
+        )
+    updated = repository.search_runs({"assay_type": "growth"})[0].growth_readiness
+    assert updated is not None
+    assert updated.cultivation_saved == 2
+    assert updated.cultivation_status == "Partial"
+
+
+def test_growth_library_reports_ids_saved_by_registry_service(harness: RepositoryHarness) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    actor = Actor(UserId("user-1"), "fixture@example.invalid", Role.ADMIN)
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        actor, (PlateId("plate-growth"),), RegistrySettings(team_code="ST", system_code="MP96A")
+    )
+    assert SaveGrowthCultivationRegistryService(repository).execute(actor, preview) == (
+        PlateId("plate-growth"),
+    )
+    readiness = repository.search_runs({"assay_type": "growth"})[0].growth_readiness
+    assert readiness is not None
+    assert readiness.cultivation_status == "Saved"
+    assert readiness.cultivation_saved == readiness.cultivation_total == 2
+    assert readiness.cultivation_experiment_number == "01"
 
 
 class RecordingConnection:
@@ -607,6 +805,7 @@ def test_mic_repository_flow(harness: RepositoryHarness) -> None:
                 }
             ],
         )
+    assert repository.search_runs({"assay_type": "mic"})[0].growth_readiness is None
     snapshot = repository.load_plate(PlateId("plate-mic"))
     assert snapshot is not None
     assert snapshot.metadata["assay_type"] == "mic"
@@ -768,6 +967,18 @@ def revision_values(revision_id: str) -> dict[str, object]:
         "parameters_json": {"cv_high": 0.1},
         "input_sha256": "raw-hash",
         "created_by": "user-1",
+    }
+
+
+def _background_result(time_index: int, qc_status: str) -> dict[str, object]:
+    return {
+        "background_group": "plate",
+        "channel": "od600",
+        "time_index": time_index,
+        "elapsed_microseconds": time_index * 600_000_000,
+        "mean_value": 0.05,
+        "blank_count": 1,
+        "qc_status": qc_status,
     }
 
 

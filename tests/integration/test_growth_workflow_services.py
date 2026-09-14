@@ -151,6 +151,8 @@ def test_layout_changes_withhold_stale_backgrounds_until_recomputed(
     fresh = LoadGrowthRunService(repository).execute(ACTOR, plate_id)
     assert fresh.background_is_stale is False
     assert fresh.backgrounds
+    readiness = repository.search_runs({})[0].growth_readiness
+    assert readiness is not None and readiness.background_status == "Current"
 
     UpdateGrowthLayoutService(repository).execute(
         UpdateWellLayout(
@@ -163,6 +165,8 @@ def test_layout_changes_withhold_stale_backgrounds_until_recomputed(
     stale = LoadGrowthRunService(repository).execute(ACTOR, plate_id)
     assert stale.background_is_stale is True
     assert stale.backgrounds == ()
+    readiness = repository.search_runs({})[0].growth_readiness
+    assert readiness is not None and readiness.background_status == "Needs recalculation"
 
     ComputeGrowthBackgroundService(repository).execute(
         ComputeGrowthBackgroundRevision(ACTOR, plate_id, GROWTH_BACKGROUND_VERSION)
@@ -170,6 +174,8 @@ def test_layout_changes_withhold_stale_backgrounds_until_recomputed(
     recomputed = LoadGrowthRunService(repository).execute(ACTOR, plate_id)
     assert recomputed.background_is_stale is False
     assert recomputed.backgrounds
+    readiness = repository.search_runs({})[0].growth_readiness
+    assert readiness is not None and readiness.background_status == "Current"
 
 
 def test_metadata_layout_background_search_load_and_export(
@@ -371,3 +377,106 @@ def identifier_sequence() -> object:
 def raw_hash(repository: SqlPlateReaderRepository, plate_id: PlateId) -> str:
     rows = [row for chunk in repository.stream_growth_measurements(plate_id) for row in chunk]
     return hashlib.sha256(repr(rows).encode()).hexdigest()
+
+
+def test_background_compute_records_trusted_metadata_fingerprint(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    from plate_reader.domain.growth.readiness import (
+        BACKGROUND_ASSIGNMENT_HASH_KEY,
+        background_assignment_hash,
+    )
+
+    plate_id = import_run(repository)
+    before = repository.load_plate(plate_id)
+    assert before is not None
+    ComputeGrowthBackgroundService(repository).execute(
+        ComputeGrowthBackgroundRevision(
+            ACTOR,
+            plate_id,
+            GROWTH_BACKGROUND_VERSION,
+            parameters={BACKGROUND_ASSIGNMENT_HASH_KEY: "user override", "note": "retain"},
+        )
+    )
+    after = repository.load_plate(plate_id)
+    assert after is not None
+    params = json.loads(str(after.revisions[-1]["parameters_json"]))
+    assert params[BACKGROUND_ASSIGNMENT_HASH_KEY] == background_assignment_hash(before.wells)
+    assert params["note"] == "retain"
+    assert after.raw_observations == before.raw_observations
+    assert after.wells == before.wells
+
+
+def test_library_readiness_reflects_real_saved_cultivation_assignments(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    from plate_reader.application.services.growth_cultivation_registry import (
+        PreviewGrowthCultivationRegistryService,
+        SaveGrowthCultivationRegistryService,
+    )
+    from plate_reader.domain.growth.cultivation_registry import RegistrySettings
+
+    plate_id = import_run(repository)
+    before = repository.search_runs({})[0].growth_readiness
+    assert before is not None and before.cultivation_status == "Not saved"
+    with repository.transaction():
+        repository.update_well_layout(
+            plate_id,
+            [
+                {"position": "A1", "strain": "MG1655", "is_blank": 0},
+                {"position": "A2", "strain": "MG1655", "is_blank": 0},
+            ],
+        )
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        ACTOR, (plate_id,), RegistrySettings("ST", "MP96A")
+    )
+    expected = sum(
+        bool(assignment.get("Cultivation")) for assignment in preview.plates[0].assignments
+    )
+    SaveGrowthCultivationRegistryService(repository).execute(ACTOR, preview)
+    after = repository.search_runs({})[0].growth_readiness
+    assert after is not None
+    assert after.cultivation_saved == expected >= 2
+    assert after.cultivation_experiment_number == "01"
+    assert after.cultivation_saved + after.missing_strain == after.cultivation_total
+    assert after.background_status == "Not calculated"
+
+
+def test_library_and_workspace_agree_after_portable_collision_remaps_wells(
+    repository: SqlPlateReaderRepository,
+    tmp_path: Path,
+) -> None:
+    from plate_reader.infrastructure.database import export_portable_runs, import_portable_file
+
+    plate_id = import_run(repository)
+    with repository.transaction():
+        repository.update_well_layout(
+            plate_id, [{"position": "A1", "is_blank": 1, "background_group": "plate"}]
+        )
+    revision = ComputeGrowthBackgroundService(repository).execute(
+        ComputeGrowthBackgroundRevision(ACTOR, plate_id, GROWTH_BACKGROUND_VERSION)
+    )
+    portable = tmp_path / "readiness-collision.sqlite"
+    export_portable_runs(
+        repository.connection,
+        portable,
+        MIGRATIONS,
+        [str(plate_id)],
+        revision_ids=[str(revision.revision_id)],
+        exporter_version="readiness-test",
+    )
+    imported = import_portable_file(
+        repository.connection,
+        portable,
+        actor_id=str(ACTOR.user_id),
+        collision_policy="remap",
+    )
+    remapped = PlateId(imported.plate_id_map[str(plate_id)])
+    assert remapped != plate_id
+    assert LoadGrowthRunService(repository).execute(ACTOR, remapped).background_is_stale
+    statuses = {run.plate_id: run.growth_readiness for run in repository.search_runs({})}
+    original_status = statuses[plate_id]
+    remapped_status = statuses[remapped]
+    assert original_status is not None and original_status.background_status == "Current"
+    assert remapped_status is not None
+    assert remapped_status.background_status == "Needs recalculation"

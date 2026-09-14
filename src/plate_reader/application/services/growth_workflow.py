@@ -42,6 +42,10 @@ from plate_reader.domain.growth import (
     parse_growth_csv,
     parse_label_layout,
 )
+from plate_reader.domain.growth.readiness import (
+    BACKGROUND_ASSIGNMENT_HASH_KEY,
+    background_assignment_hash,
+)
 
 
 class GrowthWorkflowRepository(Protocol):
@@ -318,7 +322,10 @@ class ComputeGrowthBackgroundService:
                     "assay_type": AssayType.GROWTH,
                     "algorithm_name": "growth_background",
                     "algorithm_version": command.algorithm_version,
-                    "parameters_json": command.parameters,
+                    "parameters_json": {
+                        **command.parameters,
+                        BACKGROUND_ASSIGNMENT_HASH_KEY: background_assignment_hash(snapshot.wells),
+                    },
                     "input_sha256": input_sha256,
                     "created_by": actor_id,
                 }

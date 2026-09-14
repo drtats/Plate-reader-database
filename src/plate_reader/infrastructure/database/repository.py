@@ -15,9 +15,14 @@ from datetime import UTC, datetime
 from plate_reader.application.contracts import AssayType, ExperimentId, PlateId, RevisionId
 from plate_reader.application.ports.repositories import (
     ConcentrationRange,
+    GrowthRunReadiness,
     InoculumRange,
     PlateSnapshot,
     RunSummary,
+)
+from plate_reader.domain.growth.readiness import (
+    BACKGROUND_ASSIGNMENT_HASH_KEY,
+    background_assignment_hash,
 )
 from plate_reader.infrastructure.database.dbapi import Connection, Cursor
 from plate_reader.infrastructure.database.growth_series import (
@@ -52,6 +57,16 @@ class _RunSummaryMetadata:
     experiment_date: str
     project: str | None
     updated_at: str
+    plate_custom_json: object = None
+    background_revision_count: int = 0
+    background_created_at: str | None = None
+    background_parameters_json: object = None
+    background_result_count: int = 0
+    background_qc_flags: int = 0
+    background_wells: list[dict[str, object]] = dataclass_field(default_factory=list)
+    cultivation_saved: int = 0
+    cultivation_total: int = 0
+    missing_strain: int = 0
     strains: dict[str, str] = dataclass_field(default_factory=dict)
     treatments: dict[str, str] = dataclass_field(default_factory=dict)
     media: dict[str, str] = dataclass_field(default_factory=dict)
@@ -74,7 +89,26 @@ class _RunSummaryMetadata:
         inoculum_unit: object,
         is_blank: object,
         custom_json: object,
+        position: object,
+        background_group: object,
+        well_id: object,
     ) -> None:
+        if position is not None and self.assay_type == AssayType.GROWTH:
+            self.background_wells.append(
+                {
+                    "position": str(position),
+                    "well_id": str(well_id),
+                    "is_blank": bool(is_blank),
+                    "background_group": background_group,
+                }
+            )
+            if not bool(is_blank):
+                self.cultivation_total += 1
+                if _normalized_summary_text(strain) is None:
+                    self.missing_strain += 1
+                cultivation_id = dict(_json_object_items(custom_json)).get("Cultivation")
+                if _normalized_summary_text(cultivation_id):
+                    self.cultivation_saved += 1
         if not bool(is_blank):
             _add_normalized_text(self.strains, strain)
             _add_normalized_text(self.treatments, treatment)
@@ -85,6 +119,7 @@ class _RunSummaryMetadata:
             _add_summary_custom_value(self.custom_fields, name, value)
 
     def as_summary(self) -> RunSummary:
+        readiness = self._growth_readiness() if self.assay_type == AssayType.GROWTH else None
         return RunSummary(
             experiment_id=self.experiment_id,
             plate_id=self.plate_id,
@@ -116,6 +151,53 @@ class _RunSummaryMetadata:
                 )
                 for _name_key, (name, values) in sorted(self.custom_fields.items())
             ),
+            growth_readiness=readiness,
+        )
+
+    def _growth_readiness(self) -> GrowthRunReadiness:
+        """Describe persisted results and saved IDs without loading observations."""
+        if self.background_created_at is None:
+            background_status = (
+                "No current revision" if self.background_revision_count else "Not calculated"
+            )
+        elif self.background_result_count == 0:
+            background_status = "No results"
+        else:
+            parameters = dict(_json_object_items(self.background_parameters_json))
+            stored_hash = parameters.get(BACKGROUND_ASSIGNMENT_HASH_KEY)
+            if not isinstance(stored_hash, str) or not stored_hash:
+                background_status = "Calculated (verify)"
+            elif stored_hash != background_assignment_hash(self.background_wells):
+                background_status = "Needs recalculation"
+            else:
+                background_status = "Current"
+
+        if not self.cultivation_total:
+            cultivation_status = "No cultures"
+        elif self.cultivation_saved == self.cultivation_total:
+            cultivation_status = "Saved"
+        elif self.cultivation_saved:
+            cultivation_status = "Partial"
+        else:
+            cultivation_status = "Not saved"
+        plate_custom = dict(_json_object_items(self.plate_custom_json))
+        registry = plate_custom.get("cultivation_registry")
+        number: object = None
+        if isinstance(registry, dict):
+            number = registry.get("CultivationPlateNumber") or registry.get(
+                "CultivationExperimentCode"
+            )
+        return GrowthRunReadiness(
+            background_status=background_status,
+            background_calculated_at=self.background_created_at,
+            background_qc_flags=(
+                self.background_qc_flags if self.background_created_at is not None else None
+            ),
+            cultivation_status=cultivation_status,
+            cultivation_saved=self.cultivation_saved,
+            cultivation_total=self.cultivation_total,
+            missing_strain=self.missing_strain,
+            cultivation_experiment_number=_normalized_summary_text(number),
         )
 
 
@@ -917,18 +999,40 @@ class SqlPlateReaderRepository:
         cursor = self.connection.execute(
             "WITH candidate_runs AS ("
             "SELECT e.experiment_id, p.plate_id, e.name AS experiment_name, "
-            "p.plate_name, p.assay_type, e.experiment_date, e.project, p.updated_at "
+            "p.plate_name, p.assay_type, e.experiment_date, e.project, p.updated_at, "
+            "p.custom_json AS plate_custom_json "
             "FROM plates p JOIN experiments e ON e.experiment_id = p.experiment_id "
             f"WHERE {' AND '.join(where) if where else '1 = 1'} "
             "ORDER BY p.updated_at DESC, p.plate_id ASC LIMIT ? OFFSET ?"
+            "), background_history AS ("
+            "SELECT ar.plate_id, COUNT(*) AS revision_count FROM analysis_revisions ar "
+            "JOIN candidate_runs cr ON cr.plate_id = ar.plate_id "
+            "WHERE ar.assay_type = 'growth' AND ar.algorithm_name = 'growth_background' "
+            "GROUP BY ar.plate_id"
+            "), background_results AS ("
+            "SELECT gb.revision_id, COUNT(*) AS result_count, "
+            "SUM(CASE WHEN gb.qc_status <> 'good' THEN 1 ELSE 0 END) AS qc_flags "
+            "FROM growth_backgrounds gb JOIN analysis_revisions ar "
+            "ON ar.revision_id = gb.revision_id "
+            "JOIN candidate_runs cr ON cr.plate_id = ar.plate_id "
+            "WHERE ar.assay_type = 'growth' AND ar.algorithm_name = 'growth_background' "
+            "AND ar.is_current = 1 GROUP BY gb.revision_id"
             ") "
             "SELECT cr.experiment_id, cr.plate_id, cr.experiment_name, cr.plate_name, "
             "cr.assay_type, cr.experiment_date, cr.project, cr.updated_at, "
             "wc.strain, wc.treatment, wc.concentration, wc.concentration_unit, "
-            "wc.medium, wc.inoculum_size, wc.inoculum_unit, w.is_blank, w.custom_json "
+            "wc.medium, wc.inoculum_size, wc.inoculum_unit, w.is_blank, w.custom_json, "
+            "w.position, w.background_group, w.well_id, cr.plate_custom_json, "
+            "COALESCE(bh.revision_count, 0), ar.created_at, ar.parameters_json, "
+            "COALESCE(br.result_count, 0), COALESCE(br.qc_flags, 0) "
             "FROM candidate_runs cr "
             "LEFT JOIN wells w ON w.plate_id = cr.plate_id "
             "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
+            "LEFT JOIN background_history bh ON bh.plate_id = cr.plate_id "
+            "LEFT JOIN analysis_revisions ar ON ar.plate_id = cr.plate_id "
+            "AND ar.assay_type = 'growth' AND ar.algorithm_name = 'growth_background' "
+            "AND ar.is_current = 1 "
+            "LEFT JOIN background_results br ON br.revision_id = ar.revision_id "
             "ORDER BY cr.updated_at DESC, cr.plate_id ASC, w.row_index ASC, w.column_index ASC",
             parameters,
         )
@@ -946,6 +1050,12 @@ class SqlPlateReaderRepository:
                     experiment_date=str(row[5]),
                     project=None if row[6] is None else str(row[6]),
                     updated_at=str(row[7]),
+                    plate_custom_json=row[20],
+                    background_revision_count=int(row[21]),
+                    background_created_at=None if row[22] is None else str(row[22]),
+                    background_parameters_json=row[23],
+                    background_result_count=int(row[24]),
+                    background_qc_flags=int(row[25]),
                 )
                 summaries[plate_id] = metadata
             metadata.add_condition(
@@ -958,6 +1068,9 @@ class SqlPlateReaderRepository:
                 row[14],
                 row[15],
                 row[16],
+                row[17],
+                row[18],
+                row[19],
             )
         return tuple(metadata.as_summary() for metadata in summaries.values())
 

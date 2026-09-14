@@ -8,6 +8,7 @@ import pandas as pd
 
 from plate_reader.application.ports.repositories import (
     ConcentrationRange,
+    GrowthRunReadiness,
     InoculumRange,
     RunSummary,
 )
@@ -42,18 +43,49 @@ def run_summary_rows(
             "Concentration range": _display_numeric_ranges(run.concentration_ranges),
             "Inoculum size": _display_numeric_ranges(run.inoculum_ranges),
         }
+        row.update(_readiness_cells(getattr(run, "growth_readiness", None)))
         custom_by_name = {
             name.casefold(): values for name, values in getattr(run, "custom_fields", ())
         }
+        reserved_names = {name.casefold() for name in row}
+        reserved_names.add("last updated")
         row.update(
             {
                 name: _display_values(custom_by_name.get(name.casefold(), ()))
                 for name in custom_columns
+                if name.casefold() not in reserved_names
             }
         )
         row["Last updated"] = str(run.updated_at)
         rows.append(row)
     return rows
+
+
+def _readiness_cells(readiness: GrowthRunReadiness | None) -> dict[str, str]:
+    """Display unavailable projections without implying an unchecked run is ready."""
+
+    if readiness is None:
+        return {
+            "Background subtraction": "—",
+            "Background calculated": "—",
+            "Background QC flags": "—",
+            "Cultivation IDs": "—",
+            "Missing strain": "—",
+            "Experiment number": "—",
+        }
+    return {
+        "Background subtraction": _display_value(readiness.background_status),
+        "Background calculated": _display_value(readiness.background_calculated_at),
+        "Background QC flags": (
+            str(readiness.background_qc_flags) if readiness.background_qc_flags is not None else "—"
+        ),
+        "Cultivation IDs": (
+            f"{_display_value(readiness.cultivation_status)} "
+            f"{readiness.cultivation_saved}/{readiness.cultivation_total}"
+        ),
+        "Missing strain": str(readiness.missing_strain),
+        "Experiment number": _display_value(readiness.cultivation_experiment_number),
+    }
 
 
 def _display_value(value: object) -> str:

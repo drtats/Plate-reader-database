@@ -171,6 +171,7 @@ GROWTH_MEASUREMENT_HEADERS = (
     *_LEGACY_GROWTH_MEASUREMENT_HEADERS,
     *GROWTH_ADDITIONAL_LAYOUT_HEADERS,
     *GROWTH_MATCHING_CONCENTRATION_HEADERS,
+    "Experiment Date",
 )
 
 GROWTH_METADATA_HEADERS = (
@@ -242,6 +243,7 @@ class ExportGrowthTabularData:
     condition_fields: tuple[str, ...] = ()
     cultivation_settings: ExportCultivationSettings | None = None
     concentration_significant_figures: int | None = None
+    require_saved_cultivation_ids: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +318,7 @@ class ExportGrowthTabularDataService:
             cultivation_settings=command.cultivation_settings,
             experiment_codes=experiment_codes,
             concentration_significant_figures=command.concentration_significant_figures,
+            require_saved_cultivation_ids=command.require_saved_cultivation_ids,
         )
 
 
@@ -328,6 +331,7 @@ def export_growth_tabular_data(
     cultivation_settings: ExportCultivationSettings | None = None,
     experiment_codes: Mapping[str, str] | None = None,
     concentration_significant_figures: int | None = None,
+    require_saved_cultivation_ids: bool = False,
 ) -> GrowthTabularExportBundle:
     """Build deterministic multi-run measurement and metadata CSV files."""
 
@@ -347,6 +351,8 @@ def export_growth_tabular_data(
         if "R{replicate}" not in cultivation_settings.pattern:
             raise _cultivation_error("Cultivation ID pattern must include the R{replicate} suffix")
     contexts = tuple(_run_context(view) for view in views)
+    if require_saved_cultivation_ids:
+        _require_saved_registry_ids(contexts)
     if cultivation_settings is not None and experiment_codes is None:
         experiment_codes = _selected_experiment_codes(contexts)
     selection_warnings: tuple[str, ...] = ()
@@ -378,7 +384,7 @@ def export_growth_tabular_data(
     seen_cultivations: set[str] = set()
     for context in contexts:
         warnings.extend(_run_warnings(context))
-        missing_ids = 0
+        missing_id_positions: list[str] = []
         for well in context.view.snapshot.wells:
             registry = _cultivation_metadata(context, well)
             cultivation = str(registry["Cultivation"])
@@ -388,8 +394,8 @@ def export_growth_tabular_data(
                         f"Duplicate cultivation ID in selected runs: {cultivation}"
                     )
                 seen_cultivations.add(cultivation)
-            else:
-                missing_ids += 1
+            elif not bool(well.get("is_blank", False)):
+                missing_id_positions.append(str(well.get("position", "")))
             metadata_writer.writerow(
                 (
                     *(registry[header] for header in GROWTH_REGISTRY_METADATA_HEADERS),
@@ -411,10 +417,12 @@ def export_growth_tabular_data(
                 )
             )
             metadata_count += 1
-        if missing_ids:
+        if missing_id_positions:
             warnings.append(
-                f"{context.run_id}: {missing_ids} wells have no cultivation ID; "
-                "check the export ID settings and saved well strain before registry submission."
+                f"{_run_label(context)}: {len(missing_id_positions)} wells have no cultivation ID "
+                f"({', '.join(missing_id_positions)}); add missing strain names in Layout and "
+                "preview/save cultivation IDs. "
+                "Their measurement rows and internal IDs are retained."
             )
         for row in _measurement_rows(context, exported_custom_columns):
             measurement_writer.writerow(row)
@@ -860,19 +868,66 @@ def _run_context(view: GrowthRunView) -> _RunContext:
     )
 
 
+def _run_label(context: _RunContext) -> str:
+    return context.experiment_name or context.run_id
+
+
+def _require_saved_registry_ids(contexts: Sequence[_RunContext]) -> None:
+    """Saved-workflow exports cannot silently consume an unsaved preview."""
+
+    pending: list[str] = []
+    for context in contexts:
+        snapshot = context.view.snapshot
+        shared = _json_object(
+            _json_object(snapshot.metadata.get("plate_custom_json")).get("cultivation_registry")
+        )
+        if shared.get("scheme") != SCHEME:
+            pending.append(_run_label(context))
+            continue
+        for well in snapshot.wells:
+            custom = _well_custom(well)
+            eligible = not bool(well.get("is_blank", False)) and bool(
+                _first_text(well.get("strain"))
+            )
+            if (
+                custom.get("InternalCultivationID") != well.get("well_id")
+                or not custom.get("Local_Cultivation_ID")
+                or (
+                    eligible
+                    and (
+                        custom.get("CultivationNumberingScheme") != SCHEME
+                        or not custom.get("Cultivation")
+                    )
+                )
+            ):
+                pending.append(_run_label(context))
+                break
+    if pending:
+        raise _cultivation_error(
+            "Cultivation IDs have not been saved for: " + "; ".join(pending) + ". "
+            "Preview cultivation IDs, then choose Save IDs and prepare export. "
+            "Preview alone does not save IDs."
+        )
+
+
 def _run_warnings(context: _RunContext) -> tuple[str, ...]:
     warnings: list[str] = []
     if context.start_datetime is None:
         warnings.append(
-            f"{context.run_id}: source start date/time is unavailable; Date Time is blank."
+            f"{_run_label(context)}: source start date/time is unavailable; Date Time is blank. "
+            "Experiment Date and elapsed measurement times are retained; a date alone cannot "
+            "supply the missing clock time."
         )
     if context.view.background_is_stale:
         warnings.append(
-            f"{context.run_id}: current background revision is stale; corrected OD is blank."
+            f"{_run_label(context)}: current background revision is stale; corrected OD is blank. "
+            "Compute a current background revision in the run workspace; raw OD is retained."
         )
     elif not context.view.backgrounds:
         warnings.append(
-            f"{context.run_id}: no current background revision is available; corrected OD is blank."
+            f"{_run_label(context)}: no current background revision is available; "
+            "corrected OD is blank. "
+            "Compute a background revision in the run workspace; raw OD is retained."
         )
     return tuple(warnings)
 
@@ -1031,6 +1086,7 @@ def _measurement_rows(
                 custom.get("t0_added_min"),
                 *_separate_conditions(well)[3:],
                 *_matching_concentration_row(well, _well_matching_precision(context, well)),
+                context.experiment_date,
                 *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
             )
         )
@@ -1085,7 +1141,7 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
             "Media": _first_text(well.get("medium")),
             "Local_Cultivation_ID": _first_text(
                 custom.get("Local_Cultivation_ID"),
-                f"{context.microplate_id} {position[0]}{int(position[1:]):02d}".strip(),
+                f"{context.experiment_name or context.run_id} {position[0]}{int(position[1:]):02d}",
             ),
             "Vessel_Alphabetical_ID": position[0],
             "Vessel_Numeric_ID": int(position[1:]),

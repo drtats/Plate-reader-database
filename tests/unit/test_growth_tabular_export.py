@@ -103,7 +103,11 @@ def test_measurement_export_contains_every_canonical_growth_layout_column() -> N
     }
 
     assert canonical_layout_columns <= set(GROWTH_MEASUREMENT_HEADERS)
-    suffix = (*GROWTH_ADDITIONAL_LAYOUT_HEADERS, *GROWTH_MATCHING_CONCENTRATION_HEADERS)
+    suffix = (
+        *GROWTH_ADDITIONAL_LAYOUT_HEADERS,
+        *GROWTH_MATCHING_CONCENTRATION_HEADERS,
+        "Experiment Date",
+    )
     assert GROWTH_MEASUREMENT_HEADERS[-len(suffix) :] == suffix
 
 
@@ -377,7 +381,7 @@ def test_cultivation_metadata_links_every_observation_and_preserves_separate_val
         assert row["Concentration 2"] == "1000"
         assert row["Concentration unit 2"] == "mg/L"
     assert float(data[0]["Culture_Age_h"]) == pytest.approx(12.2 / 60)
-    assert metadata[0]["Local_Cultivation_ID"] == "Plate 58 A01"
+    assert metadata[0]["Local_Cultivation_ID"] == "Experiment 1 A01"
     assert metadata[0]["Vessel_Alphabetical_ID"] == "A"
     assert metadata[0]["Vessel_Numeric_ID"] == "1"
     assert metadata[0]["Objective"] == "Test combination treatments"
@@ -641,7 +645,7 @@ def test_registry_export_does_not_invent_missing_ids_or_experiment_descriptions(
         row["Cultivation"] == row["Objective"] == row["CultivationExperiment"] == ""
         for row in metadata
     )
-    assert any("2 wells have no cultivation ID" in warning for warning in bundle.warnings)
+    assert any("1 wells have no cultivation ID" in warning for warning in bundle.warnings)
     assert data[0]["Culture_Age_h"] == "2.0"
 
 
@@ -845,3 +849,129 @@ def test_each_run_restarts_replicates_and_rounding_still_groups_wells_within_a_r
     assert _csv_rows(single)[1] == [row for row in metadata if row["Run ID"] == "plate-1"]
     assert {row["Matching wells"] for row in pair.replicate_preview} == {2}
     assert repr(views) == before
+
+
+def test_saved_workflow_rejects_unsaved_ids_without_mutating_input() -> None:
+    view = _view()
+    before = copy.deepcopy(view)
+    with pytest.raises(ValueError, match="Preview alone does not save IDs") as error:
+        export_growth_tabular_data((view,), require_saved_cultivation_ids=True)
+    assert "Experiment 1" in str(error.value)
+    assert view == before
+
+
+def test_missing_clock_time_keeps_experiment_date_and_ignores_blank_id_warnings() -> None:
+    view = _view()
+    view.snapshot.metadata["plate_custom_json"] = "{}"
+    view.snapshot.metadata["experiment_custom_json"] = "{}"
+    bundle = export_growth_tabular_data((view,))
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    assert all(row["Date Time"] == "" for row in rows)
+    assert all(row["Experiment Date"] == "2025-09-09" for row in rows)
+    assert all(row["Raw OD"] for row in rows)
+    assert metadata[0]["Local_Cultivation_ID"] == "Experiment 1 A01"
+    missing = [warning for warning in bundle.warnings if "no cultivation ID" in warning]
+    assert len(missing) == 1
+    assert "(A1)" in missing[0] and "A2" not in missing[0]
+    assert "Experiment 1:" in missing[0]
+    assert all(None not in row for row in rows + metadata)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ({"Start Date Time": "2025-09-09T15:12:12+00:00"}, "2025-09-09T15:12:12+00:00"),
+        ({"Date": "09/09/25", "Time": "15:12:12"}, "2025-09-09T15:12:12"),
+        ({"Date": "09/09/2025", "Time": "15:12:12"}, "2025-09-09T15:12:12"),
+        ({"Date": "2025-09-09", "Time": "3:12:12 PM"}, "2025-09-09T15:12:12"),
+        (
+            {"Start Date Time": "invalid", "Date": "2025-09-09", "Time": "15:12:12"},
+            "2025-09-09T15:12:12",
+        ),
+        ({"Date": "2025-09-09"}, ""),
+        ({"Date": "bad date", "Time": "bad time"}, ""),
+    ],
+)
+def test_source_timestamp_formats_and_incomplete_clock_are_preserved(
+    source: dict[str, str], expected: str
+) -> None:
+    view = _view()
+    view.snapshot.metadata["plate_custom_json"] = "{}"
+    view.snapshot.metadata["experiment_custom_json"] = json.dumps(source)
+    bundle = export_growth_tabular_data((view,))
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    assert rows[0]["Date Time"] == expected
+    assert rows[0]["Experiment Date"] == "2025-09-09"
+    assert rows[0]["Raw OD"] == "0.088"
+
+
+@pytest.mark.parametrize("metadata", [None, "", "{broken", "[]", ["unstructured"]])
+def test_unusable_optional_metadata_never_shifts_or_drops_measurements(metadata: object) -> None:
+    view = _view()
+    view.snapshot.metadata["plate_custom_json"] = metadata
+    view.snapshot.metadata["experiment_custom_json"] = metadata
+    view.snapshot.wells[0]["custom_json"] = metadata
+    bundle = export_growth_tabular_data((view,))
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    assert len(rows) == 3
+    assert rows[0]["Raw OD"] == "0.088"
+    assert all(None not in row for row in rows)
+    assert all(row["Date Time"] == "" for row in rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("well_id", "unknown", "unknown well"),
+        ("well_id", "", "cannot be empty"),
+        ("channel", "", "cannot be empty"),
+        ("time_index", True, "must be an integer"),
+        ("elapsed_microseconds", "60000000", "must be an integer"),
+    ],
+)
+def test_invalid_observation_identity_or_time_rejects_whole_export(
+    field: str, value: object, message: str
+) -> None:
+    view = _view()
+    view.snapshot.raw_observations[0][field] = value
+    with pytest.raises(ValueError, match=message):
+        export_growth_tabular_data((view,))
+
+
+@pytest.mark.parametrize("value", [True, "not a number", "NaN", "Infinity", None])
+def test_unusable_od_does_not_become_a_fabricated_corrected_value(value: object) -> None:
+    view = _view()
+    for observation in view.snapshot.raw_observations:
+        observation["value_raw"] = value
+    before = copy.deepcopy(view)
+    bundle = export_growth_tabular_data((view,))
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    assert len(rows) == 3
+    assert all(row["Raw OD"] == row["Background Subtracted OD"] == "" for row in rows)
+    assert view == before
+
+
+def test_stale_background_reports_remedy_and_preserves_raw_rows() -> None:
+    base = _view()
+    view = GrowthRunView(base.snapshot, (), (), True)
+    bundle = export_growth_tabular_data((view,))
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    assert len(rows) == 3 and rows[0]["Raw OD"] == "0.088"
+    assert all(row["Background Subtracted OD"] == "" for row in rows)
+    assert all(row["Background QC Reason"] == "stale_background_revision" for row in rows)
+    assert any("Compute a current background revision" in warning for warning in bundle.warnings)
+
+
+def test_structured_custom_metadata_with_commas_and_newlines_round_trips() -> None:
+    view = _view()
+    custom = {"Extra object": {"name": "x,y\nnext", "value": 1}, "Extra list": ["a,b", "c\nd"]}
+    view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
+    bundle = export_growth_tabular_data((view,), custom_columns=("Unused",))
+    for artifact in (bundle.measurements, bundle.metadata):
+        rows = list(csv.DictReader(io.StringIO(artifact.content.decode())))
+        first = next(row for row in rows if row["Well"] == "A1")
+        assert json.loads(first["Extra object"]) == custom["Extra object"]
+        assert json.loads(first["Extra list"]) == custom["Extra list"]
+        assert first["Unused"] == ""
+        assert all(None not in row for row in rows)

@@ -40,6 +40,7 @@ class RegistryPlatePlan:
     registry: dict[str, object]
     assignments: tuple[dict[str, object], ...]
     warnings: tuple[str, ...] = ()
+    notices: tuple[str, ...] = ()
 
 
 def plan_plate_condition_cultivations(
@@ -192,7 +193,8 @@ def plan_plate_condition_cultivations(
             )
         assignments: list[dict[str, object]] = []
         warnings: list[str] = []
-        missing_strain_count = 0
+        missing_strain_positions: list[str] = []
+        notices: list[str] = []
         strain_aliases: dict[str, str] = {}
         for row in plate_rows:
             custom = condition_json_object(row.get("custom_json"))
@@ -211,7 +213,7 @@ def plan_plate_condition_cultivations(
                 if saved:
                     raise _error("Saved cultivation became blank or lost its strain", well=well_id)
                 if not is_blank:
-                    missing_strain_count += 1
+                    missing_strain_positions.append(pos)
                 old_id = _text(custom.get("Cultivation"))
                 if old_id:
                     history = custom.get("PreviousCultivationIDs", [])
@@ -300,13 +302,15 @@ def plan_plate_condition_cultivations(
                 )
             assignments.append(assignment)
         for original, code in strain_aliases.items():
-            warnings.append(
+            notices.append(
                 f"Strain {original!r} uses {code!r} in cultivation IDs; "
                 "original strain metadata is unchanged"
             )
-        if missing_strain_count:
+        if missing_strain_positions:
             warnings.append(
-                f"{missing_strain_count} wells missing strain; external IDs not assigned"
+                f"Missing strain in wells {', '.join(missing_strain_positions)}; "
+                "add strain names in Layout, then preview and save IDs again. "
+                "These wells retain internal IDs and data, but have no external cultivation ID."
             )
         _set_ranges(assignments)
         registry = dict(old_registry)
@@ -334,7 +338,7 @@ def plan_plate_condition_cultivations(
         if system:
             registry["CultivationSystemCode"] = system
         plans[plate_id] = RegistryPlatePlan(
-            plate_id, number, registry, tuple(assignments), tuple(warnings)
+            plate_id, number, registry, tuple(assignments), tuple(warnings), tuple(notices)
         )
     return tuple(plans[plate_id] for plate_id in plate_ids)
 

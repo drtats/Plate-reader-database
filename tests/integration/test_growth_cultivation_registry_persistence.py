@@ -18,6 +18,7 @@ from plate_reader.application.services.growth_cultivation_registry import (
     StaleGrowthCultivationRegistryError,
 )
 from plate_reader.application.services.growth_import import ImportGrowthRunService
+from plate_reader.domain.common import DomainValidationError
 from plate_reader.domain.growth import GROWTH_NORMALIZATION_VERSION
 from plate_reader.domain.growth.cultivation_registry import RegistrySettings
 from plate_reader.infrastructure.database import (
@@ -95,6 +96,165 @@ def _counts(repository: SqlPlateReaderRepository) -> tuple[int, int]:
         int(repository.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
         for table in ("growth_measurements", "analysis_revisions")
     )  # type: ignore[return-value]
+
+
+def _registry_state(repository: SqlPlateReaderRepository, plate_id: PlateId) -> tuple:
+    """Capture persisted registry state without loading measurements."""
+    return (
+        repository.growth_cultivation_metadata((plate_id,)),
+        _well_custom(repository, plate_id, "A1"),
+        repository.connection.execute("SELECT count(*) FROM provenance_events").fetchone()[0],
+        _counts(repository),
+    )
+
+
+@pytest.mark.parametrize(
+    "plate_ids, message",
+    [
+        ((), "Select between 1 and 500 Growth plates"),
+        (("",), "Growth plate IDs must be non-empty strings"),
+        (("missing", "missing"), "Growth plate IDs must be unique"),
+        (("missing",) * 501, "Select between 1 and 500 Growth plates"),
+    ],
+)
+def test_preview_rejects_invalid_selection_without_writes(
+    repository: SqlPlateReaderRepository, plate_ids: tuple[str, ...], message: str
+) -> None:
+    plate_id = _import_plate(repository)
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(DomainValidationError, match=message):
+        PreviewGrowthCultivationRegistryService(repository).execute(EDITOR, plate_ids, SETTINGS)
+    assert _registry_state(repository, plate_id) == before
+
+
+def test_preview_rejects_invalid_settings_and_missing_plate_without_writes(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(DomainValidationError, match="Invalid cultivation registry settings"):
+        PreviewGrowthCultivationRegistryService(repository).execute(
+            EDITOR,
+            (plate_id,),
+            "invalid settings",  # type: ignore[arg-type]
+        )
+    with pytest.raises(LookupError, match="Active Growth plates not found: missing"):
+        PreviewGrowthCultivationRegistryService(repository).execute(
+            EDITOR, (plate_id, PlateId("missing")), SETTINGS
+        )
+    assert _registry_state(repository, plate_id) == before
+
+
+def test_save_rejects_deleted_plate_after_preview_without_partial_writes(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    current = repository.growth_cultivation_metadata((plate_id,))[0]
+    with repository.transaction():
+        repository.update_plate_metadata(
+            plate_id,
+            str(current["updated_at"]),
+            {"deleted_at": "2026-09-14T00:00:00Z", "deleted_by": str(EDITOR.user_id)},
+        )
+    before = (
+        _well_custom(repository, plate_id, "A1"),
+        repository.connection.execute("SELECT count(*) FROM provenance_events").fetchone()[0],
+        _counts(repository),
+    )
+    with pytest.raises(LookupError, match="Active Growth plates not found"):
+        SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview)
+    assert (
+        _well_custom(repository, plate_id, "A1"),
+        repository.connection.execute("SELECT count(*) FROM provenance_events").fetchone()[0],
+        _counts(repository),
+    ) == before
+
+
+def test_save_rejects_invalid_preview_without_writes(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(DomainValidationError, match="Save requires a cultivation registry preview"):
+        SaveGrowthCultivationRegistryService(repository).execute(
+            EDITOR,
+            object(),  # type: ignore[arg-type]
+        )
+    assert _registry_state(repository, plate_id) == before
+
+
+def test_duplicate_legacy_ids_elsewhere_in_library_block_save_without_writes(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    other_id = _import_plate(repository, "Plate 2")
+    with repository.transaction():
+        repository.update_well_layout(
+            other_id,
+            [
+                {"position": position, "custom_json": {"Cultivation": "LEGACY-DUPLICATE"}}
+                for position in ("B1", "B2")
+            ],
+        )
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(DomainValidationError, match="Duplicate saved cultivation ID in library"):
+        SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview)
+    assert _registry_state(repository, plate_id) == before
+
+
+def test_conflicting_legacy_id_on_another_plate_blocks_preview_without_writes(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    other_id = _import_plate(repository, "Plate 2")
+    initial = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    proposed_id = next(
+        assignment["Cultivation"]
+        for assignment in initial.plates[0].assignments
+        if assignment["Well"] == "A1"
+    )
+    with repository.transaction():
+        repository.update_well_layout(
+            other_id,
+            [{"position": "B1", "custom_json": {"Cultivation": proposed_id}}],
+        )
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(DomainValidationError, match="collides with another saved ID"):
+        PreviewGrowthCultivationRegistryService(repository).execute(EDITOR, (plate_id,), SETTINGS)
+    assert _registry_state(repository, plate_id) == before
+
+
+def test_inactive_stored_user_cannot_preview_or_save(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    with repository.transaction():
+        repository.upsert_user(
+            {
+                "user_id": EDITOR.user_id,
+                "email": EDITOR.email,
+                "display_name": "Inactive Editor",
+                "role": "editor",
+                "is_active": False,
+            }
+        )
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(AuthorizationError, match="inactive"):
+        PreviewGrowthCultivationRegistryService(repository).execute(EDITOR, (plate_id,), SETTINGS)
+    with pytest.raises(AuthorizationError, match="inactive"):
+        SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview)
+    assert _registry_state(repository, plate_id) == before
 
 
 def test_preview_is_metadata_only_and_save_preserves_raw_and_all_internal_ids(
@@ -363,3 +523,47 @@ def test_normalized_strain_ids_save_and_export_original_metadata(
         assert all(item["Strain"] == original for item in observations)
         assert all(item["Cultivation ID"] == row["Cultivation"] for item in observations)
     assert repr(repository.load_plate(plate_id)) == repr(saved)
+
+
+def test_saved_export_requires_commit_and_detects_new_unassigned_wells(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    import csv
+    import io
+
+    from plate_reader.application.services.growth_tabular_export import (
+        ExportGrowthTabularData,
+        ExportGrowthTabularDataService,
+    )
+
+    plate_id = _import_plate(repository, "Cultivation experiment")
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    command = ExportGrowthTabularData(EDITOR, (plate_id,), require_saved_cultivation_ids=True)
+    exporter = ExportGrowthTabularDataService(repository)
+    before = repr(repository.load_plate(plate_id))
+    with pytest.raises(ValueError, match="Cultivation experiment"):
+        exporter.execute(command)
+    assert repr(repository.load_plate(plate_id)) == before
+    SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview)
+    saved = repr(repository.load_plate(plate_id))
+    bundle = exporter.execute(command)
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    for well in ("A1", "A2"):
+        registered = next(row for row in metadata if row["Well"] == well)
+        assert registered["Cultivation"]
+        assert all(
+            row["Cultivation ID"] == registered["Cultivation"]
+            for row in rows
+            if row["Well"] == well
+        )
+    assert repr(repository.load_plate(plate_id)) == saved
+    # A formerly unspecified well becomes an eligible culture: save its assignment before export.
+    with repository.transaction():
+        repository.update_well_layout(
+            plate_id, [{"position": "B1", "strain": "MG1655", "is_blank": 0}]
+        )
+    with pytest.raises(ValueError, match="not been saved"):
+        exporter.execute(command)

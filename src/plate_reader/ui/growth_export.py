@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import cast
 
 import pandas as pd
@@ -36,7 +36,7 @@ _LABORATORY_PATTERN = "Original laboratory format"
 _CUSTOM_PATTERN = "Custom pattern"
 _SAVED_PATTERNS = "Use saved patterns"
 _EXPORT_IDENTITY_VERSION = "export_run_v1"
-_REGISTRY_IDENTITY_VERSION = "plate_condition_v1"
+_REGISTRY_IDENTITY_VERSION = "plate_condition_v2"
 _SAVED_WORKFLOW = "Saved experiment + condition IDs (recommended)"
 _LEGACY_WORKFLOW = "Legacy export patterns"
 _CONCENTRATION_OPTIONS = (
@@ -131,7 +131,11 @@ def render_growth_data_export(context: AppContext) -> None:
         _clear_registry_preview()
         st.session_state.growth_export_active_workflow = workflow
     if workflow == _SAVED_WORKFLOW:
-        _render_saved_registry_workflow(context, selected)
+        _render_saved_registry_workflow(
+            context,
+            selected,
+            {str(result.plate_id): result.experiment_name for result in results},
+        )
         return
     _clear_registry_preview()
 
@@ -275,7 +279,9 @@ def render_growth_data_export(context: AppContext) -> None:
     _render_prepared_bundle(cast(GrowthTabularExportBundle, saved), selected, legacy=True)
 
 
-def _render_saved_registry_workflow(context: AppContext, selected: tuple[PlateId, ...]) -> None:
+def _render_saved_registry_workflow(
+    context: AppContext, selected: tuple[PlateId, ...], experiment_names: Mapping[str, str]
+) -> None:
     """Preview and explicitly save persistent IDs before exporting saved identities."""
 
     from plate_reader.domain.growth.cultivation_registry import PLATE_CONDITION_PATTERN
@@ -291,7 +297,8 @@ def _render_saved_registry_workflow(context: AppContext, selected: tuple[PlateId
     st.caption(
         "For example, ST-EXP-MG1655-MP96A0101R1 contains experiment 01, condition 01, and "
         "technical replicate R1. Every well also keeps its internal well UUID and a "
-        "local ID such as EXP01-A01. Preview reads metadata only."
+        "local ID such as EXP01-A01. Preview reads metadata only; previewed IDs are not "
+        "available in an export until saved."
     )
     team_code = st.text_input(
         "Team code (optional)",
@@ -361,14 +368,21 @@ def _render_saved_registry_workflow(context: AppContext, selected: tuple[PlateId
         else None
     )
     if active_preview is not None:
-        _render_registry_preview(active_preview)
+        _render_registry_preview(active_preview, experiment_names)
     can_save = context.actor.role in (Role.EDITOR, Role.ADMIN)
     if not can_save:
         st.caption(
             "An editor or admin can save these IDs; viewers can preview and export saved IDs."
         )
-    if st.button("Save cultivation IDs", disabled=active_preview is None or not can_save):
+    save = st.button("Save cultivation IDs", disabled=active_preview is None or not can_save)
+    save_and_prepare = st.button(
+        "Save IDs and prepare export",
+        type="primary",
+        disabled=active_preview is None or not can_save,
+    )
+    if save or save_and_prepare:
         assert active_preview is not None
+        _clear_artifact()
         try:
             changed = SaveGrowthCultivationRegistryService(context.repository).execute(
                 context.actor, active_preview
@@ -377,9 +391,28 @@ def _render_saved_registry_workflow(context: AppContext, selected: tuple[PlateId
             _clear_registry_preview()
             st.error(f"Unable to save cultivation IDs: {error}")
         else:
-            _clear_artifact()
             _clear_registry_preview()
-            if changed:
+            if save_and_prepare:
+                try:
+                    bundle = ExportGrowthTabularDataService(context.repository).execute(
+                        ExportGrowthTabularData(
+                            context.actor, selected, require_saved_cultivation_ids=True
+                        )
+                    )
+                except Exception as error:
+                    st.error(
+                        "Cultivation IDs were saved, but Growth CSV export could not be "
+                        f"prepared: {error}. The saved IDs remain available."
+                    )
+                else:
+                    st.session_state.growth_tabular_export_bundle = bundle
+                    st.session_state.growth_tabular_export_plate_ids = tuple(map(str, selected))
+                    st.session_state.growth_tabular_export_signature = signature
+                    st.success(f"Saved cultivation IDs and prepared {len(selected)} run(s).")
+                    _render_prepared_bundle(
+                        bundle, selected, legacy=False, experiment_names=experiment_names
+                    )
+            elif changed:
                 st.success(
                     f"Saved cultivation IDs for {len(changed)} run(s). "
                     "Preview again to review saved IDs."
@@ -389,9 +422,10 @@ def _render_saved_registry_workflow(context: AppContext, selected: tuple[PlateId
         return
 
     if st.button("Prepare selected runs", type="primary"):
+        _clear_artifact()
         try:
             bundle = ExportGrowthTabularDataService(context.repository).execute(
-                ExportGrowthTabularData(context.actor, selected)
+                ExportGrowthTabularData(context.actor, selected, require_saved_cultivation_ids=True)
             )
         except Exception as error:
             _clear_artifact()
@@ -404,16 +438,21 @@ def _render_saved_registry_workflow(context: AppContext, selected: tuple[PlateId
         return
     saved = st.session_state.get("growth_tabular_export_bundle")
     if saved is not None:
-        _render_prepared_bundle(cast(GrowthTabularExportBundle, saved), selected, legacy=False)
+        _render_prepared_bundle(
+            cast(GrowthTabularExportBundle, saved),
+            selected,
+            legacy=False,
+            experiment_names=experiment_names,
+        )
 
 
-def _render_registry_preview(preview: RegistryPreview) -> None:
+def _render_registry_preview(preview: RegistryPreview, experiment_names: Mapping[str, str]) -> None:
     """Show metadata-only plate plans and per-well identities before a write."""
 
     st.subheader("Cultivation ID preview")
     plate_rows = [
         {
-            "Run ID": plan.plate_id,
+            "Experiment": experiment_names.get(plan.plate_id, plan.plate_id),
             "Experiment number": plan.plate_number,
             "Cultivation experiment range": plan.registry.get("CultivationExperiment", ""),
             "Wells": len(plan.assignments),
@@ -423,7 +462,7 @@ def _render_registry_preview(preview: RegistryPreview) -> None:
     st.dataframe(pd.DataFrame(plate_rows), hide_index=True, width="stretch")
     assignments = [
         {
-            "Run ID": plan.plate_id,
+            "Experiment": experiment_names.get(plan.plate_id, plan.plate_id),
             "Well": assignment.get("Well", ""),
             "Experiment number": assignment.get("CultivationPlateNumber", plan.plate_number),
             "Condition group": assignment.get("BiologicalReplicateGroup", ""),
@@ -439,9 +478,35 @@ def _render_registry_preview(preview: RegistryPreview) -> None:
     ]
     if assignments:
         st.dataframe(pd.DataFrame(assignments), hide_index=True, width="stretch")
-    for plan in preview.plates:
-        for warning in plan.warnings:
-            st.warning(f"{plan.plate_id}: {warning}")
+    notices = _group_plate_messages(
+        ((plan.plate_id, notice) for plan in preview.plates for notice in plan.notices),
+        experiment_names,
+    )
+    if notices:
+        with st.expander(f"Normalization details ({len(notices)})"):
+            st.dataframe(pd.DataFrame(notices), hide_index=True, width="stretch")
+    warnings = _group_plate_messages(
+        ((plan.plate_id, warning) for plan in preview.plates for warning in plan.warnings),
+        experiment_names,
+    )
+    for warning in warnings:
+        st.warning(f"{warning['Experiments']}: {warning['Detail']}")
+
+
+def _group_plate_messages(
+    messages: Iterable[tuple[str, str]], experiment_names: Mapping[str, str]
+) -> list[dict[str, str]]:
+    """Deduplicate repeated messages while retaining the affected experiments."""
+
+    grouped: dict[str, list[str]] = {}
+    for plate_id, message in messages:
+        experiment = experiment_names.get(plate_id, plate_id or "Selected runs")
+        names = grouped.setdefault(message, [])
+        if experiment not in names:
+            names.append(experiment)
+    return [
+        {"Experiments": ", ".join(names), "Detail": message} for message, names in grouped.items()
+    ]
 
 
 def _previous_ids_cell(value: object) -> str:
@@ -451,7 +516,11 @@ def _previous_ids_cell(value: object) -> str:
 
 
 def _render_prepared_bundle(
-    bundle: GrowthTabularExportBundle, selected: tuple[PlateId, ...], *, legacy: bool
+    bundle: GrowthTabularExportBundle,
+    selected: tuple[PlateId, ...],
+    *,
+    legacy: bool,
+    experiment_names: Mapping[str, str] | None = None,
 ) -> None:
     """Offer the two CSVs only for the current selection and settings."""
 
@@ -459,8 +528,11 @@ def _render_prepared_bundle(
     left.metric("Runs", len(selected))
     middle.metric("OD observation rows", bundle.measurements.row_count)
     right.metric("Cultivation metadata rows", bundle.metadata.row_count)
-    for warning in bundle.warnings:
-        st.warning(warning)
+    if bundle.warnings:
+        grouped = _group_export_warnings(bundle.warnings, experiment_names or {})
+        st.warning(f"{len(grouped)} export warning(s); review details before downloading.")
+        with st.expander("Export warning details"):
+            st.dataframe(pd.DataFrame(grouped), hide_index=True, width="stretch")
     if legacy and bundle.replicate_preview:
         st.subheader("Cultivation IDs and replicates for this export")
         st.dataframe(pd.DataFrame(bundle.replicate_preview), hide_index=True, width="stretch")
@@ -485,6 +557,24 @@ def _render_prepared_bundle(
         key="growth-tabular-metadata-download",
         on_click="ignore",
     )
+
+
+def _group_export_warnings(
+    warnings: Sequence[str], experiment_names: Mapping[str, str]
+) -> list[dict[str, str]]:
+    """Condense repeated run warnings without discarding their full detail."""
+
+    messages = []
+    name_to_plate = {name: plate for plate, name in experiment_names.items()}
+    for warning in warnings:
+        plate_id, separator, detail = warning.partition(": ")
+        if separator and plate_id in experiment_names:
+            messages.append((plate_id, detail))
+        elif separator and plate_id in name_to_plate:
+            messages.append((name_to_plate[plate_id], detail))
+        else:
+            messages.append(("", warning))
+    return _group_plate_messages(messages, experiment_names)
 
 
 def _export_table(

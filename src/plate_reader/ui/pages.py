@@ -163,6 +163,14 @@ def render_run_library(context: AppContext) -> None:
 
     custom_columns = cast(tuple[str, ...], st.session_state.run_library_custom_columns)
     table = run_summary_table(results, custom_columns)
+    st.caption(
+        "Readiness: Calculated (verify) means an older background calculation exists "
+        "but its freshness cannot be confirmed from saved metadata; Needs recalculation "
+        "means blank or background-group assignments changed. Background QC flags count "
+        "flagged timepoints or results. Cultivation IDs show saved assignments, not full "
+        "registry validation. One plate is one experiment; the experiment number is shown "
+        "only when saved."
+    )
     revision = int(st.session_state.get("run_library_table_revision", 0))
     with st.form("run-library-actions"):
         edited_table = st.data_editor(

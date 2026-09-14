@@ -29,6 +29,20 @@ class InoculumRange:
 
 
 @dataclass(frozen=True, slots=True)
+class GrowthRunReadiness:
+    """Metadata-only availability; saved ID counts do not validate condition fingerprints."""
+
+    background_status: str = "Not calculated"
+    background_calculated_at: str | None = None
+    background_qc_flags: int | None = None
+    cultivation_status: str = "Not saved"
+    cultivation_saved: int = 0
+    cultivation_total: int = 0
+    missing_strain: int = 0
+    cultivation_experiment_number: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RunSummary:
     """Metadata-only projection for a single run-library row.
 
@@ -51,6 +65,7 @@ class RunSummary:
     media: tuple[str, ...] = ()
     inoculum_ranges: tuple[InoculumRange, ...] = ()
     custom_fields: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    growth_readiness: GrowthRunReadiness | None = None
 
 
 @dataclass(frozen=True, slots=True)

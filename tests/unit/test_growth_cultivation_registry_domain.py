@@ -100,7 +100,7 @@ def test_well_order_grouping_range_internal_only_and_multistrain() -> None:
     assert missing["Local_Cultivation_ID"] == "EXP01-H11"
     assert blank["CultivationPlateNumber"] == "01"
     assert "Cultivation" not in blank and "Cultivation" not in missing
-    assert len(plan.warnings) == 1 and "1 wells missing strain" in plan.warnings[0]
+    assert len(plan.warnings) == 1 and "Missing strain in wells H11" in plan.warnings[0]
     assert plan.registry["description"] == "Keep me"
 
 
@@ -327,7 +327,7 @@ def test_strain_code_normalization_survives_save_repreview_and_ranges(
     assert plan.assignments[1]["Cultivation"] == f"ST-EXP-{code}-MP96A0101R2"
     assert plan.assignments[0]["CultivationExperiment"] == f"ST-EXP-{code}-MP96A[0101]"
     if original != code:
-        assert any(repr(original) in warning and repr(code) in warning for warning in plan.warnings)
+        assert any(repr(original) in warning and repr(code) in warning for warning in plan.notices)
     _persist(rows, (plan,))
     assert _plan(rows, "p1")[0].assignments == plan.assignments
     assert (
