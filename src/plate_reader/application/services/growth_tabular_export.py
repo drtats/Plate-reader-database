@@ -41,6 +41,10 @@ from plate_reader.domain.growth.cultivation_conditions import (
     primary_condition_value,
     validate_concentration_precision,
 )
+from plate_reader.domain.growth.cultivation_registry import (
+    SCHEME,
+    saved_plate_condition_identity,
+)
 from plate_reader.domain.growth.units import normalize_growth_unit
 
 GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
@@ -52,6 +56,12 @@ GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
     "Cultivation replicate scope",
     "Cultivation condition key",
     "Culture_Age_h",
+    "Internal cultivation ID",
+    "Local cultivation ID",
+    "Cultivation experiment number",
+    "Cultivation condition number",
+    "Technical replicate",
+    "Biological replicate group",
 )
 
 GROWTH_REGISTRY_METADATA_HEADERS = (
@@ -84,6 +94,13 @@ GROWTH_REGISTRY_METADATA_HEADERS = (
     "CultivationConditionKey",
     "CultivationConditionFields",
     "CultivationReplicateMode",
+    "InternalCultivationID",
+    "CultivationNumberingScheme",
+    "CultivationExperimentNumber",
+    "CultivationConditionNumber",
+    "TechnicalReplicate",
+    "BiologicalReplicateGroup",
+    "CultivationConcentrationSignificantFigures",
 )
 
 GROWTH_MATCHING_CONCENTRATION_HEADERS = (
@@ -386,7 +403,7 @@ def export_growth_tabular_data(
                     _json_cell(
                         _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
                     ),
-                    *_matching_concentration_row(well, context.concentration_significant_figures),
+                    *_matching_concentration_row(well, _well_matching_precision(context, well)),
                     *(
                         _custom_cell(_custom_value(_well_custom(well), column))
                         for column in exported_custom_columns
@@ -418,6 +435,37 @@ def export_growth_tabular_data(
         replicate_preview=replicate_preview,
         effective_condition_fields=effective_condition_fields,
     )
+
+
+def _persistent_identity(context: _RunContext, well: Mapping[str, object]) -> dict[str, object]:
+    """Saved plate/condition assignments remain authoritative in every export mode."""
+
+    identity = dict(saved_plate_condition_identity(well, context.view.snapshot.metadata))
+    identity["CultivationExperimentNumber"] = identity["CultivationPlateNumber"]
+    position = str(well["position"])
+    identity["Local_Cultivation_ID"] = (
+        f"EXP{identity['CultivationPlateNumber']}-{position[0]}{int(position[1:]):02d}"
+    )
+    identity["SavedCultivation"] = identity["Cultivation"]
+    identity["Replicate"] = identity["CultivationReplicate"]
+    identity["LocalReplicate"] = well.get("replicate")
+    identity["CultivationConditionFields"] = json.dumps(
+        identity.get("CultivationConditionFields", []), separators=(",", ":")
+    )
+    return identity
+
+
+def _well_matching_precision(context: _RunContext, well: Mapping[str, object]) -> int | None:
+    custom = _well_custom(well)
+    if custom.get("CultivationNumberingScheme") == SCHEME:
+        precision = custom.get("CultivationConcentrationSignificantFigures")
+        if precision is not None and (
+            isinstance(precision, bool) or not isinstance(precision, int)
+        ):
+            raise _cultivation_error("Saved concentration matching precision must be an integer")
+        validate_concentration_precision(precision)
+        return precision
+    return context.concentration_significant_figures
 
 
 def _validate_matching_mode(assign_replicates: bool, precision: int | None) -> None:
@@ -548,14 +596,19 @@ def _selection_contexts(
                         "Well": position,
                         "Strain": _first_text(well.get("strain")),
                         "Local replicate": well.get("replicate"),
-                        "Export replicate": plan.replicate,
+                        "Export replicate": identity["CultivationReplicate"],
                         "Concentration matching": "Exact values"
-                        if concentration_significant_figures is None
-                        else f"{concentration_significant_figures} significant figures",
+                        if (
+                            preview_precision := (
+                                _well_matching_precision(context, well)
+                                if _well_custom(well).get("CultivationNumberingScheme") == SCHEME
+                                else concentration_significant_figures
+                            )
+                        )
+                        is None
+                        else f"{preview_precision} significant figures",
                         "Entered concentrations": _concentration_summary(well, None),
-                        "Matching concentrations": _concentration_summary(
-                            well, concentration_significant_figures
-                        ),
+                        "Matching concentrations": _concentration_summary(well, preview_precision),
                         "Experiment number": identity["CultivationExperimentCode"],
                         "Matching wells": plan.matching_wells,
                         "Matching fields": ", ".join(plan.extra_fields),
@@ -585,6 +638,8 @@ def _selection_identity(
     settings: ExportCultivationSettings | None,
     suggested_code: str,
 ) -> tuple[dict[str, object], tuple[str, ...]]:
+    if _well_custom(well).get("CultivationNumberingScheme") == SCHEME:
+        return _persistent_identity(context, well), ()
     custom = _well_custom(well)
     plate_custom = _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
     shared = _json_object(plate_custom.get("cultivation_registry"))
@@ -927,6 +982,12 @@ def _measurement_rows(
                 registry["CultivationReplicateScope"],
                 registry["CultivationConditionKey"],
                 _culture_age(context, registry, elapsed),
+                registry["InternalCultivationID"],
+                registry["Local_Cultivation_ID"],
+                registry["CultivationExperimentNumber"],
+                registry["CultivationConditionNumber"],
+                registry["TechnicalReplicate"],
+                registry["BiologicalReplicateGroup"],
                 _display_name(well, position),
                 date_time,
                 context.culture_age_hours + elapsed_minutes / 60,
@@ -969,7 +1030,7 @@ def _measurement_rows(
                 ),
                 custom.get("t0_added_min"),
                 *_separate_conditions(well)[3:],
-                *_matching_concentration_row(well, context.concentration_significant_figures),
+                *_matching_concentration_row(well, _well_matching_precision(context, well)),
                 *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
             )
         )
@@ -1007,6 +1068,8 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
     position = _required_text(well.get("position"), "Growth export well position")
     result.update(
         {
+            "CultivationExperimentNumber": _first_text(values.get("CultivationPlateNumber")),
+            "InternalCultivationID": _first_text(well.get("well_id")),
             "Cultivation": _first_text(custom.get("Cultivation")),
             "SavedCultivation": _first_text(custom.get("Cultivation")),
             "CultivationExperimentCode": _first_text(custom.get("CultivationExperimentCode")),
@@ -1030,6 +1093,14 @@ def _cultivation_metadata(context: _RunContext, well: Mapping[str, object]) -> d
             "EquipmentMakeModel": _first_text(values.get("EquipmentMakeModel"), context.instrument),
         }
     )
+    number = str(result["CultivationExperimentNumber"])
+    if number and result["Local_Cultivation_ID"] == (
+        f"P{number}-{position[0]}{int(position[1:]):02d}"
+    ):
+        result["Local_Cultivation_ID"] = f"EXP{number}-{position[0]}{int(position[1:]):02d}"
+    if custom.get("CultivationNumberingScheme") == SCHEME:
+        result.update(_persistent_identity(context, well))
+        return result
     if context.effective_identities is not None:
         override = context.effective_identities.get(WellPosition.parse(position).label)
         if override is None:
@@ -1201,6 +1272,7 @@ def _custom_column_names(
                 if name:
                     names.setdefault(name.casefold(), name)
     unavailable = {
+        "cultivationplatenumber",  # Exported as CultivationExperimentNumber.
         *(header.casefold() for header in GROWTH_MEASUREMENT_HEADERS),
         *(header.casefold() for header in GROWTH_METADATA_HEADERS),
         *(name.casefold() for name in _STRUCTURED_CUSTOM_KEYS),

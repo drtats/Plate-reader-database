@@ -131,75 +131,66 @@ retrying. Search or Cancel closes the batch without saving. Editors and admins c
 use this action. These shared values are saved on the selected runs and are available
 in each workspace and cultivation export.
 
-In a saved run, open **Metadata → Cultivation metadata and ID pattern**. Choose the
-recommended **Experiment number + well** pattern and enter your team code. The
-experiment number is suggested in chronological order across unnumbered Growth runs:
-oldest experiment `001`, next `002`, and so on, even before any IDs are saved.
-Experiment date sets the order; ties use creation time and run ID. Missing or invalid
-dates come last. Already saved numbers are kept and skipped when suggesting numbers
-for other runs. You can edit the suggestion. Preview does not consume a number.
-Once saved, the number remains with the run. Dates remain in metadata.
+Use **Growth Data Export → Saved experiment + condition IDs (recommended)** for the
+persistent cultivation registry. Select one or multiple experiments, enter the team and
+cultivation system codes (or leave them blank to use saved metadata), and press
+**Preview cultivation IDs**. Preview reads metadata only. Review the per-well IDs
+and cultivation-experiment ranges, then press **Save cultivation IDs**. Editors and
+admins can save; viewers can preview and export existing assignments. Saving is
+atomic across selected experiments and preserves raw measurements and other metadata.
 
-Generate IDs directly in **Growth Data Export**: select the runs, open the
-**Cultivation ID generation** controls, choose a pattern and enter a team code
-(or leave it blank to use saved team codes). The recommended pattern includes the
-experiment number, well position and required `R` suffix. Missing experiment
-numbers are suggested across the Growth library in chronological order, beginning
-at `001`; saved numbers remain fixed. No workspace ID-generation step is required.
-Press **Generate cultivation IDs and prepare export** to see each well's ID,
-experiment number, local label, export replicate and matching counts before download.
+The required-style ID is `ST-EXP-MG1655-MP96A0101R1`:
 
-Matching wells within each run receive `R1`, `R2`, and so on. Each distinct condition
-group starts at R1 again in every run; the cultivation experiment number distinguishes
-runs. Adding or removing other runs does not change these replicate numbers. Saved
-IDs, labels and raw measurements remain unchanged. **Replicate**
-in both CSVs is the cultivation replicate used in the ID. The observation file's
-**Local replicate** and metadata's **LocalReplicate** retain your original Layout label.
+| Part | Meaning |
+| --- | --- |
+| `ST` | Team |
+| `MG1655` | Well strain |
+| `MP96A` | Cultivation system |
+| `01` (first part of `0101`) | Experiment number |
+| `01` (last part of `0101`) | Condition group within that experiment |
+| `R1` | Replicate well within the condition group; a technical replicate in this workflow |
+
+Matching wells on experiment 01 share `0101` and receive `R1`, `R2`, etc. A different
+condition uses `0102R1`. Experiment 02 starts with `0201R1`; condition numbers never span
+experiments. Experiment numbers start at 01 in chronological library order and remain fixed
+once saved. Condition groups follow physical well order and remain fixed once saved.
+Numbers use at least two digits per part; experiment 100 becomes `10001`, without changing
+old IDs. `CultivationRun` stores the combined code, with the separate experiment and
+condition numbers also retained. `CultivationExperiment` contains the corresponding
+range, such as `ST-EXP-MG1655-MP96A[0101-0103]`. Multiple strains receive separate
+ranges, listing gaps explicitly where necessary.
+
+Two identities are available in both files: the stable **Internal cultivation ID**
+(the database well ID), and the external **Cultivation ID** above. A readable local
+label such as `EXP01-A01` is also saved. All wells receive internal/local IDs; blanks
+and wells without a strain do not receive fabricated external IDs. Missing strain
+is flagged for completion. **Biological replicate group** identifies the experiment's
+condition group (`0101`); **Technical replicate** is the within-group R number. The
+registry's required **Replicate** column carries that same R value. Original Layout
+labels remain separately available as **Local replicate** / **LocalReplicate**.
+
+Each experiment is one physical plate and owns its unique, persistent number.
+The first part of the code is exported as `CultivationExperimentNumber`.
 
 Matching uses strain, medium, treatment doses and units (including combinations),
-inoculum, temperature and culture volume. The unit spellings `u`, `µ`, and `μ` are
-equivalent; known encoding artifacts such as `Œºg/mL` are repaired to `ug/mL`.
-Concentration unit columns and composite condition text use `u` in both files.
-No concentration values or scales are converted: `mg/mL` remains distinct from
-`ug/mL`. Original metadata JSON is retained. Wells with missing strain or medium
-are treated individually. Additional well custom condition fields can be specified
-on the export page; each run's saved matching fields are also included for that run.
-Other selected runs' fields do not affect its numbering. Shared descriptions can still
-be edited through **Growth Run Library → Edit cultivation metadata**. Each matching
-well counts as one cultivation; study/group labels are retained as metadata.
+inoculum, temperature, culture volume and chosen additional condition fields.
+**Concentration matching** defaults to **2 significant figures**: `0.1875` and `0.19`
+match as `0.19`. Exact, 3 and 4 figure options are available before first assignment.
+Micro-unit spellings (`µ`, `μ`, `u`, and known encoding artifacts such as `Œº`) match
+as ASCII `u`; unit scales are not converted. Original concentration columns stay
+unchanged, with **Matching concentration** columns and the precision rule alongside.
 
-**Concentration matching** defaults to **2 significant figures** in Growth Data
-Export. This groups rounding differences such as `0.1875` and `0.19` as `0.19`,
-or `0.09375` and `0.094` as `0.094`. It applies to all three treatment dose columns
-before matching combinations; all other condition fields must still match. The
-preview shows entered and matching concentrations. Choose **Exact values** to keep
-these doses separate, or select 3 or 4 significant figures for finer matching.
-Changing precision requires generating the export again.
+Press **Prepare selected runs** to download data using the IDs already saved on each
+well. Changing the selected plates does not regenerate IDs. Saved matching rules
+are used for later exports. Changed identity-defining conditions are reported rather
+than silently changing an assigned ID. Correct the metadata discrepancy before
+exporting; ordinary local replicate-label edits do not change the cultivation ID.
+Replaced older-format IDs remain in **PreviousCultivationIDs** and provenance.
 
-Original **Concentration** columns and stored metadata remain unchanged. Both CSVs
-add **Matching concentration**, **Matching concentration 2**, **Matching concentration
-3**, and **Concentration matching significant figures** (`2`, `3`, `4`, or `exact`).
-Use the matching columns when grouping exported data with the same rule as cultivation
-replicates. Significant figures preserve small nonzero doses instead of rounding all
-small values to a fixed number of decimal places. This groups rounded input values;
-it does not infer a dilution series or correct arbitrary entry errors.
-
-Both CSVs link through the exported Cultivation ID and retain the original saved
-ID (`SavedCultivation` / `Saved cultivation ID`). Disable generation to use saved
-IDs. Workspace controls and previously saved condition-numbering settings remain
-available. Missing required ID components are reported with blank IDs while OD and
-metadata rows remain available. Shared scientific descriptions continue to come
-from the saved metadata.
-
-The export generator also supports the original laboratory pattern, e.g.
-`PN-EXP-11_J3-BRV002R1`, with a system code and a saved cultivation run number
-(or the chronological number when absent). **Custom pattern** supports `{team}`,
-`{strain}`, `{system}`, `{run}`, `{experiment}`, `{well}`, and `{replicate}` and
-must include `R{replicate}`. Choose saved patterns to retain each well's naming
-format while assigning selected-run replicates. Pattern, team and system controls
-affect only this export. Changing settings or selection hides old downloads until
-you generate again. Numbering is local to the current database; exporting does not
-reserve numbers. To persist a number, use the workspace metadata controls.
+The **Legacy export patterns** option retains older export-only naming controls.
+Persistent plate/condition IDs remain authoritative even there. The workspace's legacy
+ID generator cannot overwrite a plate that has persistent plate/condition IDs.
+Shared scientific descriptions can still be edited through the Growth Run Library.
 
 Shared descriptions apply to this plate; per-well custom columns named
 `InoculationDateTime`, `Local_Cultivation_ID`, `Strain/Strain_Aliases`, `Objective`,

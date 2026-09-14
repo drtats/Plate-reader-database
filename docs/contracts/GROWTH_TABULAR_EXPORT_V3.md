@@ -2,6 +2,12 @@
 
 Status: accepted, updated 2026-09-14. Replaces v2 (ADR 0034).
 
+The current default is the **persistent plate/condition scheme** in ADR 0043:
+`ST-EXP-MG1655-MP96A0101R1`, where `0101` is plate `01` and condition group `01`.
+Earlier export-only patterns described below remain legacy options. The new scheme
+is not constrained to three digits: plate width expands beyond 99 while condition
+width stays two digits (1–96 on a 96-well plate).
+
 Encoding, deterministic ordering, filenames, raw-value handling and background/QC
 semantics remain as documented in v2. Export is read-only and supports viewers.
 
@@ -20,7 +26,7 @@ The metadata CSV contains one row per stored well (including wells without an ID
 with these registry columns first:
 
 ```text
-Cultivation,SavedCultivation,Local_Cultivation_ID,InoculationDateTime,ProgramMetric,CultivationExperiment,Comment,Team_Code,Strain,Strain/Strain_Aliases,CultivationSystemCode,CultivationRun,Replicate,Vessel_Alphabetical_ID,Vessel_Numeric_ID,Objective,Condition,Media,EquipmentMakeModel,CultivationProtocol,SampleAnalysisProtocol,CultivationExperimentCode,CultivationIDPattern,CultivationReplicate,LocalReplicate,CultivationReplicateScope,CultivationConditionKey,CultivationConditionFields,CultivationReplicateMode
+Cultivation,SavedCultivation,Local_Cultivation_ID,InoculationDateTime,ProgramMetric,CultivationExperiment,Comment,Team_Code,Strain,Strain/Strain_Aliases,CultivationSystemCode,CultivationRun,Replicate,Vessel_Alphabetical_ID,Vessel_Numeric_ID,Objective,Condition,Media,EquipmentMakeModel,CultivationProtocol,SampleAnalysisProtocol,CultivationExperimentCode,CultivationIDPattern,CultivationReplicate,LocalReplicate,CultivationReplicateScope,CultivationConditionKey,CultivationConditionFields,CultivationReplicateMode,InternalCultivationID,CultivationNumberingScheme,CultivationExperimentNumber,CultivationConditionNumber,TechnicalReplicate,BiologicalReplicateGroup,CultivationConcentrationSignificantFigures
 ```
 
 All v2 run-metadata columns follow, then separate treatment/concentration/unit fields
@@ -134,3 +140,42 @@ preview's matching-well count is local to the run. Saved library condition-numbe
 and saved-ID validation remain unchanged. A UI signature version invalidates cached
 cumulative downloads from earlier app code. Physical well order is used even when
 projection row/column indices are absent. No persistence or schema change is needed.
+
+## Persistent plate/condition IDs (ADR 0043)
+
+Explicit metadata-only preview and atomic save assign IDs in the database. Subsequent
+exports never recalculate these identities, even if legacy generation options are
+passed. Per-well `CultivationNumberingScheme=plate_condition_v1` and
+`CultivationReplicateMode=plate_condition` identify this mode. Plate metadata stores
+its persistent plate number, shared matching rules and cultivation experiment ranges.
+Per-well fields include `CultivationPlateNumber`, `CultivationConditionNumber`, combined
+`CultivationRun`, `CultivationExperimentCode` (plate part), `CultivationIDPattern`,
+`CultivationConditionKey`, `CultivationConditionFields`, stored
+`CultivationConcentrationSignificantFigures`, `Cultivation`, and `CultivationExperiment`.
+Range codes preserve leading zeros and are computed separately for each strain.
+Replaced legacy IDs are retained in `PreviousCultivationIDs` and provenance.
+
+Observation registry columns additionally include `Internal cultivation ID`,
+`Local cultivation ID`, `Cultivation experiment number`, `Cultivation condition number`,
+`Technical replicate`, `Biological replicate group`. Metadata registry columns add
+`InternalCultivationID`, `CultivationNumberingScheme`, `CultivationExperimentNumber`,
+`CultivationConditionNumber`, `TechnicalReplicate`, `BiologicalReplicateGroup`,
+`CultivationConcentrationSignificantFigures`. The internal ID is the stable database
+well ID; the local label is e.g. `EXP01-A01`. Every stored well and its observation rows
+retain that internal link; blanks/missing-strain wells can have blank external IDs.
+Registry Replicate and TechnicalReplicate equal the saved R number. The biological
+replicate group is the combined plate/condition code; no cross-plate replicate ordinal
+is inferred. The original Layout replicate is still independently exported.
+
+Saved identities are checked using their stored matching policy, not current export
+settings. Changed conditions, malformed components or inconsistent plate rules fail
+explicitly; local-label-only changes do not invalidate an ID. Prepare and download
+remain read-only. Preview/save require no raw observation reads, and saving all selected
+plates is atomic with optimistic version and allocation checks. No schema migration
+is introduced. Existing assigned IDs and numbers are never silently reassigned.
+
+In this workflow one experiment equals one physical plate. Its unique number is
+labelled as an experiment number in the UI and CSV. `CultivationPlateNumber` remains
+the internal persisted key; exports map it to `CultivationExperimentNumber`. Former
+`P01-A01` local labels are accepted on read and rendered as `EXP01-A01`, without
+renumbering cultivation IDs or modifying storage during export.

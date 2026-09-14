@@ -309,3 +309,194 @@ def _table_counts(repository: SqlPlateReaderRepository) -> tuple[int, ...]:
             "provenance_events",
         )
     )
+
+
+def test_persistent_plate_condition_ids_join_every_observation_and_survive_legacy_options(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    from plate_reader.application.services.growth_cultivation import (
+        CultivationAssignment,
+        SaveGrowthCultivationsService,
+    )
+    from plate_reader.application.services.growth_cultivation_registry import (
+        PreviewGrowthCultivationRegistryService,
+        SaveGrowthCultivationRegistryService,
+    )
+    from plate_reader.application.services.growth_tabular_export import ExportCultivationSettings
+    from plate_reader.domain.common import DomainValidationError
+    from plate_reader.domain.growth.cultivation_registry import RegistrySettings
+
+    ids = itertools.count()
+    importer = ImportGrowthRunService(repository, id_factory=lambda: f"persistent-{next(ids):05d}")
+    plate_ids = []
+    for index in range(2):
+        result = importer.execute(
+            ImportGrowthRun(
+                ACTOR,
+                f"persistent-{index}.csv",
+                hashlib.sha256(CSV_TEXT.encode()).hexdigest(),
+                GROWTH_NORMALIZATION_VERSION,
+                f"Persistent {index}",
+                f"Plate {index}",
+                date(2026, 8, 18 + index),
+                idempotency_key=f"persistent-{index}",
+            ),
+            CSV_TEXT,
+            metadata=GrowthRunMetadata(plate_custom_json={"keep": "yes"}),
+            layout_changes=(
+                WellLayoutChange("A1", is_blank=True, background_group="plate"),
+                WellLayoutChange("A2", is_blank=True, background_group="plate"),
+                WellLayoutChange(
+                    "B1",
+                    strain="MG1655",
+                    medium="LB",
+                    replicate=9,
+                    treatment="Drug",
+                    concentration=0.1875,
+                    concentration_unit="µg/mL",
+                ),
+                WellLayoutChange(
+                    "B2",
+                    strain="MG1655",
+                    medium="LB",
+                    replicate=9,
+                    treatment="Drug",
+                    concentration=0.19,
+                    concentration_unit="ug/mL",
+                ),
+                WellLayoutChange(
+                    "B3",
+                    strain="MG1655",
+                    medium="LB",
+                    replicate=9,
+                    treatment="Drug",
+                    concentration=2.0,
+                    concentration_unit="ug/mL",
+                ),
+                WellLayoutChange(
+                    "B4",
+                    strain="J3",
+                    medium="LB",
+                    replicate=9,
+                    treatment="Drug",
+                    concentration=2.0,
+                    concentration_unit="ug/mL",
+                ),
+            ),
+        )
+        plate_ids.append(result.plate_id)
+        ComputeGrowthBackgroundService(repository).execute(
+            ComputeGrowthBackgroundRevision(ACTOR, result.plate_id, GROWTH_BACKGROUND_VERSION)
+        )
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        ACTOR, tuple(reversed(plate_ids)), RegistrySettings(team_code="ST", system_code="MP96A")
+    )
+    SaveGrowthCultivationRegistryService(repository).execute(ACTOR, preview)
+    snapshots = tuple(repository.load_plate(pid) for pid in plate_ids)
+    before = repr(snapshots)
+    service = ExportGrowthTabularDataService(repository)
+    pair = service.execute(ExportGrowthTabularData(ACTOR, tuple(plate_ids)))
+    single = service.execute(ExportGrowthTabularData(ACTOR, (plate_ids[1],)))
+    legacy_requested = service.execute(
+        ExportGrowthTabularData(
+            ACTOR,
+            tuple(plate_ids),
+            assign_selected_replicates=True,
+            cultivation_settings=ExportCultivationSettings(team_code="OTHER"),
+            concentration_significant_figures=4,
+        )
+    )
+    for bundle in (pair, legacy_requested):
+        data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+        metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+        assert "CultivationPlateNumber" not in metadata[0]
+        assert "Cultivation plate number" not in data[0]
+        assert all(row["InternalCultivationID"] for row in metadata)
+        assert len({row["InternalCultivationID"] for row in metadata}) == 192
+        meta_by_internal = {row["InternalCultivationID"]: row for row in metadata}
+        for row in data:
+            meta = meta_by_internal[row["Internal cultivation ID"]]
+            assert row["Cultivation ID"] == meta["Cultivation"]
+            assert row["Local cultivation ID"] == meta["Local_Cultivation_ID"]
+            assert row["Cultivation experiment number"] == meta["CultivationExperimentNumber"]
+            assert row["Replicate"] == meta["Replicate"]
+            assert row["Raw OD"]
+        for index, plate_id in enumerate(plate_ids, 1):
+            by_well = {row["Well"]: row for row in metadata if row["Run ID"] == str(plate_id)}
+            prefix = f"ST-EXP-MG1655-MP96A{index:02d}"
+            assert by_well["B1"]["Cultivation"] == f"{prefix}01R1"
+            assert by_well["B2"]["Cultivation"] == f"{prefix}01R2"
+            assert by_well["B3"]["Cultivation"] == f"{prefix}02R1"
+            assert by_well["B4"]["Cultivation"] == f"ST-EXP-J3-MP96A{index:02d}03R1"
+            assert (
+                by_well["B1"]["CultivationExperiment"]
+                == f"ST-EXP-MG1655-MP96A[{index:02d}01-{index:02d}02]"
+            )
+            assert by_well["B1"]["Local_Cultivation_ID"] == f"EXP{index:02d}-B01"
+            assert by_well["B1"]["CultivationExperimentNumber"] == f"{index:02d}"
+            assert by_well["B2"]["TechnicalReplicate"] == "2"
+            assert by_well["B2"]["BiologicalReplicateGroup"] == f"{index:02d}01"
+            assert by_well["B1"]["Matching concentration"] == "0.19"
+            assert by_well["B1"]["Concentration"] == "0.1875"
+            assert by_well["B1"]["LocalReplicate"] == "9"
+    pair_meta = list(csv.DictReader(io.StringIO(pair.metadata.content.decode())))
+    single_meta = list(csv.DictReader(io.StringIO(single.metadata.content.decode())))
+    assert single_meta == [row for row in pair_meta if row["Run ID"] == str(plate_ids[1])]
+    assert repr(tuple(repository.load_plate(pid) for pid in plate_ids)) == before
+    snapshot = snapshots[0]
+    assert snapshot is not None
+    with pytest.raises(DomainValidationError, match="persistent plate/condition"):
+        SaveGrowthCultivationsService(repository).execute(
+            ACTOR,
+            plate_ids[0],
+            str(snapshot.metadata["updated_at"]),
+            {"Team_Code": "ST", "CultivationSystemCode": "MP96A"},
+            (CultivationAssignment("B1", "9"),),
+        )
+    assert repr(tuple(repository.load_plate(pid) for pid in plate_ids)) == before
+
+
+def test_internal_only_registry_keeps_plate_reservation_and_rejects_self_referential_fields(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    from plate_reader.application.services.growth_cultivation import SaveGrowthCultivationsService
+    from plate_reader.application.services.growth_cultivation_registry import (
+        PreviewGrowthCultivationRegistryService,
+        SaveGrowthCultivationRegistryService,
+    )
+    from plate_reader.domain.common import DomainValidationError
+    from plate_reader.domain.growth.cultivation_registry import RegistrySettings
+
+    result = ImportGrowthRunService(repository).execute(
+        ImportGrowthRun(
+            ACTOR,
+            "internal.csv",
+            hashlib.sha256(CSV_TEXT.encode()).hexdigest(),
+            GROWTH_NORMALIZATION_VERSION,
+            "Internal",
+            "Internal plate",
+            date(2026, 9, 1),
+        ),
+        CSV_TEXT,
+    )
+    previewer = PreviewGrowthCultivationRegistryService(repository)
+    before = repr(repository.load_plate(result.plate_id))
+    with pytest.raises(DomainValidationError):
+        previewer.execute(
+            ACTOR, (result.plate_id,), RegistrySettings(condition_fields=("TechnicalReplicate",))
+        )
+    assert repr(repository.load_plate(result.plate_id)) == before
+    preview = previewer.execute(ACTOR, (result.plate_id,), RegistrySettings())
+    SaveGrowthCultivationRegistryService(repository).execute(ACTOR, preview)
+    snapshot = repository.load_plate(result.plate_id)
+    assert snapshot is not None
+    before = repr(snapshot)
+    with pytest.raises(DomainValidationError, match="persistent plate/condition"):
+        SaveGrowthCultivationsService(repository).execute(
+            ACTOR,
+            result.plate_id,
+            str(snapshot.metadata["updated_at"]),
+            {},
+            (),
+        )
+    assert repr(repository.load_plate(result.plate_id)) == before

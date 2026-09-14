@@ -248,45 +248,35 @@ not through conditionals scattered across repositories or UI code.
 ### Growth tabular registry export
 
 The CSV path is separate from portable database backup. The current contract is
-[`GROWTH_TABULAR_EXPORT_V3.md`](contracts/GROWTH_TABULAR_EXPORT_V3.md): observation
-rows carry cultivation IDs and the companion file has descriptive metadata
-per well/cultivation. Shared registry descriptions are scoped to a plate under
-`plate_custom_json.cultivation_registry`; identity components and generated IDs are
-well custom metadata. Generation is an explicit, authorized transaction that preserves
-raw observations. Saved-ID exports retain saved identities (ADR 0034); selection-based
-exports compute output identities without changing stored data (ADR 0039).
+[`GROWTH_TABULAR_EXPORT_V3.md`](contracts/GROWTH_TABULAR_EXPORT_V3.md). The default
+Growth Data Export workflow previews and explicitly persists plate/condition IDs
+(ADR 0043). Each experiment is one plate; the UI and CSV call its unique number
+the experiment number. A pure domain planner combines this minimum-two-digit number and
+two-digit condition number, then adds the within-condition technical replicate R
+suffix. It stores plate/condition parts, matching fingerprints and precision,
+internal well IDs, readable local labels, external cultivation IDs, and per-strain
+cultivation experiment ranges in existing plate/well JSON metadata.
 
-Per-well pattern and experiment number metadata are optional additions (ADR 0036).
-The recommended pattern uses a simple number starting at 001 plus strain, well and
-replicate. A metadata-only repository projection reads existing numbers and dates,
-including soft-deleted runs. Suggestions assign available numbers to all unnumbered
-runs in experiment-date order, even before any IDs are saved (ADR 0037);
-save checks numeric reservations in
-the write transaction. Saved well identities remain independent of shared defaults.
-Legacy formats remain valid and export uses each well's saved pattern/components.
+The application preview reads metadata projections only. Saving recomputes the plan
+and checks preview versions and library reservations in one transaction. It updates
+only metadata, with provenance, preserving old IDs as history. Assigned numbers are
+stable; deleted plates retain reservations. Raw observations and original Layout
+replicate labels are unchanged. There is no schema migration or rerun write.
 
-Condition-based replicate numbering (ADR 0038) preserves the required R suffix while
-separating it from the local Layout replicate label. A metadata-only well projection
-supports condition matching across plates, with optional study scope and additional
-condition fields. The saved-numbering application path revalidates reservations inside its save
-transaction. The default Growth Data Export path instead numbers matching wells
-independently within each selected run, ignoring saved reservations and leaving stored
-IDs untouched (ADR 0042 supersedes ADR 0039's cumulative export numbering). Each run's
-saved matching-field rules are independent of the other selected runs. Its preview and CSVs expose effective and saved IDs separately. The export page also supplies output-only pattern/team/system settings and fills
-missing experiment numbers from one library metadata projection (ADR 0040). Both
-CSVs' primary Replicate column agrees with the ID suffix; local labels have their
-own column. Micro-unit spelling is canonicalized to ASCII u for exported unit fields
-and selection matching, while saved fingerprints keep their literal rules. Export
-concentration matching optionally rounds treatment doses to significant figures
-(2 in the UI by default; ADR 0041). Both CSVs retain original doses and expose matching
-doses and precision; saved fingerprints and other numeric conditions remain exact. Local
-replicate labels and original metadata JSON remain available. Missing strain/medium never merges unrelated wells.
+The exporter reads saved identities, validates current conditions against the stored
+rules, and joins both CSVs through the same per-well cultivation ID. Internal well
+identity is also present for every observation and metadata row, including controls
+without an external ID. Both original and matching concentration values are exported.
+Two-significant-figure matching and micro-unit spelling normalization apply to group
+assignment; no concentration scales are converted. Required registry Replicate and
+explicit TechnicalReplicate represent the same R value in the user's workflow, while
+BiologicalReplicateGroup identifies the plate/condition cultivation group.
 
-The Library also offers shared cultivation metadata editing for selected runs. A
-metadata-only repository projection reads registry defaults without wells or raw
-observations. Bulk patches merge only explicitly chosen fields into each plate
-registry and commit with per-run version checks and provenance in one transaction
-(ADR 0035). Existing cultivation IDs and per-well overrides retain their values.
+Older saved-ID and export-only pattern paths remain available for compatibility
+(ADRs 0034, 0036, 0039–0042). They cannot regenerate persistent plate/condition IDs.
+The Library's bulk cultivation metadata editor (ADR 0035) continues to merge shared
+descriptions without regenerating saved well identities. Explicit identity or
+matching-rule inconsistencies are surfaced rather than silently rewritten.
 
 ## 7. Configuration and secrets
 

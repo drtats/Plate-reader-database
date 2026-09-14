@@ -310,6 +310,22 @@ class SaveGrowthCultivationsService:
         assignments: Sequence[CultivationAssignment],
     ) -> None:
         snapshot = _growth_snapshot(self.repository, plate_id)
+        plate_registry = json_object(
+            json_object(snapshot.metadata.get("plate_custom_json") or {}).get(
+                "cultivation_registry", {}
+            )
+        )
+        if plate_registry.get(
+            "CultivationNumberingScheme", plate_registry.get("scheme")
+        ) == "plate_condition_v1" or any(
+            json_object(well.get("custom_json") or {}).get("CultivationNumberingScheme")
+            == "plate_condition_v1"
+            for well in snapshot.wells
+        ):
+            raise _domain_error(
+                "This run has persistent plate/condition IDs. Manage its cultivation IDs "
+                "in Growth Data Export; the legacy generator cannot overwrite them."
+            )
         registry_json = json_object(registry)
         _validate_registry(registry_json)
         _normalize_registry_experiment_code(registry_json)

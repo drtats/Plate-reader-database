@@ -39,7 +39,18 @@ _RESERVED_EXTRA_FIELDS = frozenset(
         "CultivationReplicateMode",
         "CultivationIDPattern",
         "CultivationExperimentCode",
+        "CultivationExperiment",
         "CultivationRun",
+        "CultivationNumberingScheme",
+        "CultivationPlateNumber",
+        "CultivationExperimentNumber",
+        "CultivationConditionNumber",
+        "CultivationConcentrationSignificantFigures",
+        "InternalCultivationID",
+        "Local_Cultivation_ID",
+        "TechnicalReplicate",
+        "BiologicalReplicateGroup",
+        "PreviousCultivationIDs",
         "Team_Code",
         "CultivationSystemCode",
         "well_id",
@@ -81,7 +92,7 @@ def cultivation_condition_key(
     }
     plate_custom = _json_object(metadata.get("plate_custom_json"))
     experiment_custom = _json_object(metadata.get("experiment_custom_json"))
-    additional = _extra_field_names(extra_fields)
+    additional = normalize_cultivation_condition_fields(extra_fields)
     strain = _text(well.get("strain"))
     medium = _text(well.get("medium"))
     identity: dict[str, object] = {
@@ -217,7 +228,13 @@ def _treatments(
     return sorted(triples)
 
 
-def _extra_field_names(fields: tuple[str, ...]) -> tuple[str, ...]:
+def normalize_cultivation_condition_fields(fields: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize additional conditions and reject all generated identity fields.
+
+    This validation is independent of well content, so planners can reject
+    self-referential rules even when every well is blank or lacks a strain.
+    """
+
     names: set[str] = set()
     for raw_name in fields:
         if not isinstance(raw_name, str):
