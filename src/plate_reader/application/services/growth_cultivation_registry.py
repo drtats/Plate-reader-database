@@ -121,6 +121,8 @@ class SaveGrowthCultivationRegistryService:
                 plate_custom = json_object(plate_row.get("plate_custom_json", {}))
                 previous_registry = json_object(plate_custom.get("cultivation_registry", {}))
                 next_registry = {**previous_registry, **json_object(plan.registry)}
+                if "CultivationConcentrationDecimalPlaces" in plan.registry:
+                    next_registry.pop("CultivationConcentrationSignificantFigures", None)
                 plate_custom["cultivation_registry"] = next_registry
 
                 current_rows = rows_by_plate.get(plan.plate_id, [])
@@ -142,9 +144,17 @@ class SaveGrowthCultivationRegistryService:
                     after_id = _nonempty_text(planned.get("Cultivation"))
                     if before_id and before_id != after_id:
                         if custom.get("CultivationNumberingScheme") == SCHEME:
-                            raise _error(
-                                "Saved cultivation IDs cannot be reassigned.", position=position
-                            )
+                            history = planned.get("PreviousCultivationIDs", [])
+                            if (
+                                not preview.settings.reassign_changed_conditions
+                                or not isinstance(history, list)
+                                or before_id not in history
+                            ):
+                                raise _error(
+                                    "Saved cultivation IDs cannot be reassigned without "
+                                    "an explicit reviewed plan.",
+                                    position=position,
+                                )
                         # A legacy ID on a newly blank/unidentified well is retired,
                         # never left as the current external identity.
                         if not after_id:
@@ -159,6 +169,8 @@ class SaveGrowthCultivationRegistryService:
                         if before_id not in history:
                             planned["PreviousCultivationIDs"] = [*history, before_id]
                     merged = {**custom, **planned}
+                    if "CultivationConcentrationDecimalPlaces" in planned:
+                        merged.pop("CultivationConcentrationSignificantFigures", None)
                     if merged == custom:
                         continue
                     changes.append({"position": position, "custom_json": merged})
@@ -196,6 +208,13 @@ class SaveGrowthCultivationRegistryService:
                                 "condition_fields": list(preview.settings.condition_fields),
                                 "concentration_significant_figures": (
                                     preview.settings.concentration_significant_figures
+                                ),
+                                "concentration_decimal_places": (
+                                    preview.settings.concentration_decimal_places
+                                ),
+                                "concentration_exact": preview.settings.concentration_exact,
+                                "reassign_changed_conditions": (
+                                    preview.settings.reassign_changed_conditions
                                 ),
                             },
                             "registry": {"before": previous_registry, "after": next_registry},

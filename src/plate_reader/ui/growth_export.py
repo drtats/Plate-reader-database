@@ -35,21 +35,23 @@ _RECOMMENDED_PATTERN = "Experiment number + well (recommended)"
 _LABORATORY_PATTERN = "Original laboratory format"
 _CUSTOM_PATTERN = "Custom pattern"
 _SAVED_PATTERNS = "Use saved patterns"
-_EXPORT_IDENTITY_VERSION = "export_run_v1"
-_REGISTRY_IDENTITY_VERSION = "plate_condition_v2"
+_EXPORT_IDENTITY_VERSION = "export_run_v2"
+_REGISTRY_IDENTITY_VERSION = "plate_condition_v3"
 _SAVED_WORKFLOW = "Saved experiment + condition IDs (recommended)"
 _LEGACY_WORKFLOW = "Legacy export patterns"
 _CONCENTRATION_OPTIONS = (
-    "2 significant figures (recommended)",
+    "2 decimal places (recommended)",
     "Exact values",
+    "2 significant figures (legacy)",
     "3 significant figures",
     "4 significant figures",
 )
 _CONCENTRATION_PRECISION = {
-    "2 significant figures (recommended)": 2,
-    "Exact values": None,
-    "3 significant figures": 3,
-    "4 significant figures": 4,
+    "2 decimal places (recommended)": (2, None),
+    "Exact values": (None, None),
+    "2 significant figures (legacy)": (None, 2),
+    "3 significant figures": (None, 3),
+    "4 significant figures": (None, 4),
 }
 
 
@@ -209,8 +211,8 @@ def render_growth_data_export(context: AppContext) -> None:
         disabled=not assign_replicates,
         help="Applies to concentration doses when grouping wells within each run for R numbers.",
     )
-    concentration_significant_figures = (
-        _CONCENTRATION_PRECISION[concentration_matching] if assign_replicates else None
+    concentration_decimal_places, concentration_significant_figures = (
+        _CONCENTRATION_PRECISION[concentration_matching] if assign_replicates else (None, None)
     )
     if assign_replicates:
         st.caption(
@@ -222,8 +224,8 @@ def render_growth_data_export(context: AppContext) -> None:
             "Concentration units are normalized to u (for example, ug/mL)."
         )
         st.caption(
-            "Only concentration doses use the selected matching precision: 0.1875 and "
-            "0.19 both match as 0.19 at 2 significant figures. Other condition fields "
+            "Only concentration doses use the selected matching precision: 0.185, "
+            "0.1875, and 0.19 match as 0.19 at 2 decimal places. Other condition fields "
             "must still match. Original concentrations remain unchanged in the export; "
             "Matching concentration columns show the grouping values."
         )
@@ -242,6 +244,7 @@ def render_growth_data_export(context: AppContext) -> None:
         assign_replicates,
         condition_fields,
         concentration_significant_figures,
+        concentration_decimal_places,
         choice if assign_replicates else None,
         settings,
     )
@@ -260,6 +263,7 @@ def render_growth_data_export(context: AppContext) -> None:
                     assign_selected_replicates=assign_replicates,
                     condition_fields=condition_fields,
                     concentration_significant_figures=concentration_significant_figures,
+                    concentration_decimal_places=concentration_decimal_places,
                     cultivation_settings=settings,
                 )
             )
@@ -300,6 +304,10 @@ def _render_saved_registry_workflow(
         "local ID such as EXP01-A01. Preview reads metadata only; previewed IDs are not "
         "available in an export until saved."
     )
+    st.caption(
+        "Previously saved significant-figure IDs keep their original matching rule until "
+        "you preview and save the decimal-place update."
+    )
     team_code = st.text_input(
         "Team code (optional)",
         key="growth_registry_team_code",
@@ -316,6 +324,12 @@ def _render_saved_registry_workflow(
         key="growth_registry_concentration_matching",
         help="Only condition-group doses use this precision; saved doses stay intact.",
     )
+    reassign_changed_conditions = st.checkbox(
+        "Reassign condition IDs if rounding changes groups",
+        value=False,
+        key="growth_registry_reassign_changed_conditions",
+        help="Preview changed condition and R numbers; saving retains previous IDs in history.",
+    )
     extra_fields_text = st.text_input(
         "Additional condition fields (comma-separated)",
         key="growth_registry_condition_fields",
@@ -327,7 +341,10 @@ def _render_saved_registry_workflow(
     settings = RegistrySettings(
         team_code=team_code.strip(),
         system_code=system_code.strip(),
-        concentration_significant_figures=_CONCENTRATION_PRECISION[concentration_matching],
+        concentration_significant_figures=_CONCENTRATION_PRECISION[concentration_matching][1],
+        concentration_decimal_places=_CONCENTRATION_PRECISION[concentration_matching][0],
+        concentration_exact=concentration_matching == "Exact values",
+        reassign_changed_conditions=reassign_changed_conditions,
         condition_fields=condition_fields,
     )
     signature = (_REGISTRY_IDENTITY_VERSION, tuple(map(str, selected)), settings)
@@ -342,7 +359,8 @@ def _render_saved_registry_workflow(
     ):
         _clear_artifact()
     st.caption(
-        "At 2 significant figures, doses 0.1875 and 0.19 match as 0.19. Strain, medium, "
+        "At 2 decimal places, doses 0.185, 0.1875, and 0.19 match as 0.19; "
+        "384 remains 384. Strain, medium, "
         "treatments, units, and the other selected conditions must still match. "
         "Save updates cultivation metadata only; raw measurements stay unchanged."
     )
@@ -468,6 +486,14 @@ def _render_registry_preview(preview: RegistryPreview, experiment_names: Mapping
             "Condition group": assignment.get("BiologicalReplicateGroup", ""),
             "Technical replicate": assignment.get("TechnicalReplicate", ""),
             "Cultivation ID": assignment.get("Cultivation", ""),
+            "Previous saved ID": next(
+                (
+                    before
+                    for position, before, _after in plan.reassignments
+                    if position == assignment.get("Well")
+                ),
+                "",
+            ),
             "Cultivation experiment range": assignment.get("CultivationExperiment", ""),
             "Local ID": assignment.get("Local_Cultivation_ID", ""),
             "Internal ID": assignment.get("InternalCultivationID", ""),

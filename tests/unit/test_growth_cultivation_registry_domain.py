@@ -68,6 +68,8 @@ def _persist(rows: list[dict[str, object]], plans: tuple[RegistryPlatePlan, ...]
             assignment = next(a for a in plan.assignments if a["Well"] == row["position"])
             custom = json.loads(str(row["custom_json"]))
             custom.update({key: value for key, value in assignment.items() if key != "Well"})
+            if "CultivationConcentrationDecimalPlaces" in assignment:
+                custom.pop("CultivationConcentrationSignificantFigures", None)
             row["custom_json"] = json.dumps(custom)
 
 
@@ -145,6 +147,136 @@ def test_reexport_reuses_identity_and_new_wells_append_groups_and_replicates() -
     )
     assert _plan(rows, "p1")[0].assignments[0]["LocalReplicate"] == 7
     rows[:] = original
+
+
+def test_new_registry_matches_two_decimal_places_without_changing_raw_doses() -> None:
+    doses = ("384", "0.185", "0.1875", "0.19", "0.004")
+    rows = [_row("p1", f"A{i}", concentration=dose) for i, dose in enumerate(doses, 1)]
+    (plan,) = _plan(rows, "p1")
+    assert [a["CultivationConditionNumber"] for a in plan.assignments] == [
+        "01",
+        "02",
+        "02",
+        "02",
+        "03",
+    ]
+    assert plan.registry["CultivationConcentrationDecimalPlaces"] == 2
+    assert "CultivationConcentrationSignificantFigures" not in plan.registry
+    assert [row["concentration"] for row in rows] == list(doses)
+
+
+def test_saved_significant_figure_ids_upgrade_only_when_groups_are_unchanged() -> None:
+    legacy = RegistrySettings("ST", "MP96A", 2)
+    rows = [_row("p1", "A1", concentration="384"), _row("p1", "A2", concentration="0.1875")]
+    old = plan_plate_condition_cultivations(rows, ("p1",), settings=legacy)
+    _persist(rows, old)
+    assert (
+        saved_plate_condition_identity(rows[0], rows[0])["Cultivation"]
+        == old[0].assignments[0]["Cultivation"]
+    )
+    preview = _plan(rows, "p1")
+    assert "updated to decimal-place" in preview[0].notices[0]
+    assert [a["Cultivation"] for a in preview[0].assignments] == [
+        a["Cultivation"] for a in old[0].assignments
+    ]
+    assert (
+        preview[0].assignments[0]["CultivationConditionKey"]
+        != old[0].assignments[0]["CultivationConditionKey"]
+    )
+    _persist(rows, preview)
+    assert (
+        saved_plate_condition_identity(rows[0], rows[0])["Cultivation"]
+        == old[0].assignments[0]["Cultivation"]
+    )
+    assert _plan(rows, "p1")[0].assignments == preview[0].assignments
+
+
+def test_saved_significant_figure_group_split_requires_reviewed_identity_generation() -> None:
+    rows = [_row("p1", "A1", concentration="384"), _row("p1", "A2", concentration="383")]
+    old = plan_plate_condition_cultivations(
+        rows, ("p1",), settings=RegistrySettings("ST", "MP96A", 2)
+    )
+    _persist(rows, old)
+    assert (
+        old[0].assignments[0]["CultivationConditionNumber"]
+        == old[0].assignments[1]["CultivationConditionNumber"]
+    )
+    with pytest.raises(DomainValidationError, match="changes saved condition groups"):
+        _plan(rows, "p1")
+    reassigned = plan_plate_condition_cultivations(
+        rows,
+        ("p1",),
+        settings=RegistrySettings("ST", "MP96A", reassign_changed_conditions=True),
+    )[0]
+    assert [a["CultivationConditionNumber"] for a in reassigned.assignments] == ["01", "02"]
+    assert reassigned.assignments[1]["PreviousCultivationIDs"] == [
+        old[0].assignments[1]["Cultivation"]
+    ]
+    assert len({a["Cultivation"] for a in reassigned.assignments}) == 2
+    assert (
+        plan_plate_condition_cultivations(
+            rows, ("p1",), settings=RegistrySettings("ST", "MP96A", 2)
+        )[0].assignments
+        == old[0].assignments
+    )
+
+
+def test_reviewed_group_merge_never_reuses_another_wells_old_id() -> None:
+    rows = [
+        _row("p1", "A1", concentration="0.004"),
+        _row("p1", "A2", concentration="0.003"),
+        _row("p1", "A3", concentration="0.004"),
+    ]
+    old = plan_plate_condition_cultivations(
+        rows, ("p1",), settings=RegistrySettings("ST", "MP96A", 2)
+    )
+    _persist(rows, old)
+    planned = plan_plate_condition_cultivations(
+        rows,
+        ("p1",),
+        settings=RegistrySettings("ST", "MP96A", reassign_changed_conditions=True),
+    )[0]
+    assert len({a["CultivationConditionNumber"] for a in planned.assignments}) == 1
+    assert len({a["Cultivation"] for a in planned.assignments}) == 3
+    old_owner = {a["Cultivation"]: a["InternalCultivationID"] for a in old[0].assignments}
+    assert all(
+        a["Cultivation"] not in old_owner
+        or old_owner[a["Cultivation"]] == a["InternalCultivationID"]
+        for a in planned.assignments
+    )
+    assert planned.registry["RetiredCultivationConditionNumbers"] == ["02"]
+    _persist(rows, (planned,))
+    added = _row("p1", "A4", concentration="0.005", plate_custom_json=rows[0]["plate_custom_json"])
+    rows.append(added)
+    after = _plan(rows, "p1")[0]
+    assert after.assignments[-1]["CultivationConditionNumber"] == "03"
+    assert after.assignments[-1]["Cultivation"] not in old_owner
+
+
+def test_new_well_skips_historical_replicate_gap_after_reviewed_split() -> None:
+    rows = [
+        _row("p1", "A1", concentration="384"),
+        _row("p1", "A2", concentration="383"),
+        _row("p1", "A3", concentration="384"),
+    ]
+    old = plan_plate_condition_cultivations(
+        rows, ("p1",), settings=RegistrySettings("ST", "MP96A", 2)
+    )
+    _persist(rows, old)
+    revised = plan_plate_condition_cultivations(
+        rows,
+        ("p1",),
+        settings=RegistrySettings("ST", "MP96A", reassign_changed_conditions=True),
+    )[0]
+    assert [a["CultivationReplicate"] for a in revised.assignments] == [1, 1, 3]
+    _persist(rows, (revised,))
+    rows.append(
+        _row("p1", "A4", concentration="384", plate_custom_json=rows[0]["plate_custom_json"])
+    )
+    added = _plan(rows, "p1")[0].assignments[-1]
+    assert added["CultivationConditionNumber"] == "01"
+    assert added["CultivationReplicate"] == 4
+    assert added["Cultivation"] != old[0].assignments[1]["Cultivation"]
 
 
 def test_saved_changed_conditions_or_rules_are_rejected() -> None:

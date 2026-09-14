@@ -727,6 +727,33 @@ def test_matching_concentration_is_readable_half_up_and_context_independent() ->
     assert matching_concentration("0.000000001", 2) != matching_concentration(0, 2)
 
 
+def test_decimal_place_matching_preserves_magnitude_and_uses_half_up() -> None:
+    with localcontext() as context:
+        context.prec = 2
+        context.rounding = ROUND_DOWN
+        assert matching_concentration("384", concentration_decimal_places=2) == "384"
+        assert matching_concentration("0.185", concentration_decimal_places=2) == "0.19"
+        assert matching_concentration("0.1875", concentration_decimal_places=2) == "0.19"
+        assert matching_concentration("0.19", concentration_decimal_places=2) == "0.19"
+        assert matching_concentration("-0.185", concentration_decimal_places=2) == "-0.19"
+        assert matching_concentration("0.004", concentration_decimal_places=2) == "0"
+    rows = [
+        _row("p1", f"A0{i}", concentration=dose)
+        for i, dose in enumerate(("0.185", "0.1875", "0.19", "384"), 1)
+    ]
+    plan = plan_export_condition_replicates(rows, concentration_decimal_places=2)
+    assert [plan[("p1", f"A{i}")].replicate for i in range(1, 5)] == [1, 2, 3, 1]
+    assert plan[("p1", "A1")].condition_key != plan[("p1", "A4")].condition_key
+
+
+@pytest.mark.parametrize("precision", (True, -1, 13, 2.0, "2"))
+def test_invalid_decimal_places_and_conflicting_rules_are_structured(precision: object) -> None:
+    with pytest.raises(DomainValidationError, match="decimal places"):
+        matching_concentration("0.1875", concentration_decimal_places=precision)  # type: ignore[arg-type]
+    with pytest.raises(DomainValidationError, match="either"):
+        matching_concentration("0.1875", 2, concentration_decimal_places=2)
+
+
 @pytest.mark.parametrize("precision", (True, False, 0, 13, -1, 2.0, "2", Decimal("2")))
 def test_invalid_concentration_precision_is_structured(precision: object) -> None:
     with pytest.raises(DomainValidationError, match="significant figures"):

@@ -189,11 +189,11 @@ def test_pattern_assignments_persist_per_well_while_shared_defaults_change(
     by_id = {row["Cultivation"]: row for row in metadata_rows if row["Cultivation"]}
     assert set(by_id) == {a1_before["Cultivation"], a2_before["Cultivation"]}
     assert observation_rows
-    assert {row["Well"] for row in observation_rows} >= {"A1", "A2"}
+    assert {row["Well Row"] + row["Well Column"] for row in observation_rows} >= {"A1", "A2"}
     for row in observation_rows:
-        if row["Well"] in {"A1", "A2"}:
+        if row["Well Row"] + row["Well Column"] in {"A1", "A2"}:
             assert row["Cultivation ID"] in by_id
-            assert row["Cultivation experiment code"] == "001"
+            assert by_id[row["Cultivation ID"]]["Cultivation experiment code"] == "001"
             assert by_id[row["Cultivation ID"]]["CultivationExperimentCode"] == "001"
 
     second = service.execute(
@@ -298,9 +298,12 @@ def test_explicit_primary_concentration_clear_disables_legacy_fallback(
     assert well(before, "A1")["concentration"] is None
     legacy_bundle = export_growth_tabular_data((GrowthRunView(before, (), ()),))
     legacy_rows = list(csv.DictReader(io.StringIO(legacy_bundle.measurements.content.decode())))
-    legacy_a1 = next(row for row in legacy_rows if row["Well"] == "A1")
+    legacy_a1 = next(
+        row for row in legacy_rows if row["Well Row"] == "A" and row["Well Column"] == "1"
+    )
     assert legacy_a1["Concentration"] == "2"
-    assert legacy_a1["Treatment 2"] == "Drug B"
+    legacy_meta = list(csv.DictReader(io.StringIO(legacy_bundle.metadata.content.decode())))
+    assert next(row for row in legacy_meta if row["Well"] == "A1")["Treatment 2"] == "Drug B"
     assignment = CultivationAssignment("A1", "", DEFAULT_CULTIVATION_PATTERN, "001")
     legacy_plan = prepare_condition_replicate_assignments(
         repository, before, registry, (assignment,)
@@ -362,12 +365,14 @@ def test_explicit_primary_concentration_clear_disables_legacy_fallback(
     )
     bundle = export_growth_tabular_data((GrowthRunView(regenerated, (), ()),))
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
-    a1 = next(row for row in rows if row["Well"] == "A1")
+    a1 = next(row for row in rows if row["Well Row"] == "A" and row["Well Column"] == "1")
     assert a1["Concentration"] == ""
     assert a1["Condition 1 State"] == "Drug A mg/L"
-    assert a1["Treatment 2"] == "Drug B"
-    assert a1["Concentration 2"] == "5"
-    assert a1["Concentration unit 2"] == "mg/L"
+    metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    metadata_a1 = next(row for row in metadata_rows if row["Well"] == "A1")
+    assert metadata_a1["Treatment 2"] == "Drug B"
+    assert metadata_a1["Concentration 2"] == "5"
+    assert metadata_a1["Concentration unit 2"] == "mg/L"
     assert well(regenerated, "A1")["replicate"] == well(original, "A1")["replicate"]
     assert raw_hash(regenerated) == raw_before
 

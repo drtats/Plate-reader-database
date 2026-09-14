@@ -46,6 +46,8 @@ _RESERVED_EXTRA_FIELDS = frozenset(
         "CultivationExperimentNumber",
         "CultivationConditionNumber",
         "CultivationConcentrationSignificantFigures",
+        "CultivationConcentrationDecimalPlaces",
+        "RetiredCultivationConditionNumbers",
         "InternalCultivationID",
         "Local_Cultivation_ID",
         "TechnicalReplicate",
@@ -74,6 +76,7 @@ def cultivation_condition_key(
     *,
     normalize_units: bool = False,
     concentration_significant_figures: int | None = None,
+    concentration_decimal_places: int | None = None,
 ) -> str:
     """Return canonical JSON for cultivation conditions, excluding layout and run identity.
 
@@ -85,7 +88,7 @@ def cultivation_condition_key(
     only to treatment concentrations and never changes the saved default key.
     """
 
-    validate_concentration_precision(concentration_significant_figures)
+    validate_concentration_matching(concentration_significant_figures, concentration_decimal_places)
     custom = {
         **_json_object(well.get("condition_custom_json")),
         **_json_object(well.get("custom_json")),
@@ -118,6 +121,7 @@ def cultivation_condition_key(
             custom,
             normalize_units=normalize_units,
             concentration_significant_figures=concentration_significant_figures,
+            concentration_decimal_places=concentration_decimal_places,
         ),
         "extra": {name: _json_normal(custom.get(name)) for name in additional},
     }
@@ -149,14 +153,39 @@ def validate_concentration_precision(value: int | None) -> None:
         raise _error("Concentration significant figures must be an integer from 1 to 12")
 
 
-def matching_concentration(value: object, significant_figures: int | None = None) -> str:
+def validate_concentration_decimal_places(value: int | None) -> None:
+    """Validate an optional number of places to the right of the decimal point."""
+
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 12
+    ):
+        raise _error("Concentration decimal places must be an integer from 0 to 12")
+
+
+def validate_concentration_matching(
+    significant_figures: int | None, decimal_places: int | None
+) -> None:
+    """A single rounding rule must determine the condition fingerprint."""
+
+    validate_concentration_precision(significant_figures)
+    validate_concentration_decimal_places(decimal_places)
+    if significant_figures is not None and decimal_places is not None:
+        raise _error("Choose either concentration significant figures or decimal places")
+
+
+def matching_concentration(
+    value: object,
+    significant_figures: int | None = None,
+    *,
+    concentration_decimal_places: int | None = None,
+) -> str:
     """Return a readable numeric dose for matching, with optional half-up rounding.
 
     Unrecognized text stays literal. The independent decimal context makes
     halfway cases deterministic even if another calculation changes global context.
     """
 
-    validate_concentration_precision(significant_figures)
+    validate_concentration_matching(significant_figures, concentration_decimal_places)
     canonical = _numeric(value)
     raw = _text(value)
     if not raw or isinstance(value, bool) or _NUMBER.fullmatch(raw) is None:
@@ -165,7 +194,18 @@ def matching_concentration(value: object, significant_figures: int | None = None
         number = Decimal(raw)
     except InvalidOperation:
         return canonical
-    if significant_figures is not None and number:
+    if concentration_decimal_places is not None:
+        try:
+            number = number.quantize(
+                Decimal(1).scaleb(-concentration_decimal_places),
+                rounding=ROUND_HALF_UP,
+                context=Context(
+                    prec=max(50, len(number.as_tuple().digits) + 15), Emin=MIN_EMIN, Emax=MAX_EMAX
+                ),
+            )
+        except DecimalException as error:
+            raise _error("Concentration cannot be rounded to the requested precision") from error
+    elif significant_figures is not None and number:
         context = Context(
             prec=significant_figures,
             rounding=ROUND_HALF_UP,
@@ -207,6 +247,7 @@ def _treatments(
     *,
     normalize_units: bool,
     concentration_significant_figures: int | None,
+    concentration_decimal_places: int | None,
 ) -> list[list[str]]:
     triples: list[list[str]] = []
     for index in range(1, 4):
@@ -219,8 +260,12 @@ def _treatments(
             unit = primary_condition_value(well, custom, "concentration_unit", "unit_1")
         numeric = (
             _numeric(concentration)
-            if concentration_significant_figures is None
-            else matching_concentration(concentration, concentration_significant_figures)
+            if concentration_significant_figures is None and concentration_decimal_places is None
+            else matching_concentration(
+                concentration,
+                concentration_significant_figures,
+                concentration_decimal_places=concentration_decimal_places,
+            )
         )
         triple = [_text(treatment), numeric, _unit_text(unit, normalize_units)]
         if any(triple):

@@ -30,6 +30,7 @@ from plate_reader.application.services import (
     SaveLayoutColumnService,
 )
 from plate_reader.application.services.growth_tabular_export import (
+    GROWTH_MEASUREMENT_HEADERS,
     GrowthTabularExportBundle,
     export_growth_tabular_data,
 )
@@ -157,24 +158,23 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
         csv.DictReader(io.StringIO(bundle.measurements.content.decode("utf-8")))
     )
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"))))
-    assert "Vessel" in measurement_rows[0]
+    assert tuple(measurement_rows[0]) == GROWTH_MEASUREMENT_HEADERS
     assert "Vessel" in metadata_rows[0]
-    assert all(row["Vessel"] == "" for row in measurement_rows)
+    assert all(row["Vessel"] == "" for row in metadata_rows)
     assert len(measurement_rows) == 768
     assert len(metadata_rows) == 192
     assert {row["Experiment Name"] for row in metadata_rows} == {
         "Experiment 0",
         "Experiment 1",
     }
-    assert {row["Experiment Name"] for row in measurement_rows} == {
-        "Experiment 0",
-        "Experiment 1",
-    }
     assert all(row["Raw OD"] for row in measurement_rows)
     assert all(row["Background Mean OD"] for row in measurement_rows)
     assert all(row["Background Subtracted OD"] for row in measurement_rows)
-    assert measurement_rows[0]["Date Time"] == "2026-08-18T09:30:00"
-    b1 = next(row for row in measurement_rows if row["Well"] == "B1")
+    assert "Date Time" not in measurement_rows[0]
+    assert "Date Time" not in metadata_rows[0]
+    b1 = next(
+        row for row in measurement_rows if (row["Well Row"], row["Well Column"]) == ("B", "1")
+    )
     assert b1["Condition 1 State"] == "Mecillinam 3.0 ug/mL"
     assert json.loads(metadata_rows[0]["Source Metadata JSON"])["Plate Number"] == "Plate 0"
     assert all("no cultivation ID" in warning for warning in bundle.warnings)
@@ -302,7 +302,7 @@ def test_selected_run_replicates_are_stable_and_read_only(
         data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
         metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
         return (
-            next(row for row in data if row["Well"] == "B1"),
+            next(row for row in data if (row["Well Row"], row["Well Column"]) == ("B", "1")),
             next(row for row in metadata if row["Well"] == "B1"),
         )
 
@@ -317,15 +317,15 @@ def test_selected_run_replicates_are_stable_and_read_only(
         } == expected
         data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
         for i, plate_id in enumerate(plate_ids, 1):
-            samples = [
-                row for row in data if row["Run ID"] == str(plate_id) and row["Well"] == "B1"
-            ]
+            cultivation = expected[str(plate_id)]
+            samples = [row for row in data if row["Cultivation ID"] == cultivation]
             assert {row["Replicate"] for row in samples} == {"1"}
-            assert {row["Local replicate"] for row in samples} == {"1"}
             assert {row["Concentration unit"] for row in samples} == {"ug/mL"}
             assert {row["Concentration"] for row in samples} == {("0.1875", "0.19")[i - 1]}
-            assert {row["Matching concentration"] for row in samples} == {"0.19"}
-            assert {row["Concentration matching significant figures"] for row in samples} == {"2"}
+            meta = next(row for row in metadata if row["Cultivation"] == cultivation)
+            assert meta["Local replicate"] == "1"
+            assert meta["Matching concentration"] == "0.19"
+            assert meta["Concentration matching significant figures"] == "2"
         assert bundle.measurements.row_count == 768
         assert bundle.metadata.row_count == 192
         assert all(row["Saved cultivation ID"] == "" for row in bundle.replicate_preview)
@@ -457,12 +457,13 @@ def test_persistent_plate_condition_ids_join_every_observation_and_survive_legac
         assert "Cultivation plate number" not in data[0]
         assert all(row["InternalCultivationID"] for row in metadata)
         assert len({row["InternalCultivationID"] for row in metadata}) == 192
-        meta_by_internal = {row["InternalCultivationID"]: row for row in metadata}
+        meta_by_cultivation = {row["Cultivation"]: row for row in metadata if row["Cultivation"]}
         for row in data:
-            meta = meta_by_internal[row["Internal cultivation ID"]]
-            assert row["Cultivation ID"] == meta["Cultivation"]
-            assert row["Local cultivation ID"] == meta["Local_Cultivation_ID"]
-            assert row["Cultivation experiment number"] == meta["CultivationExperimentNumber"]
+            if not row["Cultivation ID"]:
+                continue
+            meta = meta_by_cultivation[row["Cultivation ID"]]
+            assert row["Well Row"] == meta["Well Row"]
+            assert row["Well Column"] == meta["Well Column"]
             assert row["Replicate"] == meta["Replicate"]
             assert row["Raw OD"]
         for index, plate_id in enumerate(plate_ids, 1):
@@ -481,6 +482,8 @@ def test_persistent_plate_condition_ids_join_every_observation_and_survive_legac
             assert by_well["B2"]["TechnicalReplicate"] == "2"
             assert by_well["B2"]["BiologicalReplicateGroup"] == f"{index:02d}01"
             assert by_well["B1"]["Matching concentration"] == "0.19"
+            assert by_well["B1"]["Concentration matching decimal places"] == "2"
+            assert by_well["B1"]["Concentration matching significant figures"] == ""
             assert by_well["B1"]["Concentration"] == "0.1875"
             assert by_well["B1"]["LocalReplicate"] == "9"
     pair_meta = list(csv.DictReader(io.StringIO(pair.metadata.content.decode())))

@@ -14,7 +14,7 @@ from plate_reader.domain.common import DomainIssue, DomainValidationError, Issue
 from plate_reader.domain.growth.cultivation_conditions import (
     condition_json_object,
     cultivation_condition_key,
-    validate_concentration_precision,
+    validate_concentration_matching,
 )
 
 
@@ -148,6 +148,7 @@ def plan_export_condition_replicates(
     *,
     extra_fields: tuple[str, ...] = (),
     concentration_significant_figures: int | None = None,
+    concentration_decimal_places: int | None = None,
 ) -> Mapping[tuple[str, str], ConditionReplicate]:
     """Number only selected active wells, independently of saved cultivation IDs.
 
@@ -159,7 +160,7 @@ def plan_export_condition_replicates(
     This function never mutates rows or reserves a number outside this selection.
     """
 
-    validate_concentration_precision(concentration_significant_figures)
+    validate_concentration_matching(concentration_significant_figures, concentration_decimal_places)
     explicit_fields = set(_extra_fields(extra_fields))
     shared_fields: dict[str, set[str]] = defaultdict(set)
     fallback_values: dict[str, list[object]] = defaultdict(list)
@@ -210,6 +211,7 @@ def plan_export_condition_replicates(
             effective_fields[plate_id],
             normalize_units=True,
             concentration_significant_figures=concentration_significant_figures,
+            concentration_decimal_places=concentration_decimal_places,
         )
         candidates.append(_Candidate(row, plate_id, position, well_identity, key, scope, None))
         active_counts[(plate_id, key)] += 1

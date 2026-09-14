@@ -15,6 +15,8 @@ from plate_reader.domain.growth.cultivation_conditions import (
     condition_json_object,
     cultivation_condition_key,
     normalize_cultivation_condition_fields,
+    validate_concentration_decimal_places,
+    validate_concentration_matching,
     validate_concentration_precision,
 )
 
@@ -29,8 +31,11 @@ _NUMBER = re.compile(r"[0-9]+\Z")
 class RegistrySettings:
     team_code: str = ""
     system_code: str = ""
-    concentration_significant_figures: int | None = 2
+    concentration_significant_figures: int | None = None
     condition_fields: tuple[str, ...] = ()
+    concentration_decimal_places: int | None = 2
+    concentration_exact: bool = False
+    reassign_changed_conditions: bool = False
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,7 @@ class RegistryPlatePlan:
     assignments: tuple[dict[str, object], ...]
     warnings: tuple[str, ...] = ()
     notices: tuple[str, ...] = ()
+    reassignments: tuple[tuple[str, str, str], ...] = ()
 
 
 def plan_plate_condition_cultivations(
@@ -56,7 +62,9 @@ def plan_plate_condition_cultivations(
     a well subsequently becomes inactive. A preview cannot act as a correction.
     """
 
-    validate_concentration_precision(settings.concentration_significant_figures)
+    requested_decimal, requested_significant = _requested_precision(settings)
+    if not isinstance(settings.reassign_changed_conditions, bool):
+        raise _error("Reassign changed conditions must be a boolean")
     requested_fields = _fields(settings.condition_fields)
     if (
         not plate_ids
@@ -87,6 +95,7 @@ def plan_plate_condition_cultivations(
     plate_reservations: dict[int, str] = {}
     saved_numbers: dict[str, int] = {}
     saved_ids: dict[str, str] = {}
+    historical_ids: dict[str, set[str]] = defaultdict(set)
     active_other_ids: dict[str, str] = {}
     group_reservations: dict[str, dict[int, str]] = defaultdict(dict)
     replicate_reservations: dict[tuple[str, int], dict[int, str]] = defaultdict(dict)
@@ -100,6 +109,12 @@ def plan_plate_condition_cultivations(
             custom = condition_json_object(row.get("custom_json"))
             well_id = _text(row.get("well_id"))
             old_id = _text(custom.get("Cultivation"))
+            history = custom.get("PreviousCultivationIDs", [])
+            if not isinstance(history, list) or any(not isinstance(item, str) for item in history):
+                raise _error("PreviousCultivationIDs must be a list of IDs", well=well_id)
+            for historical_id in history:
+                if historical_id.strip():
+                    historical_ids[historical_id.strip()].add(well_id)
             if custom.get("CultivationNumberingScheme") != SCHEME:
                 if old_id:
                     active_other_ids[old_id] = well_id
@@ -146,10 +161,18 @@ def plan_plate_condition_cultivations(
         old_registry = _registry(plate_rows[0])
         existing = old_registry.get("scheme") == SCHEME
         number = _number(saved_numbers[plate_id])
-        precision = (
-            _precision(old_registry.get("CultivationConcentrationSignificantFigures"))
-            if existing
-            else settings.concentration_significant_figures
+        saved_decimal, saved_significant = (
+            _stored_precision(old_registry) if existing else (None, None)
+        )
+        upgrading = (
+            existing
+            and "CultivationConcentrationDecimalPlaces" not in old_registry
+            and requested_significant is None
+        )
+        decimal, significant = (
+            (requested_decimal, requested_significant)
+            if upgrading or not existing
+            else (saved_decimal, saved_significant)
         )
         fields = (
             _fields(old_registry.get("CultivationConditionFields"))
@@ -157,9 +180,17 @@ def plan_plate_condition_cultivations(
             else requested_fields
         )
         if existing and (
-            precision != settings.concentration_significant_figures or fields != requested_fields
+            (decimal, significant) != (requested_decimal, requested_significant)
+            or fields != requested_fields
         ):
             raise _error("Saved cultivation matching rules cannot be changed", plate_id=plate_id)
+        precision_metadata = (
+            {"CultivationConcentrationSignificantFigures": significant}
+            if existing
+            and not upgrading
+            and "CultivationConcentrationDecimalPlaces" not in old_registry
+            else _precision_metadata(decimal, significant)
+        )
         scope = _text(old_registry.get("CultivationReplicateScope"))
         eligible = any(
             not _blank(row.get("is_blank")) and _text(row.get("strain")) for row in plate_rows
@@ -186,15 +217,106 @@ def plan_plate_condition_cultivations(
             raise _error("Saved cultivation team/system cannot be changed", plate_id=plate_id)
 
         groups = group_reservations[plate_id].copy()
+        retired_groups = _retired_groups(old_registry.get("RetiredCultivationConditionNumbers"))
+        if retired_groups & groups.keys():
+            raise _error(
+                "Retired cultivation condition number is still assigned", plate_id=plate_id
+            )
+        reassigning = False
+        if upgrading:
+            target_rule = "exact" if settings.concentration_exact else "decimal-place"
+            # Permit an explicit reviewed metadata migration only when each saved
+            # group maps bijectively to one group under the requested rule.
+            old_to_new: dict[int, str] = {}
+            new_to_old: dict[str, int] = {}
+            for row in plate_rows:
+                custom = condition_json_object(row.get("custom_json"))
+                if custom.get("CultivationNumberingScheme") != SCHEME:
+                    continue
+                group = _group_number(custom["CultivationConditionNumber"])
+                new_key = cultivation_condition_key(
+                    row,
+                    row,
+                    _text(old_registry.get("CultivationReplicateScope")),
+                    fields,
+                    normalize_units=True,
+                    concentration_decimal_places=decimal,
+                    concentration_significant_figures=significant,
+                )
+                if (group in old_to_new and old_to_new[group] != new_key) or (
+                    new_key in new_to_old and new_to_old[new_key] != group
+                ):
+                    if not settings.reassign_changed_conditions:
+                        raise _error(
+                            f"{target_rule.capitalize()} matching changes saved condition groups; "
+                            "select "
+                            "'Reassign condition IDs if rounding changes groups', then preview "
+                            "and save the reviewed IDs",
+                            plate_id=plate_id,
+                        )
+                    reassigning = True
+                old_to_new[group] = new_key
+                new_to_old[new_key] = group
+            if reassigning:
+                # Keep an old group number with its first encountered new key.
+                # Retire all other old numbers, so changed IDs cannot later be
+                # assigned to an unrelated well.
+                old_numbers = set(groups) | retired_groups
+                groups = {}
+                key_to_reserved: dict[str, int] = {}
+                for row in plate_rows:
+                    custom = condition_json_object(row.get("custom_json"))
+                    if custom.get("CultivationNumberingScheme") != SCHEME:
+                        continue
+                    key = cultivation_condition_key(
+                        row,
+                        row,
+                        _text(old_registry.get("CultivationReplicateScope")),
+                        fields,
+                        normalize_units=True,
+                        concentration_decimal_places=decimal,
+                        concentration_significant_figures=significant,
+                    )
+                    if key in key_to_reserved:
+                        continue
+                    old_group = _group_number(custom["CultivationConditionNumber"])
+                    if old_group not in groups and old_group not in retired_groups:
+                        group = old_group
+                    else:
+                        group = next(
+                            (i for i in range(1, 97) if i not in old_numbers and i not in groups),
+                            0,
+                        )
+                    if not group:
+                        raise _error("A plate cannot have more than 96 cultivation conditions")
+                    key_to_reserved[key] = group
+                    groups[group] = key
+                retired_groups = old_numbers - set(groups)
+                for group in old_numbers:
+                    replicate_reservations[(plate_id, group)] = {}
+            else:
+                groups.update(old_to_new)
         key_to_group = {key: group for group, key in groups.items()}
         if len(key_to_group) != len(groups):
             raise _error(
                 "One condition is assigned multiple saved group numbers", plate_id=plate_id
             )
         assignments: list[dict[str, object]] = []
+        reassignments: list[tuple[str, str, str]] = []
         warnings: list[str] = []
         missing_strain_positions: list[str] = []
         notices: list[str] = []
+        if upgrading and not reassigning:
+            notices.append(
+                f"Saved significant-figure fingerprints will be updated to {target_rule} "
+                "matching; experiment, condition, replicate, and external IDs remain unchanged."
+            )
+        if reassigning:
+            notices.append(
+                f"{target_rule.capitalize()} matching changes condition groups. "
+                "Review every changed "
+                "cultivation ID before saving; previous IDs will be retained in history."
+            )
         strain_aliases: dict[str, str] = {}
         for row in plate_rows:
             custom = condition_json_object(row.get("custom_json"))
@@ -206,11 +328,12 @@ def plan_plate_condition_cultivations(
                 "Local_Cultivation_ID": f"EXP{number}-{pos[0]}{int(pos[1:]):02d}",
                 "CultivationPlateNumber": number,
             }
-            saved = custom.get("CultivationNumberingScheme") == SCHEME
+            was_saved = custom.get("CultivationNumberingScheme") == SCHEME
+            saved = was_saved and not reassigning
             is_blank = _blank(row.get("is_blank"))
             strain = _text(row.get("strain"))
             if is_blank or not strain:
-                if saved:
+                if was_saved:
                     raise _error("Saved cultivation became blank or lost its strain", well=well_id)
                 if not is_blank:
                     missing_strain_positions.append(pos)
@@ -235,17 +358,23 @@ def plan_plate_condition_cultivations(
                 scope,
                 fields,
                 normalize_units=True,
-                concentration_significant_figures=precision,
+                concentration_significant_figures=significant,
+                concentration_decimal_places=decimal,
             )
             if saved:
-                if key != custom["CultivationConditionKey"]:
+                if not upgrading and key != custom["CultivationConditionKey"]:
                     raise _error("Saved cultivation conditions changed", well=well_id)
                 group = _group_number(custom["CultivationConditionNumber"])
                 rep = _positive_int(custom.get("CultivationReplicate"), "technical replicate")
             else:
                 group = key_to_group.get(key, 0)
                 if not group:
-                    group = next((i for i in range(1, 97) if i not in groups), 0)
+                    reserved_old = (
+                        set(group_reservations[plate_id]) if reassigning else set()
+                    ) | retired_groups
+                    group = next(
+                        (i for i in range(1, 97) if i not in groups and i not in reserved_old), 0
+                    )
                     if not group:
                         raise _error(
                             "A plate cannot have more than 96 cultivation conditions",
@@ -254,7 +383,17 @@ def plan_plate_condition_cultivations(
                     groups[group] = key
                     key_to_group[key] = group
                 occupied = replicate_reservations[(plate_id, group)]
-                rep = next(i for i in range(1, len(occupied) + 2) if i not in occupied)
+                rep = 1
+                while True:
+                    candidate_id = _external(team, strain, system, f"{number}{_number(group)}", rep)
+                    owner = saved_ids.get(candidate_id) or active_other_ids.get(candidate_id)
+                    if (
+                        rep not in occupied
+                        and (not reassigning or owner is None or owner == well_id)
+                        and not historical_ids.get(candidate_id, set()) - {well_id}
+                    ):
+                        break
+                    rep += 1
                 occupied[rep] = well_id
             condition = _number(group)
             run = f"{number}{condition}"
@@ -263,6 +402,11 @@ def plan_plate_condition_cultivations(
             if conflicting is not None and conflicting != well_id:
                 raise _error(
                     "Cultivation ID collides with another saved ID", cultivation=cultivation
+                )
+            if historical_ids.get(cultivation, set()) - {well_id}:
+                raise _error(
+                    "Cultivation ID collides with another well's previous ID",
+                    cultivation=cultivation,
                 )
             saved_ids[cultivation] = well_id
             assignment.update(
@@ -282,16 +426,18 @@ def plan_plate_condition_cultivations(
                     "CultivationSystemCode": system,
                     "CultivationConditionKey": key,
                     "CultivationConditionFields": list(fields),
-                    "CultivationConcentrationSignificantFigures": precision,
                     "CultivationReplicateScope": scope,
                     "LocalReplicate": custom.get("LocalReplicate", row.get("replicate")),
                 }
             )
+            assignment.update(precision_metadata)
             if (
                 not saved
                 and _text(custom.get("Cultivation"))
                 and custom["Cultivation"] != cultivation
             ):
+                if was_saved:
+                    reassignments.append((pos, str(custom["Cultivation"]), cultivation))
                 history = custom.get("PreviousCultivationIDs", [])
                 if not isinstance(history, list) or any(
                     not isinstance(value, str) for value in history
@@ -322,7 +468,6 @@ def plan_plate_condition_cultivations(
                 "CultivationIDPattern": PLATE_CONDITION_PATTERN,
                 "CultivationExperimentCode": number,
                 "CultivationConditionFields": list(fields),
-                "CultivationConcentrationSignificantFigures": precision,
                 "CultivationReplicateScope": scope,
                 "CultivationExperiment": "; ".join(
                     dict.fromkeys(
@@ -333,12 +478,25 @@ def plan_plate_condition_cultivations(
                 ),
             }
         )
+        registry.update(precision_metadata)
+        if retired_groups:
+            registry["RetiredCultivationConditionNumbers"] = [
+                _number(group) for group in sorted(retired_groups)
+            ]
+        if upgrading:
+            registry.pop("CultivationConcentrationSignificantFigures", None)
         if team:
             registry["Team_Code"] = team
         if system:
             registry["CultivationSystemCode"] = system
         plans[plate_id] = RegistryPlatePlan(
-            plate_id, number, registry, tuple(assignments), tuple(warnings), tuple(notices)
+            plate_id,
+            number,
+            registry,
+            tuple(assignments),
+            tuple(warnings),
+            tuple(notices),
+            tuple(reassignments),
         )
     return tuple(plans[plate_id] for plate_id in plate_ids)
 
@@ -411,7 +569,7 @@ def _saved_identity(
     }:
         raise _error("Saved local cultivation position is inconsistent")
     fields = _fields(custom.get("CultivationConditionFields"))
-    precision = _precision(custom.get("CultivationConcentrationSignificantFigures"))
+    decimal, significant = _stored_precision(custom)
     scope = _text(custom.get("CultivationReplicateScope"))
     key = custom.get("CultivationConditionKey")
     if not isinstance(key, str) or not key:
@@ -422,7 +580,8 @@ def _saved_identity(
         scope,
         fields,
         normalize_units=True,
-        concentration_significant_figures=precision,
+        concentration_significant_figures=significant,
+        concentration_decimal_places=decimal,
     ):
         raise _error("Saved cultivation condition fingerprint changed")
     if validate_current and registry.get("scheme") == SCHEME:
@@ -431,7 +590,6 @@ def _saved_identity(
             "CultivationIDPattern": PLATE_CONDITION_PATTERN,
             "CultivationExperimentCode": number,
             "CultivationConditionFields": list(fields),
-            "CultivationConcentrationSignificantFigures": precision,
             "CultivationReplicateScope": scope,
             "Team_Code": team,
             "CultivationSystemCode": system,
@@ -439,12 +597,14 @@ def _saved_identity(
         for field, value in shared.items():
             if registry.get(field) != value:
                 raise _error("Saved plate and well cultivation rules disagree", field=field)
+        if _stored_precision(registry) != (decimal, significant):
+            raise _error("Saved plate and well cultivation rules disagree", field="concentration")
     return {
         **required,
         "Local_Cultivation_ID": custom["Local_Cultivation_ID"],
         "CultivationConditionKey": key,
         "CultivationConditionFields": list(fields),
-        "CultivationConcentrationSignificantFigures": precision,
+        **_precision_metadata(decimal, significant),
         "CultivationReplicateScope": scope,
         "CultivationExperiment": custom.get("CultivationExperiment", ""),
     }
@@ -510,6 +670,38 @@ def _precision(value: object) -> int | None:
     return value  # type: ignore[return-value]
 
 
+def _requested_precision(settings: RegistrySettings) -> tuple[int | None, int | None]:
+    if not isinstance(settings.concentration_exact, bool):
+        raise _error("Concentration exact mode must be a boolean")
+    if settings.concentration_exact:
+        if settings.concentration_significant_figures is not None:
+            raise _error("Exact concentration matching cannot also specify significant figures")
+        return None, None
+    # The third positional argument is the historical significant-figure API.
+    # Its explicit use takes precedence over the new default of two decimal places.
+    if settings.concentration_significant_figures is not None:
+        return None, _precision(settings.concentration_significant_figures)
+    validate_concentration_decimal_places(settings.concentration_decimal_places)
+    return settings.concentration_decimal_places, None
+
+
+def _stored_precision(source: Mapping[str, object]) -> tuple[int | None, int | None]:
+    if "CultivationConcentrationDecimalPlaces" in source:
+        decimal = source["CultivationConcentrationDecimalPlaces"]
+        validate_concentration_decimal_places(decimal)  # type: ignore[arg-type]
+        return decimal, None  # type: ignore[return-value]
+    return None, _precision(source.get("CultivationConcentrationSignificantFigures"))
+
+
+def _precision_metadata(decimal: int | None, significant: int | None) -> dict[str, object]:
+    validate_concentration_matching(significant, decimal)
+    return (
+        {"CultivationConcentrationDecimalPlaces": decimal}
+        if significant is None
+        else {"CultivationConcentrationSignificantFigures": significant}
+    )
+
+
 def _resolved_code(
     requested: str,
     registry: Mapping[str, object],
@@ -555,6 +747,17 @@ def _group_number(value: object) -> int:
     if number > 96:
         raise _error("Saved cultivation condition must be between 01 and 96")
     return number
+
+
+def _retired_groups(value: object) -> set[int]:
+    if value is None:
+        return set()
+    if not isinstance(value, list):
+        raise _error("Retired cultivation condition numbers must be a list")
+    numbers = {_group_number(item) for item in value}
+    if len(numbers) != len(value):
+        raise _error("Retired cultivation condition numbers contain duplicates")
+    return numbers
 
 
 def _positive_int(value: object, field: str) -> int:

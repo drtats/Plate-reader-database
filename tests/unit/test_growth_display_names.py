@@ -44,6 +44,36 @@ def test_formula_uses_ordered_fields_and_only_selected_wells() -> None:
     assert (preview.changed_count, preview.overwrite_count, preview.clear_count) == (2, 1, 0)
 
 
+@pytest.mark.parametrize("unit", ("ug/mL", "μg/mL", "µg/mL", "Œºg/mL", "Âµg/mL", "Î¼g/mL"))
+def test_formula_normalizes_unit_tokens_without_changing_other_fields(unit: str) -> None:
+    wells = list(growth_wells())
+    wells[0] = {
+        **wells[0],
+        "strain": "μstrain",
+        "treatment": "Sulfadiazine",
+        "concentration": 384,
+        "concentration_unit": unit,
+        "medium": "MOPS",
+    }
+
+    preview = BuildGrowthDisplayNamesService().execute(
+        wells,
+        {},
+        ("A1",),
+        GrowthDisplayNameOptions(
+            tokens=(
+                well_token("strain"),
+                well_token("treatment"),
+                well_token("concentration"),
+                well_token("concentration_unit"),
+                well_token("medium"),
+            )
+        ),
+    )
+
+    assert preview.changes[0].proposed_name == "μstrain_Sulfadiazine_384_ug/mL_MOPS"
+
+
 def test_formula_supports_plate_custom_and_numeric_format_tokens() -> None:
     preview = BuildGrowthDisplayNamesService().execute(
         growth_wells(),

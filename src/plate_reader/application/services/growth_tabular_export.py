@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from string import Formatter
+from typing import cast
 
 from plate_reader.application.contracts import Actor, AssayType, PlateId
 from plate_reader.application.services.growth_cultivation import (
@@ -38,13 +39,13 @@ from plate_reader.domain.growth.cultivation_conditions import (
     cultivation_condition_key,
     matching_concentration,
     primary_condition_value,
-    validate_concentration_precision,
+    validate_concentration_matching,
 )
 from plate_reader.domain.growth.cultivation_registry import (
     SCHEME,
     saved_plate_condition_identity,
 )
-from plate_reader.domain.growth.units import normalize_growth_unit
+from plate_reader.domain.growth.units import normalize_growth_label, normalize_growth_unit
 
 GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
     "Cultivation ID",
@@ -100,10 +101,12 @@ GROWTH_REGISTRY_METADATA_HEADERS = (
     "TechnicalReplicate",
     "BiologicalReplicateGroup",
     "CultivationConcentrationSignificantFigures",
+    "CultivationConcentrationDecimalPlaces",
 )
 
 GROWTH_MATCHING_CONCENTRATION_HEADERS = (
     "Concentration matching significant figures",
+    "Concentration matching decimal places",
     "Matching concentration",
     "Matching concentration 2",
     "Matching concentration 3",
@@ -165,7 +168,7 @@ GROWTH_ADDITIONAL_LAYOUT_HEADERS = (
     "Concentration unit 3",
 )
 
-GROWTH_MEASUREMENT_HEADERS = (
+_PREVIOUS_MEASUREMENT_HEADERS = (
     *GROWTH_REGISTRY_MEASUREMENT_HEADERS,
     *_LEGACY_GROWTH_MEASUREMENT_HEADERS,
     *GROWTH_ADDITIONAL_LAYOUT_HEADERS,
@@ -173,7 +176,7 @@ GROWTH_MEASUREMENT_HEADERS = (
     "Experiment Date",
 )
 
-GROWTH_METADATA_HEADERS = (
+_PREVIOUS_METADATA_HEADERS = (
     *GROWTH_REGISTRY_METADATA_HEADERS,
     "Run ID",
     "Project",
@@ -199,6 +202,64 @@ GROWTH_METADATA_HEADERS = (
     "Experiment Metadata JSON",
     "Plate Metadata JSON",
     *GROWTH_MATCHING_CONCENTRATION_HEADERS,
+)
+
+# Recipient-facing observation order supplied in the user's reference workbook.
+GROWTH_MEASUREMENT_HEADERS = (
+    "Cultivation ID",
+    "Strain",
+    "Media",
+    "Inoculum size",
+    "Replicate",
+    "Cultivation Short ID",
+    "Time Min",
+    "Culture_Age_h",
+    "Background Subtracted OD",
+    "Raw OD",
+    "Background Mean OD",
+    "Background SD OD",
+    "Well Row",
+    "Well Column",
+    "Inoculum_condition",
+    "Condition 1 State",
+    "Condition 2 State",
+    "Condition 3 State",
+    "Treatment",
+    "Concentration",
+    "Concentration unit",
+)
+_OMITTED_EXPORT_HEADERS = frozenset(
+    {
+        "Date Time",
+        "Culture Age H",
+        "Background Blank N",
+        "Background QC Flag",
+        "Background QC Reason",
+    }
+)
+_MEASUREMENT_ONLY_HEADERS = frozenset(
+    {
+        "Time Min",
+        "Culture_Age_h",
+        "Background Subtracted OD",
+        "Raw OD",
+        "Background Mean OD",
+        "Background SD OD",
+    }
+)
+_MOVED_METADATA_HEADERS = tuple(
+    name
+    for name in _PREVIOUS_MEASUREMENT_HEADERS
+    if name not in _OMITTED_EXPORT_HEADERS | _MEASUREMENT_ONLY_HEADERS
+)
+GROWTH_METADATA_HEADERS = tuple(
+    dict.fromkeys(
+        (
+            *_MOVED_METADATA_HEADERS,
+            "Inoculum_condition",
+            *_PREVIOUS_METADATA_HEADERS,
+        )
+    )
 )
 
 _EDITABLE_METADATA_KEYS = (
@@ -242,6 +303,7 @@ class ExportGrowthTabularData:
     condition_fields: tuple[str, ...] = ()
     cultivation_settings: ExportCultivationSettings | None = None
     concentration_significant_figures: int | None = None
+    concentration_decimal_places: int | None = None
     require_saved_cultivation_ids: bool = False
 
 
@@ -278,8 +340,10 @@ class _RunContext:
     culture_age_hours: float
     culture_volume_ul: object | None
     microplate_id: str
+    channels_by_well: Mapping[str, str]
     effective_identities: Mapping[str, Mapping[str, object]] | None = None
     concentration_significant_figures: int | None = None
+    concentration_decimal_places: int | None = None
 
 
 class ExportGrowthTabularDataService:
@@ -290,7 +354,9 @@ class ExportGrowthTabularDataService:
 
     def execute(self, command: ExportGrowthTabularData) -> GrowthTabularExportBundle:
         _validate_matching_mode(
-            command.assign_selected_replicates, command.concentration_significant_figures
+            command.assign_selected_replicates,
+            command.concentration_significant_figures,
+            command.concentration_decimal_places,
         )
         if not command.plate_ids:
             raise ValueError("Select at least one Growth run to export")
@@ -316,6 +382,7 @@ class ExportGrowthTabularDataService:
             cultivation_settings=command.cultivation_settings,
             experiment_codes=experiment_codes,
             concentration_significant_figures=command.concentration_significant_figures,
+            concentration_decimal_places=command.concentration_decimal_places,
             require_saved_cultivation_ids=command.require_saved_cultivation_ids,
         )
 
@@ -329,11 +396,14 @@ def export_growth_tabular_data(
     cultivation_settings: ExportCultivationSettings | None = None,
     experiment_codes: Mapping[str, str] | None = None,
     concentration_significant_figures: int | None = None,
+    concentration_decimal_places: int | None = None,
     require_saved_cultivation_ids: bool = False,
 ) -> GrowthTabularExportBundle:
     """Build deterministic multi-run measurement and metadata CSV files."""
 
-    _validate_matching_mode(assign_selected_replicates, concentration_significant_figures)
+    _validate_matching_mode(
+        assign_selected_replicates, concentration_significant_figures, concentration_decimal_places
+    )
     if not views:
         raise ValueError("Growth tabular export requires at least one run")
     plate_ids = tuple(str(view.snapshot.plate_id) for view in views)
@@ -364,6 +434,7 @@ def export_growth_tabular_data(
                 cultivation_settings,
                 experiment_codes or {},
                 concentration_significant_figures,
+                concentration_decimal_places,
             )
         )
     exported_custom_columns = _custom_column_names(views, custom_columns)
@@ -373,7 +444,7 @@ def export_growth_tabular_data(
     metadata_stream = io.StringIO(newline="")
     measurement_writer = csv.writer(measurement_stream, lineterminator="\n")
     metadata_writer = csv.writer(metadata_stream, lineterminator="\n")
-    measurement_writer.writerow((*GROWTH_MEASUREMENT_HEADERS, *exported_custom_columns))
+    measurement_writer.writerow(GROWTH_MEASUREMENT_HEADERS)
     metadata_writer.writerow((*GROWTH_METADATA_HEADERS, *exported_custom_columns))
 
     measurement_count = 0
@@ -394,24 +465,12 @@ def export_growth_tabular_data(
                 seen_cultivations.add(cultivation)
             elif not bool(well.get("is_blank", False)):
                 missing_id_positions.append(str(well.get("position", "")))
+            values = _well_export_fields(context, well, registry)
             metadata_writer.writerow(
-                (
-                    *(registry[header] for header in GROWTH_REGISTRY_METADATA_HEADERS),
-                    *_run_metadata_row(context),
-                    *_separate_conditions(well),
-                    well.get("position"),
-                    _json_cell(_well_custom(well)),
-                    _json_cell(
-                        _json_object(context.view.snapshot.metadata.get("experiment_custom_json"))
-                    ),
-                    _json_cell(
-                        _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
-                    ),
-                    *_matching_concentration_row(well, _well_matching_precision(context, well)),
-                    *(
-                        _custom_cell(_custom_value(_well_custom(well), column))
-                        for column in exported_custom_columns
-                    ),
+                tuple(_custom_cell(values.get(header)) for header in GROWTH_METADATA_HEADERS)
+                + tuple(
+                    _custom_cell(_custom_value(_well_custom(well), column))
+                    for column in exported_custom_columns
                 )
             )
             metadata_count += 1
@@ -420,9 +479,9 @@ def export_growth_tabular_data(
                 f"{_run_label(context)}: {len(missing_id_positions)} wells have no cultivation ID "
                 f"({', '.join(missing_id_positions)}); add missing strain names in Layout and "
                 "preview/save cultivation IDs. "
-                "Their measurement rows and internal IDs are retained."
+                "Their measurements and metadata internal IDs are retained."
             )
-        for row in _measurement_rows(context, exported_custom_columns):
+        for row in _measurement_rows(context):
             measurement_writer.writerow(row)
             measurement_count += 1
 
@@ -461,48 +520,67 @@ def _persistent_identity(context: _RunContext, well: Mapping[str, object]) -> di
     return identity
 
 
-def _well_matching_precision(context: _RunContext, well: Mapping[str, object]) -> int | None:
+def _well_matching_precision(
+    context: _RunContext, well: Mapping[str, object]
+) -> tuple[int | None, int | None]:
     custom = _well_custom(well)
     if custom.get("CultivationNumberingScheme") == SCHEME:
-        precision = custom.get("CultivationConcentrationSignificantFigures")
-        if precision is not None and (
-            isinstance(precision, bool) or not isinstance(precision, int)
-        ):
-            raise _cultivation_error("Saved concentration matching precision must be an integer")
-        validate_concentration_precision(precision)
-        return precision
-    return context.concentration_significant_figures
+        significant = custom.get("CultivationConcentrationSignificantFigures")
+        decimal = custom.get("CultivationConcentrationDecimalPlaces")
+        for precision in (significant, decimal):
+            if precision is not None and (
+                isinstance(precision, bool) or not isinstance(precision, int)
+            ):
+                raise _cultivation_error(
+                    "Saved concentration matching precision must be an integer"
+                )
+        significant = cast(int | None, significant)
+        decimal = cast(int | None, decimal)
+        validate_concentration_matching(significant, decimal)
+        return significant, decimal
+    return context.concentration_significant_figures, context.concentration_decimal_places
 
 
-def _validate_matching_mode(assign_replicates: bool, precision: int | None) -> None:
-    validate_concentration_precision(precision)
-    if precision is not None and not assign_replicates:
+def _validate_matching_mode(
+    assign_replicates: bool, precision: int | None, decimal_places: int | None = None
+) -> None:
+    validate_concentration_matching(precision, decimal_places)
+    if (precision is not None or decimal_places is not None) and not assign_replicates:
         raise _cultivation_error(
             "Concentration rounding requires selected-run replicate assignment"
         )
 
 
 def _matching_concentration_row(
-    well: Mapping[str, object],
-    precision: int | None,
+    well: Mapping[str, object], precision: tuple[int | None, int | None]
 ) -> tuple[object, ...]:
-    """Expose comparison doses alongside unchanged entered doses in each CSV."""
-
+    """Expose comparison doses and their explicit rule alongside entered doses."""
+    significant, decimal = precision
     conditions = _separate_conditions(well)
     return (
-        "exact" if precision is None else precision,
-        *(matching_concentration(conditions[index], precision) for index in (1, 4, 7)),
+        significant if significant is not None else ("exact" if decimal is None else ""),
+        decimal if decimal is not None else "",
+        *(
+            matching_concentration(
+                conditions[index], significant, concentration_decimal_places=decimal
+            )
+            for index in (1, 4, 7)
+        ),
     )
 
 
-def _concentration_summary(well: Mapping[str, object], precision: int | None) -> str:
+def _concentration_summary(
+    well: Mapping[str, object], precision: int | None, decimal_places: int | None = None
+) -> str:
     conditions = _separate_conditions(well)
     return "; ".join(
         " ".join(
             part
             for part in (
                 _cell_text(conditions[index]),
-                matching_concentration(conditions[index + 1], precision),
+                matching_concentration(
+                    conditions[index + 1], precision, concentration_decimal_places=decimal_places
+                ),
                 _cell_text(conditions[index + 2]),
             )
             if part
@@ -510,6 +588,13 @@ def _concentration_summary(well: Mapping[str, object], precision: int | None) ->
         for index in (0, 3, 6)
         if any(_cell_text(value) for value in conditions[index : index + 3])
     )
+
+
+def _matching_description(precision: tuple[int | None, int | None]) -> str:
+    significant, decimal = precision
+    if decimal is not None:
+        return f"{decimal} decimal places"
+    return "Exact values" if significant is None else f"{significant} significant figures"
 
 
 def _selected_experiment_codes(contexts: Sequence[_RunContext]) -> Mapping[str, str]:
@@ -545,6 +630,7 @@ def _selection_contexts(
     settings: ExportCultivationSettings | None,
     experiment_codes: Mapping[str, str],
     concentration_significant_figures: int | None,
+    concentration_decimal_places: int | None,
 ) -> tuple[
     tuple[_RunContext, ...],
     tuple[str, ...],
@@ -573,6 +659,7 @@ def _selection_contexts(
         rows,
         extra_fields=condition_fields,
         concentration_significant_figures=concentration_significant_figures,
+        concentration_decimal_places=concentration_decimal_places,
     )
     # Summary for display only; each well's key retains its own run's matching fields.
     fields = tuple(
@@ -603,18 +690,18 @@ def _selection_contexts(
                         "Strain": _first_text(well.get("strain")),
                         "Local replicate": well.get("replicate"),
                         "Export replicate": identity["CultivationReplicate"],
-                        "Concentration matching": "Exact values"
-                        if (
+                        "Concentration matching": _matching_description(
                             preview_precision := (
                                 _well_matching_precision(context, well)
                                 if _well_custom(well).get("CultivationNumberingScheme") == SCHEME
-                                else concentration_significant_figures
+                                else (
+                                    concentration_significant_figures,
+                                    concentration_decimal_places,
+                                )
                             )
-                        )
-                        is None
-                        else f"{preview_precision} significant figures",
+                        ),
                         "Entered concentrations": _concentration_summary(well, None),
-                        "Matching concentrations": _concentration_summary(well, preview_precision),
+                        "Matching concentrations": _concentration_summary(well, *preview_precision),
                         "Experiment number": identity["CultivationExperimentCode"],
                         "Matching wells": plan.matching_wells,
                         "Matching fields": ", ".join(plan.extra_fields),
@@ -627,6 +714,7 @@ def _selection_contexts(
                 context,
                 effective_identities=identities,
                 concentration_significant_figures=concentration_significant_figures,
+                concentration_decimal_places=concentration_decimal_places,
             )
         )
     warnings = tuple(
@@ -863,7 +951,21 @@ def _run_context(view: GrowthRunView) -> _RunContext:
         culture_age_hours=culture_age,
         culture_volume_ul=culture_volume,
         microplate_id=microplate_id,
+        channels_by_well=_well_channels(view),
     )
+
+
+def _well_channels(view: GrowthRunView) -> dict[str, str]:
+    channels: dict[str, set[str]] = {}
+    for observation in view.snapshot.raw_observations:
+        channels.setdefault(str(observation.get("well_id")), set()).add(str(observation["channel"]))
+    if any(len(values) > 1 for values in channels.values()):
+        raise _cultivation_error(
+            "Recipient export requires one signal type per well; multiple signal types "
+            "would be indistinguishable in this file layout. Use the portable export "
+            "to retain all channels."
+        )
+    return {well_id: ", ".join(sorted(values)) for well_id, values in channels.items()}
 
 
 def _run_label(context: _RunContext) -> str:
@@ -910,12 +1012,6 @@ def _require_saved_registry_ids(contexts: Sequence[_RunContext]) -> None:
 
 def _run_warnings(context: _RunContext) -> tuple[str, ...]:
     warnings: list[str] = []
-    if context.start_datetime is None:
-        warnings.append(
-            f"{_run_label(context)}: source start date/time is unavailable; Date Time is blank. "
-            "Experiment Date and elapsed measurement times are retained; a date alone cannot "
-            "supply the missing clock time."
-        )
     if context.view.background_is_stale:
         warnings.append(
             f"{_run_label(context)}: current background revision is stale; corrected OD is blank. "
@@ -945,9 +1041,103 @@ def _run_metadata_row(context: _RunContext) -> tuple[object, ...]:
     )
 
 
-def _measurement_rows(
-    context: _RunContext, custom_columns: Sequence[str]
-) -> tuple[tuple[object, ...], ...]:
+def _well_export_fields(
+    context: _RunContext, well: Mapping[str, object], registry: Mapping[str, object]
+) -> dict[str, object]:
+    """Share fixed per-well values between the compact observations and metadata."""
+    custom = _well_custom(well)
+    position = _required_text(well.get("position"), "Growth export well position")
+    conditions = _separate_conditions(well)
+    units = (conditions[2], conditions[5], conditions[8], well.get("inoculum_unit"))
+    identity_headers = tuple(h for h in GROWTH_REGISTRY_MEASUREMENT_HEADERS if h != "Culture_Age_h")
+    identity_keys = (
+        "Cultivation",
+        "SavedCultivation",
+        "CultivationExperimentCode",
+        "CultivationIDPattern",
+        "CultivationReplicate",
+        "CultivationReplicateScope",
+        "CultivationConditionKey",
+        "InternalCultivationID",
+        "Local_Cultivation_ID",
+        "CultivationExperimentNumber",
+        "CultivationConditionNumber",
+        "TechnicalReplicate",
+        "BiologicalReplicateGroup",
+    )
+    values: dict[str, object] = dict(registry)
+    values.update(zip(identity_headers, (registry[key] for key in identity_keys), strict=True))
+    values.update(
+        zip(
+            _PREVIOUS_METADATA_HEADERS[len(GROWTH_REGISTRY_METADATA_HEADERS) :][:10],
+            _run_metadata_row(context),
+            strict=True,
+        )
+    )
+    values.update(
+        {
+            "Cultivation Short ID": normalize_growth_label(
+                _display_name(well, position), units=units
+            ),
+            "Well Row": position[0],
+            "Well Column": int(position[1:]),
+            "Culture Volume uL": context.culture_volume_ul,
+            "Microplate ID": registry.get("CultivationExperimentNumber") or context.experiment_name,
+            "Well": position,
+            "Signal Type": context.channels_by_well.get(str(well.get("well_id")), ""),
+            "Blank": bool(well.get("is_blank", False)),
+            "BG Group": _background_group(well),
+            "Notes": well.get("notes"),
+            "Local replicate": well.get("replicate"),
+            "Raw label": well.get("raw_label"),
+            "Display name": normalize_growth_label(well.get("display_name"), units=units),
+            "Background group": _background_group(well),
+            "Plot": bool(well.get("plot_selected", False)),
+            "Group": well.get("grouping_label"),
+            "Inoculum size": well.get("inoculum_size"),
+            "Inoculum unit": normalize_growth_unit(well.get("inoculum_unit")),
+            "T0 added (min)": custom.get("t0_added_min"),
+            "Inoculum_condition": _custom_value(custom, "Inoculum_condition"),
+            "Well Metadata JSON": _json_cell(custom),
+            "Experiment Metadata JSON": _json_cell(
+                _json_object(context.view.snapshot.metadata.get("experiment_custom_json"))
+            ),
+            "Plate Metadata JSON": _json_cell(
+                _json_object(context.view.snapshot.metadata.get("plate_custom_json"))
+            ),
+        }
+    )
+    values.update(
+        {f"Condition {index} State": _condition_state(well, custom, index) for index in range(1, 4)}
+    )
+    values.update(
+        zip(
+            (
+                "Treatment",
+                "Concentration",
+                "Concentration unit",
+                "Treatment 2",
+                "Concentration 2",
+                "Concentration unit 2",
+                "Treatment 3",
+                "Concentration 3",
+                "Concentration unit 3",
+            ),
+            conditions,
+            strict=True,
+        )
+    )
+    values.update(
+        zip(
+            GROWTH_MATCHING_CONCENTRATION_HEADERS,
+            _matching_concentration_row(well, _well_matching_precision(context, well)),
+            strict=True,
+        )
+    )
+    return values
+
+
+def _measurement_rows(context: _RunContext) -> tuple[tuple[object, ...], ...]:
     wells_by_id = {
         _required_text(well.get("well_id"), "Growth export well ID"): well
         for well in context.view.snapshot.wells
@@ -975,118 +1165,43 @@ def _measurement_rows(
         for row in context.view.backgrounds
     }
     result: list[tuple[object, ...]] = []
+    registry_by_id = {
+        well_id: _cultivation_metadata(context, well) for well_id, well in wells_by_id.items()
+    }
+    fixed_by_id = {
+        well_id: _well_export_fields(context, well, registry_by_id[well_id])
+        for well_id, well in wells_by_id.items()
+    }
     for observation in observations:
         well_id = _required_text(observation.get("well_id"), "Growth observation well ID")
         if well_id not in wells_by_id:
             raise ValueError(f"Growth observation references unknown well ID: {well_id}")
         well = wells_by_id[well_id]
-        position = _required_text(well.get("position"), "Growth export well position")
-        custom = _well_custom(well)
-        registry = _cultivation_metadata(context, well)
         channel = _required_text(observation.get("channel"), "Growth observation channel")
         time_index = _integer(observation.get("time_index"), "Growth observation time index")
         elapsed = _integer(
             observation.get("elapsed_microseconds"), "Growth observation elapsed time"
         )
-        elapsed_minutes = elapsed / 60_000_000
-        group = _background_group(well)
-        background = backgrounds.get((group, channel, time_index, elapsed))
+        background = backgrounds.get((_background_group(well), channel, time_index, elapsed))
         raw_od = _optional_float(observation.get("value_raw"))
-        if background is None:
-            background_mean = None
-            background_sd = None
-            blank_count = None
-            corrected_od = None
-            qc_flag = True
-            qc_reason = (
-                "stale_background_revision"
-                if context.view.background_is_stale
-                else (
-                    "missing_background_revision"
-                    if not context.view.backgrounds
-                    else "missing_background"
-                )
-            )
-        else:
-            background_mean = _optional_float(background.get("mean_value"))
-            background_sd = _optional_float(background.get("std_value"))
-            blank_count = background.get("blank_count")
-            corrected_od = (
-                max(_CORRECTED_OD_FLOOR, raw_od - background_mean)
-                if raw_od is not None and background_mean is not None
-                else None
-            )
-            qc_status = _first_text(background.get("qc_status"), "missing")
-            qc_flag = qc_status != "good"
-            qc_reason = "" if not qc_flag else qc_status
-        conditions = tuple(_condition_state(well, custom, index) for index in range(1, 4))
-        date_time = (
-            (context.start_datetime + timedelta(microseconds=elapsed)).isoformat(timespec="seconds")
-            if context.start_datetime is not None
-            else ""
+        background_mean = _optional_float(background.get("mean_value")) if background else None
+        background_sd = _optional_float(background.get("std_value")) if background else None
+        corrected_od = (
+            max(_CORRECTED_OD_FLOOR, raw_od - background_mean)
+            if raw_od is not None and background_mean is not None
+            else None
         )
+        values = {
+            **fixed_by_id[well_id],
+            "Time Min": elapsed / 60_000_000,
+            "Culture_Age_h": _culture_age(context, registry_by_id[well_id], elapsed),
+            "Raw OD": raw_od,
+            "Background Mean OD": background_mean,
+            "Background SD OD": background_sd,
+            "Background Subtracted OD": corrected_od,
+        }
         result.append(
-            (
-                registry["Cultivation"],
-                registry["SavedCultivation"],
-                registry["CultivationExperimentCode"],
-                registry["CultivationIDPattern"],
-                registry["CultivationReplicate"],
-                registry["CultivationReplicateScope"],
-                registry["CultivationConditionKey"],
-                _culture_age(context, registry, elapsed),
-                registry["InternalCultivationID"],
-                registry["Local_Cultivation_ID"],
-                registry["CultivationExperimentNumber"],
-                registry["CultivationConditionNumber"],
-                registry["TechnicalReplicate"],
-                registry["BiologicalReplicateGroup"],
-                _display_name(well, position),
-                date_time,
-                context.culture_age_hours + elapsed_minutes / 60,
-                position[0],
-                int(position[1:]),
-                context.culture_volume_ul,
-                *conditions,
-                corrected_od,
-                context.microplate_id,
-                background_mean,
-                background_sd,
-                blank_count,
-                qc_flag,
-                qc_reason,
-                context.run_id,
-                context.project,
-                context.experiment_name,
-                position,
-                elapsed_minutes,
-                channel,
-                raw_od,
-                bool(well.get("is_blank", False)),
-                group,
-                well.get("strain"),
-                well.get("medium"),
-                registry["Replicate"],
-                well.get("notes"),
-                well.get("replicate"),
-                well.get("raw_label"),
-                well.get("display_name"),
-                group,
-                bool(well.get("plot_selected", False)),
-                well.get("grouping_label"),
-                well.get("inoculum_size"),
-                normalize_growth_unit(well.get("inoculum_unit")),
-                primary_condition_value(well, custom, "treatment", "treatment_1"),
-                primary_condition_value(well, custom, "concentration", "conc_1"),
-                normalize_growth_unit(
-                    primary_condition_value(well, custom, "concentration_unit", "unit_1")
-                ),
-                custom.get("t0_added_min"),
-                *_separate_conditions(well)[3:],
-                *_matching_concentration_row(well, _well_matching_precision(context, well)),
-                context.experiment_date,
-                *(_custom_cell(_custom_value(custom, column)) for column in custom_columns),
-            )
+            tuple(_custom_cell(values.get(header)) for header in GROWTH_MEASUREMENT_HEADERS)
         )
     return tuple(result)
 
@@ -1327,6 +1442,7 @@ def _custom_column_names(
                     names.setdefault(name.casefold(), name)
     unavailable = {
         "cultivationplatenumber",  # Exported as CultivationExperimentNumber.
+        *(header.casefold() for header in _OMITTED_EXPORT_HEADERS),
         *(header.casefold() for header in GROWTH_MEASUREMENT_HEADERS),
         *(header.casefold() for header in GROWTH_METADATA_HEADERS),
         *(name.casefold() for name in _STRUCTURED_CUSTOM_KEYS),

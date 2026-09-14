@@ -208,13 +208,13 @@ def test_editor_save_is_explicit_once_and_viewer_exports_saved_new_ids() -> None
         "ST-EXP-MG1655-MP96A0201R1",
     ]
     assert [row["Replicate"] for row in rows] == ["1", "2", "1", "1"]
-    assert [row["Local cultivation ID"] for row in rows] == [
+    assert [row["Local cultivation ID"] for row in metadata] == [
         "EXP01-A01",
         "EXP01-A02",
         "EXP01-A03",
         "EXP02-A01",
     ]
-    assert rows[0]["Internal cultivation ID"] == metadata[0]["InternalCultivationID"]
+    assert metadata[0]["Internal cultivation ID"] == metadata[0]["InternalCultivationID"]
     assert json.loads(metadata[0]["Well Metadata JSON"])["PreviousCultivationIDs"] == ["OLD-CULT-1"]
     assert app.get("download_button")
     assert app.session_state["registry_plate_writes"] == 2
@@ -247,7 +247,7 @@ def test_registry_settings_and_selection_invalidate_preview_and_downloads() -> N
     assert next(b for b in app.button if b.label == "Save cultivation IDs").disabled
     assert "raw_load_calls" not in app.session_state
     next(w for w in app.selectbox if w.label == "Concentration matching").select(
-        "2 significant figures (recommended)"
+        "2 decimal places (recommended)"
     ).run()
     next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
     next(b for b in app.button if b.label == "Save cultivation IDs").click().run()
@@ -330,10 +330,11 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
     assert bundle.metadata.row_count == 2
     assert len(bundle.replicate_preview) == 2
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
-    assert [row["Cultivation replicate"] for row in rows] == ["1", "1"]
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    assert [row["Cultivation replicate"] for row in metadata] == ["1", "1"]
     assert [row["Replicate"] for row in rows] == ["1", "1"]
     assert rows[1]["Cultivation ID"].endswith("-R1")
-    assert rows[1]["Saved cultivation ID"].endswith("-R1")
+    assert metadata[1]["Saved cultivation ID"].endswith("-R1")
     assert all(preview["Matching wells"] == 1 for preview in bundle.replicate_preview)
     download_buttons = app.get("download_button")
     assert {item.label for item in download_buttons} == {
@@ -394,7 +395,8 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     assert not app.exception and not app.error
     bundle = app.session_state["growth_tabular_export_bundle"]
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
-    assert rows[0]["Cultivation replicate"] == "1"
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    assert metadata[0]["Cultivation replicate"] == "1"
     assert rows[0]["Cultivation ID"] == plate_one_id
     assert app.session_state["raw_load_calls"] == 3
 
@@ -420,7 +422,8 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     saved_bundle = app.session_state["growth_tabular_export_bundle"]
     assert not saved_bundle.replicate_preview
     saved_rows = list(csv.DictReader(io.StringIO(saved_bundle.measurements.content.decode())))
-    assert saved_rows[0]["Cultivation ID"] == saved_rows[0]["Saved cultivation ID"]
+    saved_metadata = list(csv.DictReader(io.StringIO(saved_bundle.metadata.content.decode())))
+    assert saved_rows[0]["Cultivation ID"] == saved_metadata[0]["Saved cultivation ID"]
     assert saved_rows[0]["Replicate"] == "1"
 
 
@@ -429,7 +432,7 @@ def test_prepared_artifacts_from_previous_numbering_rule_are_hidden() -> None:
     _prepare_button(app).click().run()
     assert not app.exception and app.get("download_button")
     signature = app.session_state["growth_tabular_export_signature"]
-    assert signature[0] == "export_run_v1"
+    assert signature[0] == "export_run_v2"
     app.session_state["growth_tabular_export_signature"] = signature[1:]
     app.run()
     assert not app.get("download_button")
@@ -457,10 +460,10 @@ def test_generation_from_empty_saved_metadata_uses_entered_team_and_chronologica
         "PN-EXP-PAO1-001-A01-R1",
         "PN-EXP-PAO1-002-A01-R1",
     ]
-    assert [row["Cultivation experiment code"] for row in rows] == ["001", "002"]
+    assert [row["Cultivation experiment code"] for row in metadata] == ["001", "002"]
     assert [row["Replicate"] for row in rows] == ["1", "1"]
     assert [row["LocalReplicate"] for row in metadata] == ["1", "1"]
-    assert [row["Saved cultivation ID"] for row in rows] == ["", ""]
+    assert [row["Saved cultivation ID"] for row in metadata] == ["", ""]
     assert [row["Replicate"] for row in metadata] == ["1", "1"]
     assert any(
         item.value == "Cultivation IDs and replicates for this export" for item in app.subheader
@@ -532,9 +535,10 @@ def test_saved_pattern_mode_preserves_saved_pattern_choice() -> None:
     assert not app.exception and not app.error
     bundle = app.session_state["growth_tabular_export_bundle"]
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     assert rows[0]["Cultivation ID"] == "PN-EXP-PAO1-MP96A001R1"
     assert rows[1]["Cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
-    assert rows[1]["Saved cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
+    assert metadata[1]["Saved cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
 
 
 def test_replicates_number_matching_wells_within_each_run_and_reset_on_next_run() -> None:
@@ -580,14 +584,14 @@ def test_replicates_number_matching_wells_within_each_run_and_reset_on_next_run(
     ]
 
 
-def test_concentration_matching_defaults_to_two_significant_figures_and_can_be_exact() -> None:
+def test_concentration_matching_defaults_to_two_decimal_places_and_can_be_exact() -> None:
     app = _export_page_app()
     app.session_state["rounded_concentrations"] = True
     app.session_state["multi_wells_per_run"] = True
     app.session_state["selected_ids"] = ("plate-0",)
     app.run()
     matching = next(w for w in app.selectbox if w.label == "Concentration matching")
-    assert matching.value == "2 significant figures (recommended)"
+    assert matching.value == "2 decimal places (recommended)"
     assert "raw_load_calls" not in app.session_state
 
     _prepare_button(app).click().run()
@@ -597,8 +601,7 @@ def test_concentration_matching_defaults_to_two_significant_figures_and_can_be_e
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     assert [row["Replicate"] for row in rows] == ["1", "2"]
     assert [row["Concentration"] for row in rows] == ["0.1875", "0.19"]
-    assert [row["Concentration matching significant figures"] for row in rows] == ["2", "2"]
-    assert [row["Matching concentration"] for row in rows] == ["0.19", "0.19"]
+    assert [row["Concentration matching decimal places"] for row in metadata] == ["2", "2"]
     assert [row["Concentration"] for row in metadata] == ["0.1875", "0.19"]
     assert [row["Matching concentration"] for row in metadata] == ["0.19", "0.19"]
     assert all("Entered concentrations" in preview for preview in bundle.replicate_preview)
@@ -619,12 +622,14 @@ def test_concentration_matching_defaults_to_two_significant_figures_and_can_be_e
             )
         )
     )
+    metadata = list(
+        csv.DictReader(
+            io.StringIO(app.session_state["growth_tabular_export_bundle"].metadata.content.decode())
+        )
+    )
     assert [row["Replicate"] for row in rows] == ["1", "1"]
-    assert [row["Concentration matching significant figures"] for row in rows] == [
-        "exact",
-        "exact",
-    ]
-    assert [row["Matching concentration"] for row in rows] == ["0.1875", "0.19"]
+    assert [row["Concentration matching decimal places"] for row in metadata] == ["", ""]
+    assert [row["Matching concentration"] for row in metadata] == ["0.1875", "0.19"]
 
 
 def _prepare_button(app: AppTest):

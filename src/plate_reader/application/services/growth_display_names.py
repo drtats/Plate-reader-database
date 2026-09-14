@@ -11,6 +11,7 @@ from enum import StrEnum
 from numbers import Real
 
 from plate_reader.domain.common.plate import PLATE_96, WellPosition
+from plate_reader.domain.growth.units import normalize_growth_unit
 
 _CUSTOM_PREFIX = "custom:"
 
@@ -233,6 +234,8 @@ def _compose_display_name(
             if token.scope is GrowthDisplayNameScope.WELL
             else plate_metadata.get(token.field)
         )
+        if token.field.endswith("_unit"):
+            value = normalize_growth_unit(value)
         text = _format_value(value, options.number_format)
         if text or not options.omit_empty:
             values.append(text)

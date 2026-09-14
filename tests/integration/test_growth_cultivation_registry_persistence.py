@@ -518,7 +518,7 @@ def test_normalized_strain_ids_save_and_export_original_metadata(
         assert row["Strain"] == original
         assert row["Cultivation"] == f"ST-EXP-dacrB_MG_1_2-MP96A0101R{replicate}"
         assert row["CultivationExperiment"] == "ST-EXP-dacrB_MG_1_2-MP96A[0101]"
-        observations = [row for row in data if row["Well"] == position]
+        observations = [item for item in data if item["Cultivation ID"] == row["Cultivation"]]
         assert observations
         assert all(item["Strain"] == original for item in observations)
         assert all(item["Cultivation ID"] == row["Cultivation"] for item in observations)
@@ -557,7 +557,7 @@ def test_saved_export_requires_commit_and_detects_new_unassigned_wells(
         assert all(
             row["Cultivation ID"] == registered["Cultivation"]
             for row in rows
-            if row["Well"] == well
+            if row["Cultivation ID"] == registered["Cultivation"]
         )
     assert repr(repository.load_plate(plate_id)) == saved
     # A formerly unspecified well becomes an eligible culture: save its assignment before export.
@@ -567,6 +567,93 @@ def test_saved_export_requires_commit_and_detects_new_unassigned_wells(
         )
     with pytest.raises(ValueError, match="not been saved"):
         exporter.execute(command)
+
+
+def test_explicit_decimal_upgrade_preserves_saved_ids_and_raw_data(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    with repository.transaction():
+        repository.update_well_layout(
+            plate_id,
+            [{"position": pos, "concentration": 384.0} for pos in ("A1", "A2")],
+        )
+    previewer = PreviewGrowthCultivationRegistryService(repository)
+    saver = SaveGrowthCultivationRegistryService(repository)
+    legacy = RegistrySettings("ST", "MP96A", 2)
+    saver.execute(EDITOR, previewer.execute(EDITOR, (plate_id,), legacy))
+    old_ids = [_well_custom(repository, plate_id, pos)["Cultivation"] for pos in ("A1", "A2")]
+    old_key = _well_custom(repository, plate_id, "A1")["CultivationConditionKey"]
+    before_counts = _counts(repository)
+    before_wells = repository.load_plate(plate_id).raw_observations
+    candidate = previewer.execute(EDITOR, (plate_id,), SETTINGS)
+    assert "updated to decimal-place" in candidate.plates[0].notices[0]
+    assert [a["Cultivation"] for a in candidate.plates[0].assignments[:2]] == old_ids
+    saver.execute(EDITOR, candidate)
+    assert [
+        _well_custom(repository, plate_id, pos)["Cultivation"] for pos in ("A1", "A2")
+    ] == old_ids
+    assert _well_custom(repository, plate_id, "A1")["CultivationConditionKey"] != old_key
+    assert _well_custom(repository, plate_id, "A1")["CultivationConcentrationDecimalPlaces"] == 2
+    assert "CultivationConcentrationSignificantFigures" not in _well_custom(
+        repository, plate_id, "A1"
+    )
+    plate_row = repository.growth_cultivation_metadata((plate_id,))[0]
+    registry = json.loads(str(plate_row["plate_custom_json"]))["cultivation_registry"]
+    assert registry["CultivationConcentrationDecimalPlaces"] == 2
+    assert "CultivationConcentrationSignificantFigures" not in registry
+    assert _counts(repository) == before_counts
+    assert repository.load_plate(plate_id).raw_observations == before_wells
+    import csv
+    import io
+
+    from plate_reader.application.services.growth_tabular_export import (
+        ExportGrowthTabularData,
+        ExportGrowthTabularDataService,
+    )
+
+    bundle = ExportGrowthTabularDataService(repository).execute(
+        ExportGrowthTabularData(EDITOR, (plate_id,), require_saved_cultivation_ids=True)
+    )
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    a1 = next(row for row in metadata if row["Well"] == "A1")
+    assert a1["Matching concentration"] == "384"
+    assert a1["Concentration matching decimal places"] == "2"
+    assert saver.execute(EDITOR, previewer.execute(EDITOR, (plate_id,), SETTINGS)) == ()
+
+
+def test_decimal_upgrade_rejects_saved_group_split_without_writes(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    plate_id = _import_plate(repository)
+    with repository.transaction():
+        repository.update_well_layout(
+            plate_id,
+            [
+                {"position": "A1", "concentration": 384.0},
+                {"position": "A2", "concentration": 383.0},
+            ],
+        )
+    previewer = PreviewGrowthCultivationRegistryService(repository)
+    SaveGrowthCultivationRegistryService(repository).execute(
+        EDITOR, previewer.execute(EDITOR, (plate_id,), RegistrySettings("ST", "MP96A", 2))
+    )
+    before = _registry_state(repository, plate_id)
+    with pytest.raises(DomainValidationError, match="changes saved condition groups"):
+        previewer.execute(EDITOR, (plate_id,), SETTINGS)
+    assert _registry_state(repository, plate_id) == before
+    reviewed = previewer.execute(
+        EDITOR,
+        (plate_id,),
+        RegistrySettings("ST", "MP96A", reassign_changed_conditions=True),
+    )
+    old_a2 = _well_custom(repository, plate_id, "A2")["Cultivation"]
+    assert reviewed.plates[0].assignments[1]["PreviousCultivationIDs"] == [old_a2]
+    SaveGrowthCultivationRegistryService(repository).execute(EDITOR, reviewed)
+    new_a2 = _well_custom(repository, plate_id, "A2")
+    assert new_a2["Cultivation"] != old_a2
+    assert new_a2["PreviousCultivationIDs"] == [old_a2]
+    assert new_a2["CultivationConcentrationDecimalPlaces"] == 2
 
 
 def test_save_reuses_one_projection_read_set_and_rechecks_permission(
