@@ -445,15 +445,227 @@ def test_growth_library_reports_ids_saved_by_registry_service(harness: Repositor
 
 
 class RecordingConnection:
-    """Records the one database request issued by the Library projection."""
+    """Records repository database requests and their bind counts."""
 
     def __init__(self, connection: Connection) -> None:
         self._connection = connection
         self.statements: list[str] = []
+        self.parameter_counts: list[int] = []
 
     def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> object:
         self.statements.append(sql)
+        self.parameter_counts.append(len(parameters))
         return self._connection.execute(sql, parameters)
+
+
+def test_layout_bulk_cultivation_metadata_uses_two_statements(harness: RepositoryHarness) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.insert_wells(
+            PlateId("plate-growth"),
+            [
+                well_values(f"well-{row.lower()}{column}", f"{row}{column}", index, column - 1)
+                for index, row in enumerate("ABCDEFGH")
+                for column in range(1, 13)
+                if not (row == "A" and column in (1, 2))
+            ],
+        )
+    raw_before = raw_hash(harness.connection, "plate-growth")
+    recorded = RecordingConnection(harness.connection)
+    bulk_repository = SqlPlateReaderRepository(recorded)
+    with repository.transaction():
+        bulk_repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": f"{row}{column}", "custom_json": {"Cultivation": f"id-{row}{column}"}}
+                for row in "ABCDEFGH"
+                for column in range(1, 13)
+            ],
+        )
+    assert len(recorded.statements) == 2
+    assert recorded.statements[0].startswith("SELECT w.well_id")
+    assert recorded.statements[1].startswith("UPDATE wells SET")
+    assert max(recorded.parameter_counts) <= 900
+    rows = harness.connection.execute(
+        "SELECT position, custom_json FROM wells WHERE plate_id = ? "
+        "ORDER BY row_index, column_index",
+        ("plate-growth",),
+    ).fetchall()
+    assert len(rows) == 96
+    assert all(
+        json.loads(str(value))["Cultivation"] == f"id-{position}" for position, value in rows
+    )
+    assert raw_hash(harness.connection, "plate-growth") == raw_before
+
+
+def test_layout_batch_chunks_bound_parameters(harness: RepositoryHarness) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.insert_wells(
+            PlateId("plate-growth"),
+            [
+                well_values(f"well-{row.lower()}{column}", f"{row}{column}", index, column - 1)
+                for index, row in enumerate("ABCDEFGH")
+                for column in range(1, 13)
+                if not (row == "A" and column in (1, 2))
+            ],
+        )
+    recorded = RecordingConnection(harness.connection)
+    with repository.transaction():
+        SqlPlateReaderRepository(recorded).update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {
+                    "position": f"{row}{column}",
+                    "raw_label": "raw",
+                    "display_name": "updated",
+                    "is_blank": False,
+                    "background_group": "group",
+                    "plot_selected": True,
+                    "notes": "note",
+                    "custom_json": {"Cultivation": f"id-{row}{column}"},
+                }
+                for row in "ABCDEFGH"
+                for column in range(1, 13)
+            ],
+        )
+    assert len(recorded.statements) == 3
+    assert all(count <= 900 for count in recorded.parameter_counts)
+    assert harness.connection.execute(
+        "SELECT count(*) FROM wells WHERE plate_id = ? AND display_name = 'updated' "
+        "AND plot_selected = 1",
+        ("plate-growth",),
+    ).fetchone() == (96,)
+
+
+def test_layout_sparse_conditions_preserve_overrides_and_repeated_edits(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        harness.connection.execute(
+            "UPDATE well_conditions SET custom_json = ? WHERE well_id = ?",
+            (json.dumps({"legacy": "keep"}), "well-a1"),
+        )
+        harness.connection.execute("DELETE FROM well_conditions WHERE well_id = ?", ("well-a2",))
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": "a1", "treatment": "drug", "medium": "first"},
+                {"position": "A1", "treatment": None, "strain": "new strain"},
+                {"position": "A2", "treatment": None, "medium": None},
+            ],
+        )
+    a1 = harness.connection.execute(
+        "SELECT strain, medium, treatment, custom_json FROM well_conditions WHERE well_id = ?",
+        ("well-a1",),
+    ).fetchone()
+    assert a1 is not None
+    assert a1[:3] == ("new strain", "first", None)
+    assert json.loads(str(a1[3])) == {
+        "legacy": "keep",
+        "primary_condition_overrides": ["treatment"],
+    }
+    a2 = harness.connection.execute(
+        "SELECT medium, treatment, custom_json FROM well_conditions WHERE well_id = ?",
+        ("well-a2",),
+    ).fetchone()
+    assert a2 == (None, None, "{}")
+
+
+def test_layout_mic_creates_conditions_without_growth_overrides(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.create_plate(
+            {
+                "plate_id": "plate-mic-layout",
+                "experiment_id": "experiment-1",
+                "assay_type": "mic",
+                "plate_name": "MIC Layout",
+                "created_by": "user-1",
+            }
+        )
+        repository.insert_wells(
+            PlateId("plate-mic-layout"),
+            [well_values("mic-a1", "A1", 0, 0), well_values("mic-a2", "A2", 0, 1)],
+        )
+    recorded = RecordingConnection(harness.connection)
+    with repository.transaction():
+        SqlPlateReaderRepository(recorded).update_well_layout(
+            PlateId("plate-mic-layout"),
+            [
+                {"position": "a1", "treatment": "drug", "concentration": 1.5},
+                {"position": "A2", "strain": "test strain", "treatment": None},
+            ],
+        )
+    assert len(recorded.statements) == 3
+    assert harness.connection.execute(
+        "SELECT treatment, concentration, custom_json FROM well_conditions WHERE well_id = ?",
+        ("mic-a1",),
+    ).fetchone() == ("drug", 1.5, "{}")
+    assert harness.connection.execute(
+        "SELECT strain, treatment, custom_json FROM well_conditions WHERE well_id = ?",
+        ("mic-a2",),
+    ).fetchone() == ("test strain", None, "{}")
+
+
+def test_layout_validates_late_missing_well_before_writes(harness: RepositoryHarness) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with pytest.raises(RecordNotFoundError, match="missing"):
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": "A1", "display_name": "should not save"},
+                {"position": "missing", "display_name": "bad"},
+            ],
+        )
+    assert harness.connection.execute(
+        "SELECT display_name FROM wells WHERE well_id = ?", ("well-a1",)
+    ).fetchone() == ("Sample A1",)
+
+
+def test_layout_batch_failure_rolls_back_all_changes(harness: RepositoryHarness) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with pytest.raises(DATABASE_INTEGRITY_ERRORS), repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": "A1", "display_name": "temporary", "replicate": 2},
+                {"position": "A2", "display_name": "temporary", "replicate": 0},
+            ],
+        )
+    assert harness.connection.execute(
+        "SELECT display_name FROM wells WHERE well_id = ?", ("well-a1",)
+    ).fetchone() == ("Sample A1",)
+    assert harness.connection.execute(
+        "SELECT replicate FROM well_conditions WHERE well_id = ?", ("well-a1",)
+    ).fetchone() == (1,)
+
+
+def test_layout_repeated_position_checks_intermediate_constraint(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with pytest.raises(DATABASE_INTEGRITY_ERRORS), repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {"position": "A1", "replicate": 0},
+                {"position": "a1", "replicate": 2},
+            ],
+        )
+    assert harness.connection.execute(
+        "SELECT replicate FROM well_conditions WHERE well_id = ?", ("well-a1",)
+    ).fetchone() == (1,)
 
 
 def test_growth_comparison_wells_are_condition_only_and_filter_available_growth_plates(

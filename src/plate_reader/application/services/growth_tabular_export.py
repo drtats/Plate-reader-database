@@ -25,7 +25,6 @@ from plate_reader.application.services.growth_workflow import (
     GrowthRunView,
     LoadGrowthRunService,
 )
-from plate_reader.application.services.layout_columns import ListLayoutColumnsService
 from plate_reader.domain.common.errors import DomainIssue, DomainValidationError, IssueCode
 from plate_reader.domain.common.plate import WellPosition
 from plate_reader.domain.growth.cultivation import (
@@ -298,12 +297,11 @@ class ExportGrowthTabularDataService:
         if len(set(command.plate_ids)) != len(command.plate_ids):
             raise ValueError("Growth tabular export run IDs must be unique")
         loader = LoadGrowthRunService(self.repository)
-        views = tuple(loader.execute(command.actor, plate_id) for plate_id in command.plate_ids)
+        views = loader.load_for_tabular_export(command.actor, command.plate_ids)
+        # The batch loader already checked the actor for this request. Read the
+        # Growth custom-column projection directly to avoid another user lookup.
         custom_columns = tuple(
-            column.name
-            for column in ListLayoutColumnsService(self.repository).execute(
-                command.actor, AssayType.GROWTH
-            )
+            str(row["value"]) for row in self.repository.list_saved_options("layout_column:growth")
         )
         experiment_codes = (
             plan_cultivation_experiment_codes(self.repository.growth_cultivation_codes())

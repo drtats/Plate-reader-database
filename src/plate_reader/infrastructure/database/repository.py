@@ -6,11 +6,12 @@ import hashlib
 import json
 import math
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
+from typing import cast
 
 from plate_reader.application.contracts import AssayType, ExperimentId, PlateId, RevisionId
 from plate_reader.application.ports.repositories import (
@@ -731,17 +732,43 @@ class SqlPlateReaderRepository:
             "concentration",
             "concentration_unit",
         }
+        if not changes:
+            return
+        positions_by_key: dict[str, str] = {}
+        duplicate_positions: set[str] = set()
         for change in changes:
             position = _required_str(change, "position")
-            well_id_row = self.connection.execute(
-                "SELECT w.well_id, p.assay_type FROM wells w "
-                "JOIN plates p ON p.plate_id = w.plate_id "
-                "WHERE w.plate_id = ? AND w.position = ? COLLATE NOCASE",
-                (plate_id, position),
-            ).fetchone()
-            if well_id_row is None:
+            if position.casefold() in positions_by_key:
+                duplicate_positions.add(position.casefold())
+            positions_by_key.setdefault(position.casefold(), position)
+        positions = list(positions_by_key.values())
+        # Read only requested wells, including the condition state needed to
+        # distinguish an explicit structured clear from an unchanged NULL.
+        existing: dict[str, Sequence[object]] = {}
+        for start in range(0, len(positions), 899):
+            selected = positions[start : start + 899]
+            rows = self.connection.execute(
+                "SELECT w.well_id, w.position, p.assay_type, c.well_id, "
+                "c.treatment, c.concentration, c.concentration_unit, c.custom_json "
+                "FROM wells w JOIN plates p ON p.plate_id = w.plate_id "
+                "LEFT JOIN well_conditions c ON c.well_id = w.well_id "
+                "WHERE w.plate_id = ? AND w.position IN (" + ", ".join("?" for _ in selected) + ")",
+                (plate_id, *selected),
+            ).fetchall()
+            existing.update({str(row[1]).casefold(): row for row in rows})
+        well_updates: dict[str, dict[str, object]] = {}
+        condition_updates: dict[str, dict[str, object]] = {}
+        repeated_changes: list[tuple[str, object, dict[str, object], dict[str, object]]] = []
+        missing_conditions: set[str] = set()
+        primary_fields = ("treatment", "concentration", "concentration_unit")
+        # Validate every change before writing. Repeated positions are applied
+        # sequentially below so intermediate constraints retain their behavior.
+        for change in changes:
+            position = _required_str(change, "position")
+            well_row = existing.get(position.casefold())
+            if well_row is None:
                 raise RecordNotFoundError(f"Well not found: {plate_id}/{position}")
-            well_id = str(well_id_row[0])
+            well_id = str(well_row[0])
             well_changes = {key: value for key, value in change.items() if key in well_allowed}
             condition_changes = {
                 key: value for key, value in change.items() if key in condition_allowed
@@ -751,53 +778,49 @@ class SqlPlateReaderRepository:
                 raise InvalidRepositoryValueError(
                     f"Unsupported well fields for {position}: {sorted(unknown)}"
                 )
+            if position.casefold() in duplicate_positions:
+                repeated_changes.append((well_id, well_row[2], well_changes, condition_changes))
+                continue
             if well_changes:
-                columns = sorted(well_changes)
-                parameters = [_database_value(well_changes[column]) for column in columns]
-                parameters.extend((_now(), well_id))
-                self.connection.execute(
-                    f"UPDATE wells SET {', '.join(f'{column} = ?' for column in columns)}, "
-                    "updated_at = ? WHERE well_id = ?",
-                    parameters,
-                )
+                well_updates.setdefault(well_id, {}).update(well_changes)
             if condition_changes:
-                self.connection.execute(
-                    "INSERT OR IGNORE INTO well_conditions(well_id) VALUES (?)", (well_id,)
-                )
-                primary_fields = ("treatment", "concentration", "concentration_unit")
+                if well_row[3] is None:
+                    missing_conditions.add(well_id)
                 if (
-                    well_id_row[1] == AssayType.GROWTH
+                    well_row[2] == AssayType.GROWTH
                     and set(primary_fields) & condition_changes.keys()
                 ):
-                    previous = self.connection.execute(
-                        "SELECT treatment, concentration, concentration_unit, custom_json "
-                        "FROM well_conditions WHERE well_id = ?",
-                        (well_id,),
-                    ).fetchone()
-                    assert previous is not None  # ensured by INSERT above
                     explicit = {
                         name
                         for index, name in enumerate(primary_fields)
                         if name in condition_changes
-                        and (condition_changes[name] is not None or previous[index] is not None)
+                        and (condition_changes[name] is not None or well_row[4 + index] is not None)
                     }
                     if explicit:
-                        condition_custom = json.loads(str(previous[3]))
+                        condition_custom = json.loads(str(well_row[7] or "{}"))
                         overrides = condition_custom.get("primary_condition_overrides", [])
                         # Remember genuine structured edits, including clears. An unchanged
                         # NULL must still permit historical custom-only treatment metadata.
                         condition_custom["primary_condition_overrides"] = sorted(
-                            set(overrides) | explicit
+                            set(cast(Iterable[str], overrides)) | explicit
                         )
                         condition_changes["custom_json"] = condition_custom
-                columns = sorted(condition_changes)
-                parameters = [_database_value(condition_changes[column]) for column in columns]
-                parameters.append(well_id)
+                condition_updates.setdefault(well_id, {}).update(condition_changes)
+        _update_layout_rows(self.connection, "wells", well_updates, touch_updated_at=True)
+        if missing_conditions:
+            missing_ids = sorted(missing_conditions)
+            for start in range(0, len(missing_ids), 900):
+                chunk = missing_ids[start : start + 900]
                 self.connection.execute(
-                    f"UPDATE well_conditions SET "
-                    f"{', '.join(f'{column} = ?' for column in columns)} WHERE well_id = ?",
-                    parameters,
+                    "INSERT OR IGNORE INTO well_conditions(well_id) VALUES "
+                    + ", ".join("(?)" for _ in chunk),
+                    tuple(chunk),
                 )
+        _update_layout_rows(self.connection, "well_conditions", condition_updates)
+        for well_id, assay_type, well_changes, condition_changes in repeated_changes:
+            _update_repeated_layout_row(
+                self.connection, well_id, assay_type, well_changes, condition_changes
+            )
 
     def add_analysis_revision(self, values: dict[str, object]) -> RevisionId:
         revision_id = RevisionId(_optional_str(values, "revision_id") or _new_id())
@@ -1506,6 +1529,113 @@ def _row_dict(cursor: Cursor, row: Sequence[object]) -> dict[str, object]:
     if cursor.description is None:
         raise RuntimeError("Cursor does not describe result columns")
     return {str(description[0]): row[index] for index, description in enumerate(cursor.description)}
+
+
+def _update_repeated_layout_row(
+    connection: Connection,
+    well_id: str,
+    assay_type: object,
+    well_changes: Mapping[str, object],
+    condition_changes: dict[str, object],
+) -> None:
+    """Keep write order and intermediate validation for a repeated position."""
+    if well_changes:
+        columns = sorted(well_changes)
+        parameters = [_database_value(well_changes[column]) for column in columns]
+        parameters.extend((_now(), well_id))
+        connection.execute(
+            f"UPDATE wells SET {', '.join(f'{column} = ?' for column in columns)}, "
+            "updated_at = ? WHERE well_id = ?",
+            tuple(parameters),
+        )
+    if not condition_changes:
+        return
+    connection.execute("INSERT OR IGNORE INTO well_conditions(well_id) VALUES (?)", (well_id,))
+    primary_fields = ("treatment", "concentration", "concentration_unit")
+    if assay_type == AssayType.GROWTH and set(primary_fields) & condition_changes.keys():
+        previous = connection.execute(
+            "SELECT treatment, concentration, concentration_unit, custom_json "
+            "FROM well_conditions WHERE well_id = ?",
+            (well_id,),
+        ).fetchone()
+        assert previous is not None  # ensured by INSERT above
+        explicit = {
+            name
+            for index, name in enumerate(primary_fields)
+            if name in condition_changes
+            and (condition_changes[name] is not None or previous[index] is not None)
+        }
+        if explicit:
+            condition_custom = json.loads(str(previous[3]))
+            overrides = condition_custom.get("primary_condition_overrides", [])
+            condition_custom["primary_condition_overrides"] = sorted(set(overrides) | explicit)
+            condition_changes["custom_json"] = condition_custom
+    columns = sorted(condition_changes)
+    parameters = [_database_value(condition_changes[column]) for column in columns]
+    parameters.append(well_id)
+    connection.execute(
+        f"UPDATE well_conditions SET "
+        f"{', '.join(f'{column} = ?' for column in columns)} WHERE well_id = ?",
+        tuple(parameters),
+    )
+
+
+def _update_layout_rows(
+    connection: Connection,
+    table: str,
+    rows: Mapping[str, Mapping[str, object]],
+    *,
+    touch_updated_at: bool = False,
+) -> None:
+    """Apply sparse well changes in multirow statements under 900 bind values.
+
+    The table and column names come only from the repository's fixed allowlists.
+    IDs and values are always bound. CASE preserves columns omitted by a row.
+    """
+    if not rows:
+        return
+    chunk: list[tuple[str, Mapping[str, object]]] = []
+    parameter_count = int(touch_updated_at)
+    for well_id, values in rows.items():
+        row_parameters = 1 + 2 * len(values)
+        if chunk and parameter_count + row_parameters > 900:
+            _execute_layout_update(connection, table, chunk, touch_updated_at)
+            chunk = []
+            parameter_count = int(touch_updated_at)
+        chunk.append((well_id, values))
+        parameter_count += row_parameters
+    if chunk:
+        _execute_layout_update(connection, table, chunk, touch_updated_at)
+
+
+def _execute_layout_update(
+    connection: Connection,
+    table: str,
+    rows: Sequence[tuple[str, Mapping[str, object]]],
+    touch_updated_at: bool,
+) -> None:
+    columns = sorted({column for _, values in rows for column in values})
+    assignments: list[str] = []
+    parameters: list[object] = []
+    for column in columns:
+        affected = [(well_id, values[column]) for well_id, values in rows if column in values]
+        assignments.append(
+            f"{column} = CASE well_id "
+            + " ".join("WHEN ? THEN ?" for _ in affected)
+            + f" ELSE {column} END"
+        )
+        for well_id, value in affected:
+            parameters.extend((well_id, _database_value(value)))
+    if touch_updated_at:
+        assignments.append("updated_at = ?")
+        parameters.append(_now())
+    parameters.extend(well_id for well_id, _ in rows)
+    connection.execute(
+        f"UPDATE {table} SET {', '.join(assignments)} WHERE well_id IN ("
+        + ", ".join("?" for _ in rows)
+        + ")",
+        tuple(parameters),
+    )
 
 
 def _all_dicts(cursor: Cursor) -> tuple[dict[str, object], ...]:

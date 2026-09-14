@@ -56,22 +56,35 @@ class PreviewGrowthCultivationRegistryService:
         if not isinstance(settings, RegistrySettings):
             raise _error("Invalid cultivation registry settings.")
         metadata = self.repository.growth_cultivation_metadata(requested)
-        by_id = {str(row["plate_id"]): row for row in metadata}
-        missing = tuple(plate_id for plate_id in requested if plate_id not in by_id)
-        if missing:
-            raise LookupError(f"Active Growth plates not found: {', '.join(missing)}")
-        # The complete library projection reserves numbers and IDs on deleted runs too.
         rows = self.repository.growth_cultivation_wells()
-        plans = plan_plate_condition_cultivations(rows, tuple(requested), settings=settings)
-        if {plan.plate_id for plan in plans} != set(requested) or len(plans) != len(requested):
-            raise _error("Cultivation planner did not return each selected plate exactly once.")
-        plans_by_id = {plan.plate_id: plan for plan in plans}
-        return RegistryPreview(
-            requested,
-            settings,
-            tuple(plans_by_id[plate_id] for plate_id in requested),
-            tuple((plate_id, str(by_id[plate_id]["updated_at"])) for plate_id in requested),
-        )
+        return _preview_from_projection(requested, settings, metadata, rows)
+
+
+def _preview_from_projection(
+    requested: tuple[PlateId, ...],
+    settings: RegistrySettings,
+    metadata: Sequence[dict[str, object]],
+    rows: Sequence[dict[str, object]],
+) -> RegistryPreview:
+    """Plan from one read set; callers own authorization and transaction boundaries."""
+
+    if not isinstance(settings, RegistrySettings):
+        raise _error("Invalid cultivation registry settings.")
+    by_id = {str(row["plate_id"]): row for row in metadata}
+    missing = tuple(plate_id for plate_id in requested if plate_id not in by_id)
+    if missing:
+        raise LookupError(f"Active Growth plates not found: {', '.join(missing)}")
+    # The complete library reserves numbers on deleted runs too.
+    plans = plan_plate_condition_cultivations(rows, tuple(requested), settings=settings)
+    if {plan.plate_id for plan in plans} != set(requested) or len(plans) != len(requested):
+        raise _error("Cultivation planner did not return each selected plate exactly once.")
+    plans_by_id = {plan.plate_id: plan for plan in plans}
+    return RegistryPreview(
+        requested,
+        settings,
+        tuple(plans_by_id[plate_id] for plate_id in requested),
+        tuple((plate_id, str(by_id[plate_id]["updated_at"])) for plate_id in requested),
+    )
 
 
 class SaveGrowthCultivationRegistryService:
@@ -87,16 +100,16 @@ class SaveGrowthCultivationRegistryService:
         with self.repository.transaction():
             # Recheck the stored role and all global reservations under the write lock.
             require_role(self.repository, actor, {Role.EDITOR, Role.ADMIN})
-            fresh = PreviewGrowthCultivationRegistryService(self.repository).execute(
-                actor, preview.plate_ids, preview.settings
+            metadata = self.repository.growth_cultivation_metadata(preview.plate_ids)
+            library_rows = self.repository.growth_cultivation_wells()
+            fresh = _preview_from_projection(
+                preview.plate_ids, preview.settings, metadata, library_rows
             )
             if not _same_preview(preview, fresh):
                 raise StaleGrowthCultivationRegistryError(
                     "Growth cultivation registry preview is stale; preview again before saving."
                 )
-            metadata = self.repository.growth_cultivation_metadata(preview.plate_ids)
             metadata_by_id = {str(row["plate_id"]): row for row in metadata}
-            library_rows = self.repository.growth_cultivation_wells()
             rows_by_plate: dict[str, list[dict[str, object]]] = {}
             for row in library_rows:
                 rows_by_plate.setdefault(str(row["plate_id"]), []).append(row)

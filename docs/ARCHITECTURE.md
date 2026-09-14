@@ -392,6 +392,11 @@ not regenerate 96 Matplotlib axes on every widget change.
 - Import and migration jobs retain validation and record-count reports.
 - Performance-sensitive use cases expose timings in development mode.
 
+Growth round-trip reductions and a reproducible synthetic SQL-count benchmark are
+documented in [ADR-0045](adr/0045-reduce-growth-database-roundtrips.md). Batched layout
+writes retain service transactions; multi-run tabular reads share one fresh
+authorization check per request, without caching permissions across requests.
+
 ## 11. Deferred decisions
 
 These require measured evidence rather than early complexity:

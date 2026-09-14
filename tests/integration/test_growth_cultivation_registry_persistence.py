@@ -567,3 +567,38 @@ def test_saved_export_requires_commit_and_detects_new_unassigned_wells(
         )
     with pytest.raises(ValueError, match="not been saved"):
         exporter.execute(command)
+
+
+def test_save_reuses_one_projection_read_set_and_rechecks_permission(
+    repository: SqlPlateReaderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plate_id = _import_plate(repository)
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    counts = {"metadata": 0, "wells": 0, "user": 0}
+    original_metadata = repository.growth_cultivation_metadata
+    original_wells = repository.growth_cultivation_wells
+    original_user = repository.user_by_email
+
+    def metadata(ids):
+        counts["metadata"] += 1
+        assert repository.connection.in_transaction
+        return original_metadata(ids)
+
+    def wells():
+        counts["wells"] += 1
+        assert repository.connection.in_transaction
+        return original_wells()
+
+    def user(email):
+        counts["user"] += 1
+        return original_user(email)
+
+    monkeypatch.setattr(repository, "growth_cultivation_metadata", metadata)
+    monkeypatch.setattr(repository, "growth_cultivation_wells", wells)
+    monkeypatch.setattr(repository, "user_by_email", user)
+    assert SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview) == (plate_id,)
+    assert counts == {"metadata": 1, "wells": 1, "user": 2}
+    assert _well_custom(repository, plate_id, "A1")["Cultivation"]

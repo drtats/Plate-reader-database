@@ -399,6 +399,18 @@ class LoadGrowthRunService:
         self, actor: Actor, plate_id: PlateId, revision_id: RevisionId | None = None
     ) -> GrowthRunView:
         require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
+        return self._load(plate_id, revision_id, include_provenance=True)
+
+    def load_for_tabular_export(
+        self, actor: Actor, plate_ids: Sequence[PlateId]
+    ) -> tuple[GrowthRunView, ...]:
+        """Authorize one export request, then load its runs without unused audit history."""
+        require_role(self.repository, actor, {Role.VIEWER, Role.EDITOR, Role.ADMIN})
+        return tuple(self._load(plate_id, None, include_provenance=False) for plate_id in plate_ids)
+
+    def _load(
+        self, plate_id: PlateId, revision_id: RevisionId | None, *, include_provenance: bool
+    ) -> GrowthRunView:
         snapshot = _growth_snapshot(self.repository, plate_id)
         selected_revision = revision_id or _current_background_revision(snapshot)
         revision = next(
@@ -421,7 +433,7 @@ class LoadGrowthRunService:
         return GrowthRunView(
             snapshot,
             backgrounds,
-            self.repository.provenance_for_plate(plate_id),
+            self.repository.provenance_for_plate(plate_id) if include_provenance else (),
             background_is_stale,
         )
 

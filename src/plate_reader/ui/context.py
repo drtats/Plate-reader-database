@@ -56,13 +56,37 @@ def app_context(
                 config.hosted_user_role if config.cloud_identity_mode == "hosted" else ""
             ),
         )
-        if config.cloud_identity_mode == "hosted":
-            actor = _hosted_actor(repository, config)
-        else:
+        claims = None
+        if config.cloud_identity_mode == "oidc":
             assert oidc_claims is not None
-            actor = ResolveAuthenticatedActorService(repository).execute(
-                OidcClaims.from_mapping(oidc_claims, require_expiration=True)
+            claims = OidcClaims.from_mapping(oidc_claims, require_expiration=True)
+
+        def resolve_actor(current: SqlPlateReaderRepository) -> Actor:
+            if config.cloud_identity_mode == "hosted":
+                return _hosted_actor(current, config)
+            assert claims is not None
+            return ResolveAuthenticatedActorService(current).execute(claims)
+
+        try:
+            actor = resolve_actor(repository)
+        except Exception as error:
+            # Only a failed identity read is safe to retry. Write services retain
+            # their own transaction boundaries and are never replayed here.
+            if not _is_expired_hrana_stream(error):
+                raise
+            _cached_cloud_repository.clear()
+            repository = _healthy_cloud_repository(
+                cloud_credentials,
+                migrations,
+                hosted_user_email=(
+                    config.hosted_user_email if config.cloud_identity_mode == "hosted" else ""
+                ),
+                hosted_user_role=(
+                    config.hosted_user_role if config.cloud_identity_mode == "hosted" else ""
+                ),
+                provision_hosted_user=False,
             )
+            actor = resolve_actor(repository)
         if not config.writes_enabled:
             actor = Actor(actor.user_id, actor.email, Role.VIEWER)
         return AppContext(repository, actor)
@@ -103,31 +127,24 @@ def _healthy_cloud_repository(
     *,
     hosted_user_email: str,
     hosted_user_role: str,
+    provision_hosted_user: bool = True,
 ) -> SqlPlateReaderRepository:
-    """Use the current repository class over a cached, live Turso connection."""
+    """Use the current repository class over a cached Turso connection."""
 
-    def open_cached() -> SqlPlateReaderRepository:
-        return _cached_cloud_repository(
-            credentials.database_url,
-            str(migrations),
-            hosted_user_email=hosted_user_email,
-            hosted_user_role=hosted_user_role,
-            _auth_token=credentials.auth_token,
-        )
-
-    repository = open_cached()
-    try:
-        repository.connection.execute("SELECT 1")
-    except Exception as error:
-        if not _is_expired_hrana_stream(error):
-            raise
-        _cached_cloud_repository.clear()
-        repository = open_cached()
-        repository.connection.execute("SELECT 1")
+    repository = _cached_cloud_repository(
+        credentials.database_url,
+        str(migrations),
+        hosted_user_email=hosted_user_email,
+        hosted_user_role=hosted_user_role,
+        _provision_hosted_user=provision_hosted_user,
+        _auth_token=credentials.auth_token,
+    )
     return SqlPlateReaderRepository(repository.connection)
 
 
 def _is_expired_hrana_stream(error: Exception) -> bool:
+    if isinstance(error, PermissionError):
+        return False
     message = str(error).casefold()
     return "hrana" in message and "stream not found" in message
 
@@ -167,20 +184,28 @@ def _cached_cloud_repository(
     *,
     hosted_user_email: str = "",
     hosted_user_role: str = "",
+    _provision_hosted_user: bool = True,
     _auth_token: str,
 ) -> SqlPlateReaderRepository:
     connection = connect_turso_database(
         TursoDatabaseConfig(database_url, _auth_token, Path(migrations_directory))
     )
     repository = SqlPlateReaderRepository(connection)
-    if hosted_user_email:
+    # Role and active status are managed in the users table after first
+    # provision; reconnecting must not override an administrator's change.
+    if (
+        _provision_hosted_user
+        and hosted_user_email
+        and repository.user_by_email(hosted_user_email) is None
+    ):
         with repository.transaction():
-            repository.upsert_user(
-                {
-                    "email": hosted_user_email,
-                    "display_name": hosted_user_email.split("@", maxsplit=1)[0],
-                    "role": hosted_user_role,
-                    "is_active": True,
-                }
-            )
+            if repository.user_by_email(hosted_user_email) is None:
+                repository.upsert_user(
+                    {
+                        "email": hosted_user_email,
+                        "display_name": hosted_user_email.split("@", maxsplit=1)[0],
+                        "role": hosted_user_role,
+                        "is_active": True,
+                    }
+                )
     return repository

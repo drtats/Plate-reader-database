@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -85,6 +84,8 @@ def test_cloud_context_resolves_only_pre_registered_database_user(
         "exp": int(datetime.now(UTC).timestamp()) + 600,
     }
 
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
     context = app_context(
         config,
         root / "migrations",
@@ -93,6 +94,9 @@ def test_cloud_context_resolves_only_pre_registered_database_user(
     )
     assert context.actor.email == "scientist@example.invalid"
     assert context.actor.role is Role.VIEWER
+    assert len(statements) == 1
+    assert "FROM users WHERE email" in statements[0]
+    connection.set_trace_callback(None)
     connection.close()
 
 
@@ -213,6 +217,76 @@ def test_hosted_cloud_context_uses_configured_shared_audit_identity(
     connection.close()
 
 
+def test_warm_hosted_rerun_uses_one_fresh_user_read_and_honors_role_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    connection = connect_database(
+        DatabaseConfig(
+            tmp_path / "hosted-rerun.sqlite", DatabaseBackend.FAKE_CLOUD, root / "migrations"
+        )
+    )
+    repository = SqlPlateReaderRepository(connection)
+    with repository.transaction():
+        repository.upsert_user(
+            {
+                "email": "owner@example.com",
+                "display_name": "owner",
+                "role": Role.ADMIN,
+                "is_active": True,
+            }
+        )
+    monkeypatch.setattr(
+        context_module, "_cached_cloud_repository", lambda *args, **kwargs: repository
+    )
+    config = LocalAppConfig(
+        RuntimeInfo("production", "cloud"),
+        tmp_path / "unused.sqlite",
+        "developer@example.invalid",
+        "editor",
+        True,
+        "hosted",
+        "owner@example.com",
+        "admin",
+    )
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+    try:
+        first = app_context(
+            config,
+            root / "migrations",
+            cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
+        )
+        assert first.actor.role is Role.ADMIN
+        assert len(statements) == 1
+        assert "FROM users WHERE email" in statements[0]
+        assert "SELECT 1" not in statements[0]
+
+        connection.execute("UPDATE users SET role = 'viewer' WHERE email = 'owner@example.com'")
+        statements.clear()
+        second = app_context(
+            config,
+            root / "migrations",
+            cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
+        )
+        assert second.actor.role is Role.VIEWER
+        assert len(statements) == 1
+        assert "FROM users WHERE email" in statements[0]
+
+        connection.execute("UPDATE users SET is_active = 0 WHERE email = 'owner@example.com'")
+        statements.clear()
+        with pytest.raises(ValueError, match="Hosted audit identity"):
+            app_context(
+                config,
+                root / "migrations",
+                cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
+            )
+        assert len(statements) == 1
+    finally:
+        connection.set_trace_callback(None)
+        connection.close()
+
+
 def test_cached_cloud_connection_initializes_hosted_identity_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -254,6 +328,49 @@ def test_cached_cloud_connection_initializes_hosted_identity_once(
         stored = first.user_by_email("owner@example.com")
         assert stored is not None
         assert stored["role"] == "admin"
+
+        connection.execute(
+            "UPDATE users SET role = 'viewer', is_active = 0 WHERE email = 'owner@example.com'"
+        )
+        context_module._cached_cloud_repository.clear()
+        reopened = context_module._cached_cloud_repository(
+            "libsql://hosted-initialization.turso.io",
+            str(root / "migrations"),
+            hosted_user_email="owner@example.com",
+            hosted_user_role="admin",
+            _auth_token="token",
+        )
+        assert connection_count == 2
+        stored = reopened.user_by_email("owner@example.com")
+        assert stored is not None
+        assert stored["role"] == "viewer"
+        assert stored["is_active"] == 0
+    finally:
+        context_module._cached_cloud_repository.clear()
+        connection.close()
+
+
+def test_reopened_connection_does_not_provision_an_absent_hosted_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    connection = connect_database(
+        DatabaseConfig(
+            tmp_path / "absent-user.sqlite", DatabaseBackend.FAKE_CLOUD, root / "migrations"
+        )
+    )
+    monkeypatch.setattr(context_module, "connect_turso_database", lambda _config: connection)
+    context_module._cached_cloud_repository.clear()
+    try:
+        repository = context_module._cached_cloud_repository(
+            "libsql://absent-user.turso.io",
+            str(root / "migrations"),
+            hosted_user_email="owner@example.com",
+            hosted_user_role="admin",
+            _provision_hosted_user=False,
+            _auth_token="token",
+        )
+        assert repository.user_by_email("owner@example.com") is None
     finally:
         context_module._cached_cloud_repository.clear()
         connection.close()
@@ -261,24 +378,44 @@ def test_cached_cloud_connection_initializes_hosted_identity_once(
 
 def test_cloud_repository_reconnects_once_after_an_expired_hrana_stream(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
 
     class StaleConnection:
-        def execute(self, _statement: str) -> None:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def execute(self, statement: str, _parameters: object = ()) -> None:
+            self.statements.append(statement)
             raise ValueError("Hrana: api error: stream not found: stream-id")
 
-    stale = type("Repository", (), {"connection": StaleConnection()})()
-    fresh_connection = sqlite3.connect(":memory:", isolation_level=None)
+    stale_connection = StaleConnection()
+    stale = type("Repository", (), {"connection": stale_connection})()
+    fresh_connection = connect_database(
+        DatabaseConfig(tmp_path / "fresh.sqlite", DatabaseBackend.FAKE_CLOUD, root / "migrations")
+    )
+    fresh_repository = SqlPlateReaderRepository(fresh_connection)
+    with fresh_repository.transaction():
+        fresh_repository.upsert_user(
+            {
+                "email": "owner@example.com",
+                "display_name": "owner",
+                "role": Role.VIEWER,
+                "is_active": True,
+            }
+        )
     fresh = type("Repository", (), {"connection": fresh_connection})()
 
     class CachedFactory:
         def __init__(self) -> None:
             self.calls = 0
             self.clear_calls = 0
+            self.provisioning: list[object] = []
 
         def __call__(self, *_args: object, **_kwargs: object) -> object:
             self.calls += 1
+            self.provisioning.append(_kwargs["_provision_hosted_user"])
             return stale if self.calls == 1 else fresh
 
         def clear(self) -> None:
@@ -286,31 +423,53 @@ def test_cloud_repository_reconnects_once_after_an_expired_hrana_stream(
 
     factory = CachedFactory()
     monkeypatch.setattr(context_module, "_cached_cloud_repository", factory)
+    config = LocalAppConfig(
+        RuntimeInfo("production", "cloud"),
+        tmp_path / "unused.sqlite",
+        "developer@example.invalid",
+        "editor",
+        True,
+        "hosted",
+        "owner@example.com",
+        "admin",
+    )
 
     try:
-        repository = context_module._healthy_cloud_repository(
-            CloudCredentials("libsql://database.turso.io", "token"),
+        context = app_context(
+            config,
             root / "migrations",
-            hosted_user_email="",
-            hosted_user_role="",
+            cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
         )
     finally:
         fresh_connection.close()
 
-    assert isinstance(repository, SqlPlateReaderRepository)
-    assert repository.connection is fresh_connection
+    assert context.actor.role is Role.VIEWER
+    assert context.repository.connection is fresh_connection
+    assert len(stale_connection.statements) == 1
+    assert "FROM users WHERE email" in stale_connection.statements[0]
     assert factory.calls == 2
     assert factory.clear_calls == 1
+    assert factory.provisioning == [True, False]
 
 
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    (
+        (ValueError("Turso authentication failed"), "authentication"),
+        (PermissionError("Hrana: stream not found"), "stream not found"),
+    ),
+)
 def test_cloud_repository_does_not_retry_other_connection_errors(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure: Exception,
+    message: str,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
 
     class BrokenConnection:
-        def execute(self, _statement: str) -> None:
-            raise ValueError("Turso authentication failed")
+        def execute(self, _statement: str, _parameters: object = ()) -> None:
+            raise failure
 
     broken = type("Repository", (), {"connection": BrokenConnection()})()
 
@@ -326,13 +485,22 @@ def test_cloud_repository_does_not_retry_other_connection_errors(
 
     factory = CachedFactory()
     monkeypatch.setattr(context_module, "_cached_cloud_repository", factory)
+    config = LocalAppConfig(
+        RuntimeInfo("production", "cloud"),
+        tmp_path / "unused.sqlite",
+        "developer@example.invalid",
+        "editor",
+        True,
+        "hosted",
+        "owner@example.com",
+        "admin",
+    )
 
-    with pytest.raises(ValueError, match="authentication"):
-        context_module._healthy_cloud_repository(
-            CloudCredentials("libsql://database.turso.io", "token"),
+    with pytest.raises(type(failure), match=message):
+        app_context(
+            config,
             root / "migrations",
-            hosted_user_email="",
-            hosted_user_role="",
+            cloud_credentials=CloudCredentials("libsql://database.turso.io", "token"),
         )
 
     assert factory.clear_calls == 0

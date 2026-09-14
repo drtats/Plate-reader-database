@@ -5,9 +5,10 @@ import hashlib
 import io
 import itertools
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -28,7 +29,11 @@ from plate_reader.application.services import (
     ImportGrowthRunService,
     SaveLayoutColumnService,
 )
-from plate_reader.application.services.growth_tabular_export import GrowthTabularExportBundle
+from plate_reader.application.services.growth_tabular_export import (
+    GrowthTabularExportBundle,
+    export_growth_tabular_data,
+)
+from plate_reader.application.services.growth_workflow import LoadGrowthRunService
 from plate_reader.domain.growth import GROWTH_BACKGROUND_VERSION, GROWTH_NORMALIZATION_VERSION
 from plate_reader.domain.growth.cultivation import DEFAULT_CULTIVATION_PATTERN
 from plate_reader.infrastructure.database import (
@@ -60,6 +65,7 @@ def repository(
 
 def test_multi_run_export_reconciles_rows_and_does_not_write(
     repository: SqlPlateReaderRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     identifiers = itertools.count()
     importer = ImportGrowthRunService(
@@ -115,12 +121,35 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
         )
 
     SaveLayoutColumnService(repository).execute(ACTOR, AssayType.GROWTH, "Vessel")
+    baseline = export_growth_tabular_data(
+        tuple(LoadGrowthRunService(repository).execute(ACTOR, plate_id) for plate_id in plate_ids),
+        custom_columns=("Vessel",),
+    )
     counts_before = _table_counts(repository)
+    reads = {"user": 0, "plate": 0, "background": 0, "provenance": 0}
+    for name, key in (
+        ("user_by_email", "user"),
+        ("load_plate", "plate"),
+        ("growth_backgrounds", "background"),
+        ("provenance_for_plate", "provenance"),
+    ):
+        original = cast(Callable[..., object], getattr(repository, name))
+
+        def counted(
+            *args: object, _original: Callable[..., object] = original, _key: str = key
+        ) -> object:
+            reads[_key] += 1
+            return _original(*args)
+
+        monkeypatch.setattr(repository, name, counted)
+
     bundle = ExportGrowthTabularDataService(repository).execute(
         ExportGrowthTabularData(ACTOR, tuple(plate_ids))
     )
     counts_after = _table_counts(repository)
 
+    assert reads == {"user": 1, "plate": 2, "background": 2, "provenance": 0}
+    assert bundle == baseline
     assert counts_after == counts_before
     assert bundle.measurements.row_count == 768
     assert bundle.metadata.row_count == 192
@@ -149,6 +178,21 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
     assert b1["Condition 1 State"] == "Mecillinam 3.0 ug/mL"
     assert json.loads(metadata_rows[0]["Source Metadata JSON"])["Plate Number"] == "Plate 0"
     assert all("no cultivation ID" in warning for warning in bundle.warnings)
+
+    # A subsequent export must recheck the stored actor, before any plate is loaded.
+    repository.upsert_user(
+        {
+            "email": ACTOR.email,
+            "display_name": "tabular-editor",
+            "role": Role.EDITOR,
+            "is_active": False,
+        }
+    )
+    with pytest.raises(PermissionError, match="inactive"):
+        ExportGrowthTabularDataService(repository).execute(
+            ExportGrowthTabularData(ACTOR, tuple(plate_ids))
+        )
+    assert reads == {"user": 2, "plate": 2, "background": 2, "provenance": 0}
 
 
 @pytest.mark.parametrize("generate", [False, True])
