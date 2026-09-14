@@ -21,8 +21,6 @@ from plate_reader.domain.growth.cultivation_conditions import (
 SCHEME = "plate_condition_v1"
 PLATE_CONDITION_PATTERN = "{team}-EXP-{strain}-{system}{plate}{condition}R{replicate}"
 _TEAM = re.compile(r"[A-Za-z0-9]+\Z")
-_STRAIN_BODY = r"[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
-_STRAIN = re.compile(rf"{_STRAIN_BODY}\Z")
 _SYSTEM = re.compile(r"[A-Za-z](?:[A-Za-z0-9]*[A-Za-z])?\Z")
 _NUMBER = re.compile(r"[0-9]+\Z")
 
@@ -195,6 +193,7 @@ def plan_plate_condition_cultivations(
         assignments: list[dict[str, object]] = []
         warnings: list[str] = []
         missing_strain_count = 0
+        strain_aliases: dict[str, str] = {}
         for row in plate_rows:
             custom = condition_json_object(row.get("custom_json"))
             pos = _position(row.get("position"))
@@ -224,8 +223,10 @@ def plan_plate_condition_cultivations(
                     assignment["PreviousCultivationIDs"] = list(dict.fromkeys([*history, old_id]))
                 assignments.append(assignment)
                 continue
-            if _STRAIN.fullmatch(strain) is None:
-                raise _error("Cultivation strain contains invalid ID characters", well=well_id)
+            original_strain = strain
+            strain = _strain_component(strain, location=f"experiment {number}, well {pos}")
+            if strain != original_strain:
+                strain_aliases[original_strain] = strain
             key = cultivation_condition_key(
                 row,
                 row,
@@ -298,6 +299,11 @@ def plan_plate_condition_cultivations(
                     dict.fromkeys([*history, custom["Cultivation"]])
                 )
             assignments.append(assignment)
+        for original, code in strain_aliases.items():
+            warnings.append(
+                f"Strain {original!r} uses {code!r} in cultivation IDs; "
+                "original strain metadata is unchanged"
+            )
         if missing_strain_count:
             warnings.append(
                 f"{missing_strain_count} wells missing strain; external IDs not assigned"
@@ -362,16 +368,15 @@ def _saved_identity(
     if not isinstance(saved_cultivation, str):
         raise _error("Saved cultivation ID is missing")
     expected = re.fullmatch(
-        rf"{re.escape(team)}-EXP-({_STRAIN_BODY})-"
+        rf"{re.escape(team)}-EXP-(.+)-"
         rf"{re.escape(system + run)}R{rep}",
         saved_cultivation,
     )
     if expected is None:
         raise _error("Saved cultivation identity has inconsistent component", field="Cultivation")
-    strain = (
-        _validated_component(well.get("strain"), _STRAIN, "strain")
-        if validate_current
-        else expected[1]
+    strain = _strain_component(
+        well.get("strain") if validate_current else expected[1],
+        location=f"experiment {number}, well {_text(well.get('position'))}",
     )
     required: dict[str, object] = {
         "InternalCultivationID": _text(well.get("well_id")),
@@ -441,16 +446,39 @@ def _saved_identity(
     }
 
 
+def _assigned_strain(assignment: Mapping[str, object]) -> str:
+    """Read between known components; strain names may themselves contain hyphens."""
+
+    prefix = f"{assignment['Team_Code']}-EXP-"
+    suffix = (
+        f"-{assignment['CultivationSystemCode']}{assignment['CultivationRun']}"
+        f"R{assignment['CultivationReplicate']}"
+    )
+    return str(assignment["Cultivation"])[len(prefix) : -len(suffix)]
+
+
+def _strain_component(value: object, *, location: str) -> str:
+    """Use underscores for spaces/hyphens and d for delta; retain original metadata."""
+
+    strain = _text(value)
+    if not strain or not strain.isprintable():
+        raise _error(
+            f"Invalid cultivation strain {strain!r} at {location}: "
+            "use a nonempty name without control or nonprinting characters"
+        )
+    return re.sub(r"\s+", "_", strain).replace("-", "_").replace("Δ", "d").replace("δ", "d")
+
+
 def _set_ranges(assignments: list[dict[str, object]]) -> None:
     runs: dict[str, set[str]] = defaultdict(set)
     for assignment in assignments:
         if assignment.get("Cultivation"):
-            strain = str(assignment["Cultivation"]).split("-EXP-", 1)[1].split("-", 1)[0]
+            strain = _assigned_strain(assignment)
             runs[strain].add(str(assignment["CultivationRun"]))
     for assignment in assignments:
         if not assignment.get("Cultivation"):
             continue
-        strain = str(assignment["Cultivation"]).split("-EXP-", 1)[1].split("-", 1)[0]
+        strain = _assigned_strain(assignment)
         ordered = sorted(runs[strain], key=lambda number: (int(number), number))
         contiguous = len(ordered) > 1 and all(
             int(after[-2:]) == int(before[-2:]) + 1 for before, after in pairwise(ordered)

@@ -317,3 +317,49 @@ def test_legacy_id_on_missing_strain_moves_to_history(
     assert custom["PreviousCultivationIDs"] == ["LEGACY-B1"]
     assert custom["InternalCultivationID"] == before_row["well_id"]
     assert custom["note"] == "keep"
+
+
+def test_normalized_strain_ids_save_and_export_original_metadata(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    import csv
+    import io
+
+    from plate_reader.application.services.growth_tabular_export import (
+        ExportGrowthTabularData,
+        ExportGrowthTabularDataService,
+    )
+
+    plate_id = _import_plate(repository)
+    original = "ΔacrB MG 1-2"
+    with repository.transaction():
+        repository.update_well_layout(
+            plate_id,
+            [{"position": position, "strain": original} for position in ("A1", "A2")],
+        )
+    before = repository.load_plate(plate_id)
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview)
+    preview_again = PreviewGrowthCultivationRegistryService(repository).execute(
+        EDITOR, (plate_id,), SETTINGS
+    )
+    assert SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview_again) == ()
+    saved = repository.load_plate(plate_id)
+    assert saved.wells[0]["strain"] == before.wells[0]["strain"]
+    bundle = ExportGrowthTabularDataService(repository).execute(
+        ExportGrowthTabularData(EDITOR, (plate_id,))
+    )
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    for position, replicate in (("A1", 1), ("A2", 2)):
+        row = next(row for row in metadata if row["Well"] == position)
+        assert row["Strain"] == original
+        assert row["Cultivation"] == f"ST-EXP-dacrB_MG_1_2-MP96A0101R{replicate}"
+        assert row["CultivationExperiment"] == "ST-EXP-dacrB_MG_1_2-MP96A[0101]"
+        observations = [row for row in data if row["Well"] == position]
+        assert observations
+        assert all(item["Strain"] == original for item in observations)
+        assert all(item["Cultivation ID"] == row["Cultivation"] for item in observations)
+    assert repr(repository.load_plate(plate_id)) == repr(saved)

@@ -40,3 +40,9 @@ compatibility details. CSV metadata exposes `CultivationExperimentNumber`; gener
 local labels use `EXP01-A01`. Readers accept former `P01-A01` labels, and exports
 render the experiment label without changing saved cultivation IDs or reservations.
 An explicit save updates the local label only; there is no automatic database write.
+
+Strain names in persistent cultivation IDs use underscores for whitespace and
+hyphens, and `d` for `Δ`/`δ` (for example `ΔacrB MG 1-2` becomes `dacrB_MG_1_2`).
+Original strain metadata and condition fingerprints are unchanged. Preview reports
+the name-to-code mapping; save, ranges, validation and export use the same rule.
+Nonprinting characters fail with the strain label, experiment number and well.

@@ -302,3 +302,46 @@ def test_former_plate_local_label_keeps_cultivation_and_experiment_numbers() -> 
     assert updated.plate_number == original.plate_number
     assert updated.assignments == original.assignments
     assert updated.assignments[0]["Local_Cultivation_ID"] == "EXP01-A01"
+
+
+@pytest.mark.parametrize(
+    ("original", "code"),
+    [
+        ("acrB MG", "acrB_MG"),
+        ("acrB  MG", "acrB_MG"),
+        ("ΔacrB MG", "dacrB_MG"),
+        ("δacrB MG", "dacrB_MG"),
+        ("K-12 ΔacrB", "K_12_dacrB"),
+        ("1-2", "1_2"),
+        ("11_J3", "11_J3"),
+    ],
+)
+def test_strain_code_normalization_survives_save_repreview_and_ranges(
+    original: str, code: str
+) -> None:
+    rows = [_row("p1", "A1", strain=original), _row("p1", "A2", strain=original)]
+    before = deepcopy(rows)
+    (plan,) = _plan(rows, "p1")
+    assert rows == before
+    assert plan.assignments[0]["Cultivation"] == f"ST-EXP-{code}-MP96A0101R1"
+    assert plan.assignments[1]["Cultivation"] == f"ST-EXP-{code}-MP96A0101R2"
+    assert plan.assignments[0]["CultivationExperiment"] == f"ST-EXP-{code}-MP96A[0101]"
+    if original != code:
+        assert any(repr(original) in warning and repr(code) in warning for warning in plan.warnings)
+    _persist(rows, (plan,))
+    assert _plan(rows, "p1")[0].assignments == plan.assignments
+    assert (
+        saved_plate_condition_identity(rows[0], rows[0])["Cultivation"]
+        == (plan.assignments[0]["Cultivation"])
+    )
+    assert rows[0]["strain"] == original
+    # Strain-code normalization must not hide a change to scientific metadata.
+    rows[0]["strain"] = original + " changed"
+    with pytest.raises(DomainValidationError):
+        _plan(rows, "p1")
+
+
+def test_invalid_strain_error_identifies_experiment_well_and_label() -> None:
+    with pytest.raises(DomainValidationError, match=r"experiment 01, well A1") as error:
+        _plan([_row("p1", "A1", strain="acrB\x00MG")], "p1")
+    assert "acrB" in str(error.value) and "nonprinting" in str(error.value)

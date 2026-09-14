@@ -179,3 +179,9 @@ labelled as an experiment number in the UI and CSV. `CultivationPlateNumber` rem
 the internal persisted key; exports map it to `CultivationExperimentNumber`. Former
 `P01-A01` local labels are accepted on read and rendered as `EXP01-A01`, without
 renumbering cultivation IDs or modifying storage during export.
+
+Strain names in persistent cultivation IDs use underscores for whitespace and
+hyphens, and `d` for `Δ`/`δ` (for example `ΔacrB MG 1-2` becomes `dacrB_MG_1_2`).
+Original strain metadata and condition fingerprints are unchanged. Preview reports
+the name-to-code mapping; save, ranges, validation and export use the same rule.
+Nonprinting characters fail with the strain label, experiment number and well.

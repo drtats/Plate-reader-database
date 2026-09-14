@@ -172,6 +172,11 @@ labels remain separately available as **Local replicate** / **LocalReplicate**.
 Each experiment is one physical plate and owns its unique, persistent number.
 The first part of the code is exported as `CultivationExperimentNumber`.
 
+In the strain part of a cultivation ID, spaces and hyphens become underscores,
+and `Δ` or `δ` becomes `d`: `ΔacrB MG 1-2` becomes `dacrB_MG_1_2`. Preview shows
+these substitutions. Original strain names remain unchanged in layout and exported
+metadata.
+
 Matching uses strain, medium, treatment doses and units (including combinations),
 inoculum, temperature, culture volume and chosen additional condition fields.
 **Concentration matching** defaults to **2 significant figures**: `0.1875` and `0.19`
