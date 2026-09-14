@@ -392,9 +392,9 @@ def test_export_selection_reorders_stably_and_resets_for_subset() -> None:
     backward = plan_export_condition_replicates([late, early])
     assert forward == backward
     assert forward[("early", "A1")].replicate == 1
-    assert forward[("late", "A1")].replicate == 2
-    assert forward[("late", "A1")].matching_wells == 2
-    assert forward[("late", "A1")].matching_plates == 2
+    assert forward[("late", "A1")].replicate == 1
+    assert forward[("late", "A1")].matching_wells == 1
+    assert forward[("late", "A1")].matching_plates == 1
     assert plan_export_condition_replicates([late])[("late", "A1")].replicate == 1
     assert (early, late) == before
 
@@ -410,15 +410,15 @@ def test_export_selection_resets_per_condition_and_scope() -> None:
     plan = plan_export_condition_replicates([different_scope, different_medium, second, first])
     assert {identity: item.replicate for identity, item in plan.items()} == {
         ("p1", "A1"): 1,
-        ("p2", "A1"): 2,
+        ("p2", "A1"): 1,
         ("p3", "A1"): 1,
         ("p4", "A1"): 1,
     }
-    assert plan[("p1", "A1")].matching_wells == 2
+    assert plan[("p1", "A1")].matching_wells == 1
     assert plan[("p3", "A1")].matching_wells == 1
 
 
-def test_export_selection_uses_consistent_field_union_with_saved_fallback() -> None:
+def test_export_selection_uses_each_plates_fields_with_saved_fallback() -> None:
     selected = [
         _row(
             "p1",
@@ -450,8 +450,92 @@ def test_export_selection_uses_consistent_field_union_with_saved_fallback() -> N
         ),
     ]
     plan = plan_export_condition_replicates(selected, extra_fields=(" batch ",))
-    assert {item.extra_fields for item in plan.values()} == {("batch", "oxygen", "shaking")}
-    assert [plan[(f"p{index}", "A1")].replicate for index in (1, 2, 3)] == [1, 2, 3]
+    assert [plan[(f"p{index}", "A1")].extra_fields for index in (1, 2, 3)] == [
+        ("batch", "oxygen"),
+        ("batch",),
+        ("batch", "shaking"),
+    ]
+    assert [plan[(f"p{index}", "A1")].replicate for index in (1, 2, 3)] == [1, 1, 1]
+    for row in selected:
+        identity = (str(row["plate_id"]), "A1")
+        assert (
+            plan[identity]
+            == plan_export_condition_replicates([row], extra_fields=("batch",))[identity]
+        )
+
+
+def test_export_numbers_matching_wells_again_from_one_on_each_plate() -> None:
+    rows = [
+        _row("second", "B02"),
+        _row("first", "A02"),
+        _row("second", "A01"),
+        _row("first", "A01"),
+    ]
+    before = deepcopy(rows)
+    plan = plan_export_condition_replicates(rows)
+    assert {identity: item.replicate for identity, item in plan.items()} == {
+        ("first", "A1"): 1,
+        ("first", "A2"): 2,
+        ("second", "A1"): 1,
+        ("second", "B2"): 2,
+    }
+    assert {(item.matching_wells, item.matching_plates) for item in plan.values()} == {(2, 1)}
+    assert rows == before
+
+
+def test_export_field_fallback_is_plate_local_and_unions_its_wells() -> None:
+    first = _row(
+        "p1",
+        "A01",
+        custom_json='{"CultivationConditionFields":["oxygen"],"oxygen":"high"}',
+    )
+    second = _row("p1", "A02", custom_json='{"oxygen":"low"}')
+    other = _row(
+        "p2",
+        "A01",
+        custom_json='{"CultivationConditionFields":["batch"],"batch":"b1"}',
+    )
+    combined = plan_export_condition_replicates([other, second, first])
+    assert combined[("p1", "A1")].extra_fields == ("oxygen",)
+    assert combined[("p1", "A2")].extra_fields == ("oxygen",)
+    assert combined[("p2", "A1")].extra_fields == ("batch",)
+    assert combined[("p1", "A1")].matching_wells == 1
+    assert combined[("p1", "A2")].replicate == 1
+    assert combined[("p2", "A1")].replicate == 1
+    isolated = plan_export_condition_replicates([second, first])
+    assert {identity: combined[identity] for identity in isolated} == isolated
+
+
+def test_export_shared_fields_override_per_well_fallback_within_plate() -> None:
+    first = _row(
+        "p1",
+        "A01",
+        custom_json='{"batch":"b1"}',
+        plate_custom_json='{"cultivation_registry":{"CultivationConditionFields":"oxygen"}}',
+    )
+    second = _row(
+        "p1",
+        "A02",
+        custom_json='{"CultivationConditionFields":42,"batch":"b2"}',
+        plate_custom_json='{"cultivation_registry":{}}',
+    )
+    plan = plan_export_condition_replicates([second, first])
+    assert {item.extra_fields for item in plan.values()} == {("oxygen",)}
+    assert [plan[("p1", f"A{index}")].replicate for index in (1, 2)] == [1, 2]
+
+
+def test_export_falls_back_to_physical_position_when_coordinate_indexes_are_missing() -> None:
+    rows = [
+        _row("p1", "A10", well_id="a", experiment_date="2026-01-01"),
+        _row("p1", "A02", well_id="z", experiment_date="2026-12-01"),
+        _row("p1", "A01", well_id="m", experiment_date="2026-06-01"),
+    ]
+    for row in rows:
+        del row["row_index"]
+        del row["column_index"]
+    plan = plan_export_condition_replicates(rows)
+    assert [plan[("p1", position)].replicate for position in ("A1", "A2", "A10")] == [1, 2, 3]
+    assert plan == plan_export_condition_replicates(list(reversed(rows)))
 
 
 def test_export_selection_missing_conditions_are_singletons_and_skips_blank_deleted() -> None:
@@ -472,8 +556,8 @@ def test_export_selection_groups_micro_spellings_without_converting_scales() -> 
     spellings = ("ug/mL", "µg/mL", "μg/mL", "Œºg/mL", "Âµg/mL", "Î¼g/mL")
     rows = [
         _row(
-            f"p{index}",
-            "A01",
+            "p",
+            f"A{index:02d}",
             concentration_unit=spelling,
             experiment_date=f"2026-01-{index:02d}",
         )
@@ -484,9 +568,9 @@ def test_export_selection_groups_micro_spellings_without_converting_scales() -> 
 
     plan = plan_export_condition_replicates(list(reversed(rows)))
 
-    assert [plan[(f"p{index}", "A1")].replicate for index in range(1, 7)] == [1, 2, 3, 4, 5, 6]
-    assert {plan[(f"p{index}", "A1")].matching_wells for index in range(1, 7)} == {6}
-    assert {plan[(f"p{index}", "A1")].matching_plates for index in range(1, 7)} == {6}
+    assert [plan[("p", f"A{index}")].replicate for index in range(1, 7)] == [1, 2, 3, 4, 5, 6]
+    assert {plan[("p", f"A{index}")].matching_wells for index in range(1, 7)} == {6}
+    assert {plan[("p", f"A{index}")].matching_plates for index in range(1, 7)} == {1}
     assert plan[("mg", "A1")].replicate == 1
     assert plan[("mg", "A1")].matching_wells == 1
     assert rows == before
@@ -502,8 +586,8 @@ def test_unit_matching_is_opt_in_and_applies_to_secondary_and_other_unit_fields(
         custom_json='{"treatment_2":"drug B","conc_2":2,"unit_2":"uM"}',
     )
     alternate = _row(
-        "p2",
-        "A01",
+        "p1",
+        "A02",
         concentration_unit="Œºg/mL",
         inoculum_unit="µL",
         temperature_unit="μC",
@@ -520,28 +604,31 @@ def test_unit_matching_is_opt_in_and_applies_to_secondary_and_other_unit_fields(
         alternate, alternate, "project-a", normalize_units=True
     ) == cultivation_condition_key(canonical, canonical, "project-a", normalize_units=True)
     plan = plan_export_condition_replicates([alternate, canonical])
-    assert [plan[("p1", "A1")].replicate, plan[("p2", "A1")].replicate] == [1, 2]
+    assert [plan[("p1", "A1")].replicate, plan[("p1", "A2")].replicate] == [1, 2]
     assert (canonical, alternate) == before
 
 
-def test_export_precision_groups_equivalent_doses_across_plates_in_date_order() -> None:
+def test_export_precision_groups_equivalent_doses_within_each_plate() -> None:
     rows = [
-        _row("p4", "A01", concentration="0.094", experiment_date="2026-01-04"),
-        _row("p2", "A01", concentration="0.19", experiment_date="2026-01-02"),
-        _row("p3", "A01", concentration="0.09375", experiment_date="2026-01-03"),
-        _row("p1", "A01", concentration=0.1875, experiment_date="2026-01-01"),
+        _row("p1", "A04", concentration="0.094"),
+        _row("p2", "A02", concentration="0.19"),
+        _row("p1", "A03", concentration="0.09375"),
+        _row("p1", "A02", concentration="0.19"),
+        _row("p2", "A01", concentration=0.1875),
+        _row("p1", "A01", concentration=0.1875),
     ]
     before = deepcopy(rows)
     plan = plan_export_condition_replicates(rows, concentration_significant_figures=2)
     assert [
-        (plan[(f"p{n}", "A1")].replicate, plan[(f"p{n}", "A1")].matching_wells) for n in range(1, 5)
+        (plan[("p1", f"A{n}")].replicate, plan[("p1", f"A{n}")].matching_wells) for n in range(1, 5)
     ] == [
         (1, 2),
         (2, 2),
         (1, 2),
         (2, 2),
     ]
-    assert {item.matching_plates for item in plan.values()} == {2}
+    assert [plan[("p2", f"A{n}")].replicate for n in (1, 2)] == [1, 2]
+    assert {item.matching_plates for item in plan.values()} == {1}
     assert plan == plan_export_condition_replicates(
         list(reversed(rows)), concentration_significant_figures=2
     )
@@ -551,15 +638,15 @@ def test_export_precision_groups_equivalent_doses_across_plates_in_date_order() 
 def test_export_precision_keeps_twofold_neighbors_and_exact_mode_separate() -> None:
     rows = [
         _row("p1", "A01", concentration="0.1875"),
-        _row("p2", "A01", concentration="0.19"),
-        _row("p3", "A01", concentration="0.09375"),
-        _row("p4", "A01", concentration="0.094"),
+        _row("p1", "A02", concentration="0.19"),
+        _row("p1", "A03", concentration="0.09375"),
+        _row("p1", "A04", concentration="0.094"),
     ]
     rounded = plan_export_condition_replicates(rows, concentration_significant_figures=2)
     exact = plan_export_condition_replicates(rows)
-    assert rounded[("p1", "A1")].condition_key == rounded[("p2", "A1")].condition_key
-    assert rounded[("p3", "A1")].condition_key == rounded[("p4", "A1")].condition_key
-    assert rounded[("p1", "A1")].condition_key != rounded[("p3", "A1")].condition_key
+    assert rounded[("p1", "A1")].condition_key == rounded[("p1", "A2")].condition_key
+    assert rounded[("p1", "A3")].condition_key == rounded[("p1", "A4")].condition_key
+    assert rounded[("p1", "A1")].condition_key != rounded[("p1", "A3")].condition_key
     assert {item.matching_wells for item in exact.values()} == {1}
 
 

@@ -533,7 +533,7 @@ def test_selection_export_assigns_r_within_only_selected_runs_and_preserves_save
     single_data, single_meta = _csv_rows(single)
     expected = {
         "early": "PN-EXP-NCM3722-001-A01-R1",
-        "late": "PN-EXP-NCM3722-002-A01-R2",
+        "late": "PN-EXP-NCM3722-002-A01-R1",
     }
     by_run = {row["Run ID"]: row for row in pair_meta if row["Well"] == "A1"}
     assert {run_id: row["Cultivation"] for run_id, row in by_run.items()} == expected
@@ -545,8 +545,8 @@ def test_selection_export_assigns_r_within_only_selected_runs_and_preserves_save
     )
     assert by_run["late"]["SavedCultivation"] == "PN-EXP-NCM3722-002-A01-R9"
     assert by_run["late"]["LocalReplicate"] == "1"
-    assert by_run["late"]["Replicate"] == by_run["late"]["CultivationReplicate"] == "2"
-    assert by_run["late"]["CultivationReplicateMode"] == "export_selection"
+    assert by_run["late"]["Replicate"] == by_run["late"]["CultivationReplicate"] == "1"
+    assert by_run["late"]["CultivationReplicateMode"] == "export_run"
     assert by_run["late"]["CultivationConditionFields"] == '["oxygen"]'
     assert pair.effective_condition_fields == ("oxygen",)
     assert len(pair.replicate_preview) == 2
@@ -615,7 +615,7 @@ def test_selection_export_requires_strain_even_when_custom_pattern_omits_it() ->
     a1 = next(row for row in metadata if row["Well"] == "A1")
     assert a1["Cultivation"] == ""
     assert a1["CultivationReplicate"] == "1"
-    assert a1["CultivationReplicateMode"] == "export_selection"
+    assert a1["CultivationReplicateMode"] == "export_run"
     assert any("missing strain" in warning for warning in bundle.warnings)
     assert any(row["Raw OD"] for row in data if row["Well"] == "A1")
 
@@ -683,8 +683,8 @@ def test_export_generator_works_without_saved_ids_and_normalizes_units() -> None
     for i, view in enumerate(views, 1):
         run = str(view.snapshot.plate_id)
         meta = next(row for row in metadata if row["Run ID"] == run and row["Well"] == "A1")
-        assert meta["Cultivation"] == f"PN-EXP-NCM3722-{i:03d}-A01-R{i}"
-        assert meta["Replicate"] == meta["CultivationReplicate"] == str(i)
+        assert meta["Cultivation"] == f"PN-EXP-NCM3722-{i:03d}-A01-R1"
+        assert meta["Replicate"] == meta["CultivationReplicate"] == "1"
         assert meta["LocalReplicate"] == "1"
         assert meta["SavedCultivation"] == ""
         assert json.loads(meta["Well Metadata JSON"])["unit_2"] in (
@@ -700,7 +700,7 @@ def test_export_generator_works_without_saved_ids_and_normalizes_units() -> None
                 == row["Concentration unit 3"]
                 == "ug/mL"
             )
-            assert row["Replicate"] == str(i)
+            assert row["Replicate"] == "1"
         for row in data:
             if row["Run ID"] == run and row["Well"] == "A1":
                 assert row["Cultivation ID"] == meta["Cultivation"]
@@ -742,7 +742,7 @@ def test_export_generator_can_override_pattern_team_and_system_without_saving() 
 
 
 @pytest.mark.parametrize("slot", [1, 2, 3])
-def test_rounded_dilutions_share_replicates_and_export_the_matching_doses(slot: int) -> None:
+def test_rounded_dilutions_export_matching_doses_with_independent_run_replicates(slot: int) -> None:
     early = _selection_view("early", "2026-08-01", "001")
     late = _selection_view("late", "2026-09-01", "002")
     for view, dose in ((early, 0.1875), (late, 0.19)):
@@ -770,7 +770,7 @@ def test_rounded_dilutions_share_replicates_and_export_the_matching_doses(slot: 
         for row in rows:
             if row["Well"] != "A1":
                 continue
-            assert row["Replicate"] == ("1" if row["Run ID"] == "early" else "2")
+            assert row["Replicate"] == "1"
             assert row["Concentration" + suffix] == (
                 "0.1875" if row["Run ID"] == "early" else "0.19"
             )
@@ -804,3 +804,44 @@ def test_rounding_setting_rejects_saved_id_mode_and_invalid_precision() -> None:
             )
     with pytest.raises(DomainValidationError, match="requires selected-run"):
         export_growth_tabular_data((_view(),), concentration_significant_figures=2)
+
+
+def test_each_run_restarts_replicates_and_rounding_still_groups_wells_within_a_run() -> None:
+    views = tuple(_selection_view(f"plate-{i}", "2026-08-01", f"{i + 1:03d}") for i in range(2))
+    for view in views:
+        first, second = view.snapshot.wells
+        second_id = second["well_id"]
+        second.clear()
+        second.update(copy.deepcopy(first))
+        second.update(
+            {
+                "well_id": second_id,
+                "position": "A2",
+                "concentration": 0.19,
+                "concentration_unit": "µg/mL",
+            }
+        )
+        first.update({"concentration": 0.1875, "concentration_unit": "ug/mL"})
+    before = repr(views)
+    pair = export_growth_tabular_data(
+        views, assign_selected_replicates=True, concentration_significant_figures=2
+    )
+    single = export_growth_tabular_data(
+        (views[1],), assign_selected_replicates=True, concentration_significant_figures=2
+    )
+    exact = export_growth_tabular_data(views, assign_selected_replicates=True)
+    data, metadata = _csv_rows(pair)
+    assert {(row["Run ID"], row["Well"]): row["Replicate"] for row in metadata} == {
+        ("plate-0", "A1"): "1",
+        ("plate-0", "A2"): "2",
+        ("plate-1", "A1"): "1",
+        ("plate-1", "A2"): "2",
+    }
+    meta_by_id = {row["Cultivation"]: row for row in metadata}
+    for row in data:
+        assert row["Replicate"] == meta_by_id[row["Cultivation ID"]]["Replicate"]
+        assert row["Matching concentration"] == "0.19"
+    assert {row["Replicate"] for row in _csv_rows(exact)[1]} == {"1"}
+    assert _csv_rows(single)[1] == [row for row in metadata if row["Run ID"] == "plate-1"]
+    assert {row["Matching wells"] for row in pair.replicate_preview} == {2}
+    assert repr(views) == before

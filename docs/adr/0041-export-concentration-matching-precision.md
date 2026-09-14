@@ -23,3 +23,5 @@ series; values on opposite rounding boundaries may still need a different precis
 No schema migration or database writes are required. Tests cover rounding examples,
 halfway cases, combinations, exact mode, invalid precision/nonfinite doses, original
 value preservation, cross-plate cumulative replicates and stale download invalidation.
+
+ADR 0042 supersedes cumulative export numbering: replicates now restart within each run.

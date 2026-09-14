@@ -152,15 +152,18 @@ def plan_export_condition_replicates(
     """Number only selected active wells, independently of saved cultivation IDs.
 
     The caller supplies flattened metadata for the wells in selected export runs.
-    Every selected plate's declared fields, plus the explicit export fields, form
-    one comparison policy. Optional significant figures affect treatment doses
-    for this plan only. Saved per-well fields contribute only for plates that
-    have no shared field declaration. This function never mutates rows or reserves
-    a number outside this one export selection.
+    Each plate uses its own declared fields plus explicit export fields; saved
+    per-well fields contribute only if that plate has no shared declaration.
+    Numbers restart for every plate because the output ID includes its experiment
+    number. Optional significant figures affect treatment doses for this plan only.
+    This function never mutates rows or reserves a number outside this selection.
     """
 
     validate_concentration_precision(concentration_significant_figures)
-    fields = set(_extra_fields(extra_fields))
+    explicit_fields = set(_extra_fields(extra_fields))
+    shared_fields: dict[str, set[str]] = defaultdict(set)
+    fallback_values: dict[str, list[object]] = defaultdict(list)
+    shared_declared: set[str] = set()
     selected: list[tuple[Mapping[str, object], str, str, str]] = []
     seen: set[tuple[str, str]] = set()
     for row in rows:
@@ -178,44 +181,52 @@ def plan_export_condition_replicates(
         seen.add(identity)
         registry = _plate_registry(row)
         if "CultivationConditionFields" in registry:
-            fields.update(_extra_fields(registry["CultivationConditionFields"]))
+            shared_declared.add(plate_id)
+            shared_fields[plate_id].update(_extra_fields(registry["CultivationConditionFields"]))
         else:
             custom = condition_json_object(row.get("custom_json"))
-            fields.update(_extra_fields(custom.get("CultivationConditionFields")))
+            fallback_values[plate_id].append(custom.get("CultivationConditionFields"))
         selected.append(
             (row, plate_id, position, _scope(registry.get("CultivationReplicateScope")))
         )
 
-    effective_fields = tuple(sorted(fields))
+    effective_fields: dict[str, tuple[str, ...]] = {}
+    for _, plate_id, _, _ in selected:
+        if plate_id in effective_fields:
+            continue
+        fields = explicit_fields | shared_fields[plate_id]
+        if plate_id not in shared_declared:
+            for value in fallback_values[plate_id]:
+                fields.update(_extra_fields(value))
+        effective_fields[plate_id] = tuple(sorted(fields))
     candidates: list[_Candidate] = []
-    active_counts: dict[str, int] = defaultdict(int)
-    active_plates: dict[str, set[str]] = defaultdict(set)
+    active_counts: dict[tuple[str, str], int] = defaultdict(int)
     for row, plate_id, position, scope in selected:
         well_identity = _text(row.get("well_id")) or f"{plate_id}:{position}"
         key = cultivation_condition_key(
             row,
             row,
             scope,
-            effective_fields,
+            effective_fields[plate_id],
             normalize_units=True,
             concentration_significant_figures=concentration_significant_figures,
         )
         candidates.append(_Candidate(row, plate_id, position, well_identity, key, scope, None))
-        active_counts[key] += 1
-        active_plates[key].add(plate_id)
+        active_counts[(plate_id, key)] += 1
 
-    next_number: dict[str, int] = defaultdict(int)
+    next_number: dict[tuple[str, str], int] = defaultdict(int)
     planned: dict[tuple[str, str], ConditionReplicate] = {}
-    for candidate in sorted(candidates, key=_order):
-        next_number[candidate.key] += 1
+    for candidate in sorted(candidates, key=_export_order):
+        group = (candidate.plate_id, candidate.key)
+        next_number[group] += 1
         planned[(candidate.plate_id, candidate.position)] = ConditionReplicate(
             position=candidate.position,
-            replicate=next_number[candidate.key],
+            replicate=next_number[group],
             condition_key=candidate.key,
             scope=candidate.scope,
-            extra_fields=effective_fields,
-            matching_wells=active_counts[candidate.key],
-            matching_plates=len(active_plates[candidate.key]),
+            extra_fields=effective_fields[candidate.plate_id],
+            matching_wells=active_counts[group],
+            matching_plates=1,
         )
     return planned
 
@@ -281,6 +292,18 @@ def _order(candidate: _Candidate) -> tuple[int, str, int, str, str, int, int, st
         _index(row.get("column_index")),
         candidate.well_identity,
     )
+
+
+def _export_order(candidate: _Candidate) -> tuple[str, int, int, str]:
+    """Sort export replicates by physical well, even for sparse projections."""
+
+    row_index = _index(candidate.row.get("row_index"))
+    column_index = _index(candidate.row.get("column_index"))
+    if row_index == 10_000:
+        row_index = ord(candidate.position[0]) - ord("A")
+    if column_index == 10_000:
+        column_index = int(candidate.position[1:]) - 1
+    return candidate.plate_id, row_index, column_index, candidate.well_identity
 
 
 def _index(value: object) -> int:

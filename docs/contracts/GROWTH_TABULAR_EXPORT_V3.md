@@ -1,6 +1,6 @@
 # Growth tabular export contract v3
 
-Status: accepted, updated 2026-09-13. Replaces v2 (ADR 0034).
+Status: accepted, updated 2026-09-14. Replaces v2 (ADR 0034).
 
 Encoding, deterministic ordering, filenames, raw-value handling and background/QC
 semantics remain as documented in v2. Export is read-only and supports viewers.
@@ -65,13 +65,15 @@ Growth Run Library (ADR 0035). This uses the same plate registry JSON, so the ne
 CSV preparation reflects the saved values with the same per-well override rules.
 Bulk shared metadata edits do not regenerate or alter cultivation IDs.
 
-Selection-based export (ADR 0039) is enabled by Growth Data Export's default checkbox.
+Per-run export numbering (ADR 0042, replacing ADR 0039's cumulative default) is
+enabled by Growth Data Export's default checkbox.
 The optional `assign_selected_replicates` API flag defaults false for compatibility.
-When enabled, current conditions among selected runs determine R1, R2, etc., independent
-of stored reservations. Metadata `Replicate` / `CultivationReplicate` report the selected
+When enabled, current conditions determine R1, R2, etc. independently within each
+physical run/plate and independently of stored reservations. Every other run starts
+over at R1; its cultivation experiment number distinguishes its IDs. Metadata `Replicate` / `CultivationReplicate` report the selected
 number, as does observation `Replicate`. Observation `Local replicate` and metadata
 `LocalReplicate` retain local labels.
-Mode is `export_selection`; both files share the newly formatted ID. Original IDs appear
+Mode is `export_run`; both files share the newly formatted ID. Original IDs appear
 in `SavedCultivation` / `Saved cultivation ID`. Original metadata JSON is not modified.
 Shared metadata fills missing per-well identity components; missing required components
 produce blank IDs with warnings, not dropped observations. The bundle exposes an
@@ -123,3 +125,12 @@ comparison doses and use their respective existing unit columns. Original dose
 columns, stored JSON and raw/background measurements are unchanged. Preview includes
 entered and matching dose summaries and the matching mode. Precision participates
 in the prepared-download signature, so changing it hides outdated files.
+
+ADR 0042 scopes selection-planner counters and matching counts to `(plate_id,
+condition_key)`. Each run applies explicit export fields plus only its own saved
+additional fields. The bundle's `effective_condition_fields` is a display union;
+per-well metadata and preview report the fields actually used for that run. The
+preview's matching-well count is local to the run. Saved library condition-numbering
+and saved-ID validation remain unchanged. A UI signature version invalidates cached
+cumulative downloads from earlier app code. Physical well order is used even when
+projection row/column indices are absent. No persistence or schema change is needed.

@@ -29,6 +29,7 @@ _RECOMMENDED_PATTERN = "Experiment number + well (recommended)"
 _LABORATORY_PATTERN = "Original laboratory format"
 _CUSTOM_PATTERN = "Custom pattern"
 _SAVED_PATTERNS = "Use saved patterns"
+_EXPORT_IDENTITY_VERSION = "export_run_v1"
 
 
 def render_growth_data_export(context: AppContext) -> None:
@@ -38,7 +39,7 @@ def render_growth_data_export(context: AppContext) -> None:
     st.markdown(
         "Export complete Growth runs in two files: one row per OD observation and a "
         "companion cultivation metadata table linked by **Cultivation ID** / **Cultivation**. "
-        "Generate cultivation IDs and cumulative replicate numbers for the selected runs. "
+        "Generate cultivation IDs and replicate numbers within each selected run. "
         "Saved identity components can be reused or overridden for this export. "
         "Strain, treatments, concentrations "
         "and units are separate fields. The observation file keeps **Raw OD**, "
@@ -100,7 +101,7 @@ def render_growth_data_export(context: AppContext) -> None:
 
     st.subheader("Cultivation ID generation")
     assign_replicates = st.checkbox(
-        "Generate cultivation IDs and cumulative replicate numbers",
+        "Generate cultivation IDs and replicate numbers within each run",
         value=True,
         key="growth_export_assign_replicates",
     )
@@ -171,7 +172,7 @@ def render_growth_data_export(context: AppContext) -> None:
         ),
         key="growth_export_concentration_matching",
         disabled=not assign_replicates,
-        help="Applies to concentration doses when grouping wells for cultivation R numbers.",
+        help="Applies to concentration doses when grouping wells within each run for R numbers.",
     )
     concentration_significant_figures = (
         {
@@ -185,11 +186,11 @@ def render_growth_data_export(context: AppContext) -> None:
     )
     if assign_replicates:
         st.caption(
-            "Matching wells receive R1, R2, … across the selected runs in experiment-date "
-            "and well order. Each condition group starts at R1. The primary CSV's "
-            "Replicate column is this cumulative R number; Local replicate keeps the "
-            "original Layout value. Saved IDs and metadata remain unchanged. "
-            "Saved study/group settings limit which wells count together. "
+            "Matching wells receive R1, R2, … in well order within each run. Each run "
+            "starts at R1; its experiment number distinguishes it from other runs. "
+            "The primary CSV's Replicate column is this within-run R number; "
+            "Local replicate keeps the original Layout value. Saved IDs and metadata "
+            "remain unchanged. Saved study/group settings still separate condition groups. "
             "Concentration units are normalized to u (for example, ug/mL)."
         )
         st.caption(
@@ -208,6 +209,7 @@ def render_growth_data_export(context: AppContext) -> None:
         else None
     )
     signature = (
+        _EXPORT_IDENTITY_VERSION,
         tuple(map(str, selected)),
         assign_replicates,
         condition_fields,

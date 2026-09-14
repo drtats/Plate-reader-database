@@ -37,3 +37,5 @@ No schema migration is required.
 
 ADR 0040 adds explicit generation settings on the export page, aligns the primary
 observation Replicate column with the ID suffix, and normalizes micro-unit spelling.
+
+ADR 0042 supersedes cumulative export numbering: replicates now restart within each run.

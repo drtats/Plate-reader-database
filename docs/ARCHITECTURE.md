@@ -270,8 +270,9 @@ separating it from the local Layout replicate label. A metadata-only well projec
 supports condition matching across plates, with optional study scope and additional
 condition fields. The saved-numbering application path revalidates reservations inside its save
 transaction. The default Growth Data Export path instead numbers matching wells
-within the selected runs, ignoring saved reservations and leaving stored IDs untouched
-(ADR 0039). Its preview and CSVs expose effective and saved IDs separately. The export page also supplies output-only pattern/team/system settings and fills
+independently within each selected run, ignoring saved reservations and leaving stored
+IDs untouched (ADR 0042 supersedes ADR 0039's cumulative export numbering). Each run's
+saved matching-field rules are independent of the other selected runs. Its preview and CSVs expose effective and saved IDs separately. The export page also supplies output-only pattern/team/system settings and fills
 missing experiment numbers from one library metadata projection (ADR 0040). Both
 CSVs' primary Replicate column agrees with the ID suffix; local labels have their
 own column. Micro-unit spelling is canonicalized to ASCII u for exported unit fields

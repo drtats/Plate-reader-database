@@ -149,9 +149,10 @@ at `001`; saved numbers remain fixed. No workspace ID-generation step is require
 Press **Generate cultivation IDs and prepare export** to see each well's ID,
 experiment number, local label, export replicate and matching counts before download.
 
-Matching wells across the selected plates receive cumulative `R1`, `R2`, and so on.
-Each distinct condition group starts at R1. Selecting a different subset recalculates
-the R numbers; it never changes saved IDs, labels or raw measurements. **Replicate**
+Matching wells within each run receive `R1`, `R2`, and so on. Each distinct condition
+group starts at R1 again in every run; the cultivation experiment number distinguishes
+runs. Adding or removing other runs does not change these replicate numbers. Saved
+IDs, labels and raw measurements remain unchanged. **Replicate**
 in both CSVs is the cultivation replicate used in the ID. The observation file's
 **Local replicate** and metadata's **LocalReplicate** retain your original Layout label.
 
@@ -162,11 +163,10 @@ Concentration unit columns and composite condition text use `u` in both files.
 No concentration values or scales are converted: `mg/mL` remains distinct from
 `ug/mL`. Original metadata JSON is retained. Wells with missing strain or medium
 are treated individually. Additional well custom condition fields can be specified
-on the export page; saved matching fields are also included. A shared **Replicate
-study/group** limits which selected plates count together; blank groups match other
-blank groups. Apply those shared settings through **Growth Run Library → Edit
-cultivation metadata**. Each matching well counts as one cultivation; choose study
-groups appropriate to your experimental replication design.
+on the export page; each run's saved matching fields are also included for that run.
+Other selected runs' fields do not affect its numbering. Shared descriptions can still
+be edited through **Growth Run Library → Edit cultivation metadata**. Each matching
+well counts as one cultivation; study/group labels are retained as metadata.
 
 **Concentration matching** defaults to **2 significant figures** in Growth Data
 Export. This groups rounding differences such as `0.1875` and `0.19` as `0.19`,

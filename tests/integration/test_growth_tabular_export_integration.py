@@ -264,7 +264,7 @@ def test_selected_run_replicates_are_stable_and_read_only(
 
     expected = {
         str(plate_ids[0]): "PN-EXP-J3-001-B01-R1",
-        str(plate_ids[1]): "PN-EXP-J3-002-B01-R2",
+        str(plate_ids[1]): "PN-EXP-J3-002-B01-R1",
     }
     for bundle in (pair, forward):
         metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
@@ -276,7 +276,7 @@ def test_selected_run_replicates_are_stable_and_read_only(
             samples = [
                 row for row in data if row["Run ID"] == str(plate_id) and row["Well"] == "B1"
             ]
-            assert {row["Replicate"] for row in samples} == {str(i)}
+            assert {row["Replicate"] for row in samples} == {"1"}
             assert {row["Local replicate"] for row in samples} == {"1"}
             assert {row["Concentration unit"] for row in samples} == {"ug/mL"}
             assert {row["Concentration"] for row in samples} == {("0.1875", "0.19")[i - 1]}

@@ -520,8 +520,9 @@ def _selection_contexts(
         extra_fields=condition_fields,
         concentration_significant_figures=concentration_significant_figures,
     )
-    fields = (
-        next(iter(plans.values())).extra_fields if plans else tuple(sorted(set(condition_fields)))
+    # Summary for display only; each well's key retains its own run's matching fields.
+    fields = tuple(
+        sorted(set(condition_fields).union(*(plan.extra_fields for plan in plans.values())))
     )
     selected_contexts: list[_RunContext] = []
     previews: list[dict[str, object]] = []
@@ -557,7 +558,7 @@ def _selection_contexts(
                         ),
                         "Experiment number": identity["CultivationExperimentCode"],
                         "Matching wells": plan.matching_wells,
-                        "Matching plates": plan.matching_plates,
+                        "Matching fields": ", ".join(plan.extra_fields),
                         "Saved cultivation ID": identity["SavedCultivation"],
                         "Cultivation ID": identity["Cultivation"],
                     }
@@ -669,7 +670,7 @@ def _selection_identity(
             "CultivationReplicateScope": plan.scope,
             "CultivationConditionKey": plan.condition_key,
             "CultivationConditionFields": json.dumps(plan.extra_fields, separators=(",", ":")),
-            "CultivationReplicateMode": "export_selection",
+            "CultivationReplicateMode": "export_run",
         },
         missing,
     )

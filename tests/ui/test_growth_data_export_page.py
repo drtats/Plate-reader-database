@@ -48,10 +48,11 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
     assert bundle.metadata.row_count == 2
     assert len(bundle.replicate_preview) == 2
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
-    assert [row["Cultivation replicate"] for row in rows] == ["1", "2"]
-    assert [row["Replicate"] for row in rows] == ["1", "2"]
-    assert rows[1]["Cultivation ID"].endswith("-R2")
+    assert [row["Cultivation replicate"] for row in rows] == ["1", "1"]
+    assert [row["Replicate"] for row in rows] == ["1", "1"]
+    assert rows[1]["Cultivation ID"].endswith("-R1")
     assert rows[1]["Saved cultivation ID"].endswith("-R1")
+    assert all(preview["Matching wells"] == 1 for preview in bundle.replicate_preview)
     download_buttons = app.get("download_button")
     assert {item.label for item in download_buttons} == {
         "Download growth_runs.csv",
@@ -72,6 +73,14 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     _prepare_button(app).click().run()
     assert not app.exception and not app.error
     assert app.session_state["raw_load_calls"] == 2
+    full_rows = list(
+        csv.DictReader(
+            io.StringIO(
+                app.session_state["growth_tabular_export_bundle"].measurements.content.decode()
+            )
+        )
+    )
+    plate_one_id = full_rows[1]["Cultivation ID"]
 
     app.session_state["selected_ids"] = ("plate-1",)
     app.run()
@@ -82,6 +91,7 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     bundle = app.session_state["growth_tabular_export_bundle"]
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     assert rows[0]["Cultivation replicate"] == "1"
+    assert rows[0]["Cultivation ID"] == plate_one_id
     assert app.session_state["raw_load_calls"] == 3
 
     next(w for w in app.text_input if w.label.startswith("Additional condition fields")).set_value(
@@ -98,12 +108,28 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     next(
         w
         for w in app.checkbox
-        if w.label == "Generate cultivation IDs and cumulative replicate numbers"
+        if w.label == "Generate cultivation IDs and replicate numbers within each run"
     ).uncheck().run()
     assert not app.get("download_button")
     _prepare_button(app).click().run()
     assert not app.exception and not app.error
-    assert not app.session_state["growth_tabular_export_bundle"].replicate_preview
+    saved_bundle = app.session_state["growth_tabular_export_bundle"]
+    assert not saved_bundle.replicate_preview
+    saved_rows = list(csv.DictReader(io.StringIO(saved_bundle.measurements.content.decode())))
+    assert saved_rows[0]["Cultivation ID"] == saved_rows[0]["Saved cultivation ID"]
+    assert saved_rows[0]["Replicate"] == "1"
+
+
+def test_prepared_artifacts_from_previous_numbering_rule_are_hidden() -> None:
+    app = _export_page_app().run()
+    _prepare_button(app).click().run()
+    assert not app.exception and app.get("download_button")
+    signature = app.session_state["growth_tabular_export_signature"]
+    assert signature[0] == "export_run_v1"
+    app.session_state["growth_tabular_export_signature"] = signature[1:]
+    app.run()
+    assert not app.get("download_button")
+    assert app.session_state["raw_load_calls"] == 2
 
 
 def test_generation_from_empty_saved_metadata_uses_entered_team_and_chronological_codes() -> None:
@@ -125,13 +151,13 @@ def test_generation_from_empty_saved_metadata_uses_entered_team_and_chronologica
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     assert [row["Cultivation ID"] for row in rows] == [
         "PN-EXP-PAO1-001-A01-R1",
-        "PN-EXP-PAO1-002-A01-R2",
+        "PN-EXP-PAO1-002-A01-R1",
     ]
     assert [row["Cultivation experiment code"] for row in rows] == ["001", "002"]
-    assert [row["Replicate"] for row in rows] == ["1", "2"]
+    assert [row["Replicate"] for row in rows] == ["1", "1"]
     assert [row["LocalReplicate"] for row in metadata] == ["1", "1"]
     assert [row["Saved cultivation ID"] for row in rows] == ["", ""]
-    assert [row["Replicate"] for row in metadata] == ["1", "2"]
+    assert [row["Replicate"] for row in metadata] == ["1", "1"]
     assert any(
         item.value == "Cultivation IDs and replicates for this export" for item in app.subheader
     )
@@ -203,13 +229,58 @@ def test_saved_pattern_mode_preserves_saved_pattern_choice() -> None:
     bundle = app.session_state["growth_tabular_export_bundle"]
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     assert rows[0]["Cultivation ID"] == "PN-EXP-PAO1-MP96A001R1"
-    assert rows[1]["Cultivation ID"] == "PN-EXP-PAO1-MP96A002R2"
+    assert rows[1]["Cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
     assert rows[1]["Saved cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
+
+
+def test_replicates_number_matching_wells_within_each_run_and_reset_on_next_run() -> None:
+    app = _export_page_app()
+    app.session_state["multi_wells_per_run"] = True
+    app.run()
+    assert "raw_load_calls" not in app.session_state
+    _prepare_button(app).click().run()
+    assert not app.exception and not app.error
+    bundle = app.session_state["growth_tabular_export_bundle"]
+    rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
+    metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
+    assert [row["Cultivation ID"] for row in rows] == [
+        "PN-EXP-PAO1-001-A01-R1",
+        "PN-EXP-PAO1-001-A02-R2",
+        "PN-EXP-PAO1-002-A01-R1",
+        "PN-EXP-PAO1-002-A02-R2",
+    ]
+    assert [row["Replicate"] for row in rows] == ["1", "2", "1", "2"]
+    assert [row["LocalReplicate"] for row in metadata] == ["1", "2", "1", "2"]
+    assert all(preview["Matching wells"] == 2 for preview in bundle.replicate_preview)
+    assert {preview["Run ID"] for preview in bundle.replicate_preview} == {
+        "plate-0",
+        "plate-1",
+    }
+
+    app.session_state["selected_ids"] = ("plate-1",)
+    app.run()
+    assert not app.get("download_button")
+    assert app.session_state["raw_load_calls"] == 2
+    _prepare_button(app).click().run()
+    assert not app.exception and not app.error
+    subset = list(
+        csv.DictReader(
+            io.StringIO(
+                app.session_state["growth_tabular_export_bundle"].measurements.content.decode()
+            )
+        )
+    )
+    assert [row["Cultivation ID"] for row in subset] == [
+        "PN-EXP-PAO1-002-A01-R1",
+        "PN-EXP-PAO1-002-A02-R2",
+    ]
 
 
 def test_concentration_matching_defaults_to_two_significant_figures_and_can_be_exact() -> None:
     app = _export_page_app()
     app.session_state["rounded_concentrations"] = True
+    app.session_state["multi_wells_per_run"] = True
+    app.session_state["selected_ids"] = ("plate-0",)
     app.run()
     matching = next(w for w in app.selectbox if w.label == "Concentration matching")
     assert matching.value == "2 significant figures (recommended)"
@@ -228,13 +299,13 @@ def test_concentration_matching_defaults_to_two_significant_figures_and_can_be_e
     assert [row["Matching concentration"] for row in metadata] == ["0.19", "0.19"]
     assert all("Entered concentrations" in preview for preview in bundle.replicate_preview)
     assert all("Matching concentrations" in preview for preview in bundle.replicate_preview)
-    assert app.session_state["raw_load_calls"] == 2
+    assert app.session_state["raw_load_calls"] == 1
 
     next(w for w in app.selectbox if w.label == "Concentration matching").select(
         "Exact values"
     ).run()
     assert not app.get("download_button")
-    assert app.session_state["raw_load_calls"] == 2
+    assert app.session_state["raw_load_calls"] == 1
     _prepare_button(app).click().run()
     assert not app.exception and not app.error
     rows = list(
@@ -340,6 +411,7 @@ class Repository:
         empty_cultivation = bool(st.session_state.get("empty_cultivation_metadata"))
         saved_legacy = bool(st.session_state.get("saved_legacy_pattern"))
         rounded_concentrations = bool(st.session_state.get("rounded_concentrations"))
+        multi_wells = bool(st.session_state.get("multi_wells_per_run"))
         saved_pattern = (
             "{team}-EXP-{strain}-{system}{run}R{replicate}"
             if saved_legacy
@@ -359,6 +431,58 @@ class Repository:
             saved_registry["CultivationSystemCode"] = "MP96A"
             saved_registry["CultivationRun"] = f"{int(index)+1:03d}"
         saved_well_custom = {"Cultivation": saved_id, **saved_registry}
+        base_well = {
+            "well_id": f"well-{index}",
+            "position": "A1",
+            "display_name": f"sample-{index}",
+            "raw_label": None,
+            "is_blank": False,
+            "background_group": "plate",
+            "plot_selected": False,
+            "notes": None,
+            "custom_json": {} if empty_cultivation else saved_well_custom,
+            "condition_custom_json": "{}",
+            "strain": "PAO1",
+            "medium": "MHB",
+            "replicate": 1,
+            "inoculum_size": None,
+            "grouping_label": None,
+            "treatment": "Ciprofloxacin" if rounded_concentrations else None,
+            "concentration": 0.1875 if rounded_concentrations else None,
+            "concentration_unit": "ug/mL" if rounded_concentrations else None,
+        }
+        wells = [base_well]
+        measurements = [{
+            "well_id": f"well-{index}",
+            "channel": "od600",
+            "time_index": 0,
+            "elapsed_microseconds": 0,
+            "value_raw": 0.2,
+        }]
+        if multi_wells:
+            second_saved_id = (
+                f"PN-EXP-PAO1-MP96A{int(index)+1:03d}R2"
+                if saved_legacy
+                else f"PN-EXP-PAO1-{int(index)+1:03d}-A02-R2"
+            )
+            wells.append({
+                **base_well,
+                "well_id": f"well-{index}-2",
+                "position": "A2",
+                "display_name": f"sample-{index}-2",
+                "custom_json": {} if empty_cultivation else {
+                    **saved_well_custom, "Cultivation": second_saved_id
+                },
+                "replicate": 2,
+                "concentration": 0.19 if rounded_concentrations else None,
+            })
+            measurements.append({
+                "well_id": f"well-{index}-2",
+                "channel": "od600",
+                "time_index": 0,
+                "elapsed_microseconds": 0,
+                "value_raw": 0.2,
+            })
         return PlateSnapshot(
             PlateId(key),
             {
@@ -376,35 +500,8 @@ class Repository:
                     "cultivation_registry": {} if empty_cultivation else saved_registry
                 },
             },
-            ({
-                "well_id": f"well-{index}",
-                "position": "A1",
-                "display_name": f"sample-{index}",
-                "raw_label": None,
-                "is_blank": False,
-                "background_group": "plate",
-                "plot_selected": False,
-                "notes": None,
-                "custom_json": {} if empty_cultivation else saved_well_custom,
-                "condition_custom_json": "{}",
-                "strain": "PAO1",
-                "medium": "MHB",
-                "replicate": 1,
-                "inoculum_size": None,
-                "grouping_label": None,
-                "treatment": "Ciprofloxacin" if rounded_concentrations else None,
-                "concentration": (
-                    (0.1875, 0.19)[int(index)] if rounded_concentrations else None
-                ),
-                "concentration_unit": "ug/mL" if rounded_concentrations else None,
-            },),
-            ({
-                "well_id": f"well-{index}",
-                "channel": "od600",
-                "time_index": 0,
-                "elapsed_microseconds": 0,
-                "value_raw": 0.2,
-            },),
+            tuple(wells),
+            tuple(measurements),
             (),
         )
 
