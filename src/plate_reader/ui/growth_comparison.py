@@ -22,6 +22,7 @@ from plate_reader.application.services.growth_comparison import (
     SearchGrowthComparisonWellsService,
     growth_comparison_summary_fields,
 )
+from plate_reader.application.services.growth_comparison_export import export_growth_comparison_csv
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.plotting import GrowthPlotOptions, growth_curve_figure, plot_download_config
 
@@ -58,7 +59,7 @@ def render_growth_comparison(context: AppContext) -> None:
     _render_well_search(plate_index, labels, source_key)
     _render_search_results(plate_index, source_key)
     _render_selection_basket(context, plate_index, source_key)
-    _render_comparison_plot(source_key)
+    _render_comparison_plot(source_key, plate_index)
 
 
 def _comparison_plate_ids(values: object) -> tuple[PlateId, ...]:
@@ -497,7 +498,9 @@ def _inoculum_label(well: GrowthComparisonWell) -> str:
     return f"{value} {well.inoculum_unit}" if well.inoculum_unit else value
 
 
-def _render_comparison_plot(source_key: tuple[str, ...]) -> None:
+def _render_comparison_plot(
+    source_key: tuple[str, ...], plate_index: Sequence[GrowthComparisonPlate]
+) -> None:
     value = st.session_state.get("growth_comparison_plot_result")
     if not isinstance(value, GrowthComparisonPlotResult):
         return
@@ -520,4 +523,21 @@ def _render_comparison_plot(source_key: tuple[str, ...]) -> None:
         figure,
         width="stretch",
         config=plot_download_config(options.title, "plate-comparison"),
+    )
+    if not value.plot_data.points:
+        st.info("No measurements are available for the selected wells to export.")
+        return
+    artifact = export_growth_comparison_csv(value, plate_index)
+    st.caption(
+        "Export the rendered selection as one row per measurement, including plate, well, "
+        "condition metadata, channel, time, and raw value. All rendered wells are included, "
+        "even if hidden in the plot legend."
+    )
+    st.download_button(
+        "Download comparison data (CSV)",
+        data=artifact.content,
+        file_name=artifact.filename,
+        mime="text/csv",
+        key="growth-comparison-data-download",
+        on_click="ignore",
     )

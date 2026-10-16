@@ -350,6 +350,11 @@ query without raw measurements or series decoding.
 - an ordered basket that persists across searches and identifies wells by stable IDs;
 - raw measurement loading only after an explicit render action, and only for plates
   represented in the basket.
+- after rendering, a CSV download serializes those same raw observations with
+  stable plate/well IDs, names, condition metadata, channels, time indices and
+  elapsed times. It performs no additional database reads. Changing the basket or
+  source runs invalidates both the plot and download; legend visibility does not
+  change the exported selection. This analysis CSV is separate from portable backups.
 
 ### New growth run wizard
 
