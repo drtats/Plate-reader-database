@@ -12,6 +12,10 @@ from plate_reader.application.ports.repositories import (
     InoculumRange,
     RunSummary,
 )
+from plate_reader.domain.growth.treatments import (
+    ADDITIONAL_TREATMENT_COLUMNS,
+    additional_treatment_key,
+)
 
 
 def run_summary_table(
@@ -29,6 +33,18 @@ def run_summary_rows(
     """Format metadata-only run summaries for selectable discovery tables."""
 
     rows: list[dict[str, str | bool]] = []
+    columns_by_name = {
+        _custom_column_heading(name).casefold(): _custom_column_heading(name)
+        for name in custom_columns
+    }
+    discovered = sorted(
+        {name for run in results for name, _values in getattr(run, "custom_fields", ())},
+        key=lambda name: (name.casefold(), name),
+    )
+    for name in discovered:
+        heading = _custom_column_heading(name)
+        columns_by_name.setdefault(heading.casefold(), heading)
+    visible_custom_columns = tuple(columns_by_name.values())
     for run in results:
         row: dict[str, str | bool] = {
             "plate_id": str(run.plate_id),
@@ -45,20 +61,29 @@ def run_summary_rows(
         }
         row.update(_readiness_cells(getattr(run, "growth_readiness", None)))
         custom_by_name = {
-            name.casefold(): values for name, values in getattr(run, "custom_fields", ())
+            _custom_column_heading(name).casefold(): values
+            for name, values in getattr(run, "custom_fields", ())
         }
         reserved_names = {name.casefold() for name in row}
         reserved_names.add("last updated")
         row.update(
             {
                 name: _display_values(custom_by_name.get(name.casefold(), ()))
-                for name in custom_columns
+                for name in visible_custom_columns
                 if name.casefold() not in reserved_names
             }
         )
         row["Last updated"] = str(run.updated_at)
         rows.append(row)
     return rows
+
+
+def _custom_column_heading(name: str) -> str:
+    key = additional_treatment_key(name)
+    return next(
+        (label for label, canonical in ADDITIONAL_TREATMENT_COLUMNS.items() if canonical == key),
+        name,
+    )
 
 
 def _readiness_cells(readiness: GrowthRunReadiness | None) -> dict[str, str]:

@@ -9,8 +9,11 @@
   legacy corrections.
 - `GROWTH_TABULAR_EXPORT_V1.md`: historical mixed run/well metadata export contract.
 - `GROWTH_TABULAR_EXPORT_V2.md`: historical one-row-per-run metadata contract.
-- `GROWTH_TABULAR_EXPORT_V3.md`: current cultivation-linked observations and
+- `GROWTH_TABULAR_EXPORT_V3.md`: historical cultivation-linked observations and
   per-well registry metadata, with separate values/conditions and preserved custom fields.
+
+- [Growth tabular export v4](GROWTH_TABULAR_EXPORT_V4.md) established the 21-column observation prefix.
+- [Growth tabular export v5](GROWTH_TABULAR_EXPORT_V5.md) defines the current checkerboard and compact/full metadata exports.
 
 The executable counterparts are the typed DTO/repository protocols under
 `src/plate_reader/application`, SQL under `migrations`, and golden fixtures/tests

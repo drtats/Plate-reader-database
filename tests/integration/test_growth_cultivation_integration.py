@@ -186,14 +186,13 @@ def test_pattern_assignments_persist_per_well_while_shared_defaults_change(
     bundle = export_growth_tabular_data((GrowthRunView(first, (), ()),))
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     observation_rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
-    by_id = {row["Cultivation"]: row for row in metadata_rows if row["Cultivation"]}
+    by_id = {row["Cultivation ID"]: row for row in metadata_rows if row["Cultivation ID"]}
     assert set(by_id) == {a1_before["Cultivation"], a2_before["Cultivation"]}
     assert observation_rows
     assert {row["Well Row"] + row["Well Column"] for row in observation_rows} >= {"A1", "A2"}
     for row in observation_rows:
         if row["Well Row"] + row["Well Column"] in {"A1", "A2"}:
             assert row["Cultivation ID"] in by_id
-            assert by_id[row["Cultivation ID"]]["Cultivation experiment code"] == "001"
             assert by_id[row["Cultivation ID"]]["CultivationExperimentCode"] == "001"
 
     second = service.execute(
@@ -370,7 +369,7 @@ def test_explicit_primary_concentration_clear_disables_legacy_fallback(
     assert a1["Condition 1 State"] == "Drug A mg/L"
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     metadata_a1 = next(row for row in metadata_rows if row["Well"] == "A1")
-    assert metadata_a1["Treatment 2"] == "Drug B"
+    assert a1["Treatment 2"] == metadata_a1["Treatment 2"] == "Drug B"
     assert metadata_a1["Concentration 2"] == "5"
     assert metadata_a1["Concentration unit 2"] == "mg/L"
     assert well(regenerated, "A1")["replicate"] == well(original, "A1")["replicate"]

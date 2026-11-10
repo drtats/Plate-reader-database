@@ -266,6 +266,191 @@ def test_run_library_metadata_is_single_query_normalized_and_paged(
     assert repository.search_runs({"text": "hidden"}) == ()
 
 
+def test_growth_library_surfaces_checkerboard_and_unregistered_fields(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {
+                    "position": "A1",
+                    "strain": "Alpha",
+                    "custom_json": {
+                        "treatment_2": "Drug B",
+                        "conc_2": 2.5,
+                        "unit_2": "mM",
+                        "Drug 3": "Drug C",
+                        "Drug 3 concentration": 8,
+                        "Drug 3 unit": "ug/mL",
+                        "Oxygen": "Low",
+                        "_lab_note": "visible custom",
+                        "CultivationConditionKey": "internal",
+                        "Cultivation": "saved-id",
+                        "_legacy_custom_json_raw": "hidden",
+                        "raw_label": "hidden",
+                    },
+                },
+                {
+                    "position": "A2",
+                    "strain": "Beta",
+                    "is_blank": True,
+                    "custom_json": {"treatment_2": "Blank drug", "Oxygen": "aerobic"},
+                },
+            ],
+        )
+        harness.connection.execute(
+            "UPDATE well_conditions SET treatment = NULL, concentration = NULL, "
+            "concentration_unit = NULL, custom_json = ? WHERE well_id = ?",
+            (
+                json.dumps(
+                    {
+                        "treatment_1": "Legacy primary",
+                        "conc_1": 1.25,
+                        "unit_1": "mM",
+                        "treatment_2": "Stale value",
+                        "Vessel": "flask",
+                    }
+                ),
+                "well-a1",
+            ),
+        )
+
+    recorded = RecordingConnection(harness.connection)
+    summary = SqlPlateReaderRepository(recorded).search_runs({"limit": 1})[0]
+
+    assert len(recorded.statements) == 1
+    assert "growth_measurements" not in recorded.statements[0].lower()
+    assert "growth_series_chunks" not in recorded.statements[0].lower()
+    assert summary.treatments == ("Drug B", "Drug C", "Legacy primary")
+    assert summary.concentration_ranges == (ConcentrationRange(1.25, 1.25, "mM"),)
+    assert dict(summary.custom_fields) == {
+        "Concentration 2": ("2.5",),
+        "Concentration 3": ("8",),
+        "Concentration unit 2": ("mM",),
+        "Concentration unit 3": ("ug/mL",),
+        "Treatment 2": ("Drug B",),
+        "Treatment 3": ("Drug C",),
+        "Oxygen": ("aerobic", "Low"),
+        "Vessel": ("flask",),
+        "_lab_note": ("visible custom",),
+    }
+    for treatment in ("Drug B", "Drug C", "Legacy primary"):
+        assert repository.search_runs({"treatment": treatment, "strain": "Alpha"})
+        assert repository.search_runs({"text": treatment})
+        assert repository.search_runs({"treatment": treatment, "strain": "Beta"}) == ()
+    for hidden in ("Blank drug", "Stale value"):
+        assert repository.search_runs({"treatment": hidden}) == ()
+        assert repository.search_runs({"text": hidden}) == ()
+
+
+def test_growth_library_condition_json_slots_and_explicit_primary_clear(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.update_well_layout(
+            PlateId("plate-growth"),
+            [
+                {
+                    "position": "A1",
+                    "custom_json": {"treatment_1": "Cleared primary", "conc_1": 50, "unit_1": "mM"},
+                }
+            ],
+        )
+        harness.connection.execute(
+            "UPDATE well_conditions SET treatment = NULL, concentration = NULL, "
+            "concentration_unit = NULL, custom_json = ? WHERE well_id = ?",
+            (
+                json.dumps(
+                    {
+                        "primary_condition_overrides": [
+                            "treatment",
+                            "concentration",
+                            "concentration_unit",
+                        ],
+                        "2nd drug": "Condition Drug",
+                        "2nd drug conc": 4,
+                        "2nd drug unit": "mM",
+                        "Vessel": "tube",
+                    }
+                ),
+                "well-a1",
+            ),
+        )
+
+    summary = repository.search_runs({})[0]
+    assert summary.treatments == ("Condition Drug", "none")
+    assert dict(summary.custom_fields)["Treatment 2"] == ("Condition Drug",)
+    assert dict(summary.custom_fields)["Concentration 2"] == ("4",)
+    assert dict(summary.custom_fields)["Vessel"] == ("tube",)
+    assert summary.concentration_ranges == (ConcentrationRange(0.0, 0.0, "ug/mL"),)
+    assert repository.search_runs({"treatment": "Condition Drug"})
+    assert repository.search_runs({"text": "Condition Drug"})
+    assert repository.search_runs({"treatment": "Cleared primary"}) == ()
+    assert repository.search_runs({"text": "Cleared primary"}) == ()
+
+
+def test_growth_library_finds_treatment_json_without_a_structured_condition(
+    harness: RepositoryHarness,
+) -> None:
+    seed_growth(harness.repository)
+    with harness.repository.transaction():
+        harness.repository.insert_wells(
+            PlateId("plate-growth"),
+            [
+                {
+                    **well_values("well-a3", "A3", 0, 2),
+                    "custom_json": {"Treatment 2": "Metadata Drug"},
+                }
+            ],
+        )
+    assert "Metadata Drug" in harness.repository.search_runs({})[0].treatments
+    assert harness.repository.search_runs({"treatment": "Metadata Drug"})
+    assert harness.repository.search_runs({"text": "Metadata Drug"})
+    assert (
+        harness.repository.search_runs({"treatment": "Metadata Drug", "strain": "Synthetic strain"})
+        == ()
+    )
+
+
+@pytest.mark.parametrize(
+    ("well_custom", "condition_custom", "expected"),
+    [
+        ({"treatment_2": None, "Drug 2": "Hidden alias"}, {"treatment_2": "Stale"}, None),
+        ({"Drug 2": "", "Treatment 2": "Visible"}, {}, "Visible"),
+        ({}, {"Drug 2": "Hidden alias", "Antibiotic 2": "Visible"}, "Visible"),
+    ],
+)
+def test_growth_library_search_agrees_with_alias_precedence_and_clears(
+    harness: RepositoryHarness,
+    well_custom: dict[str, object],
+    condition_custom: dict[str, object],
+    expected: str | None,
+) -> None:
+    seed_growth(harness.repository)
+    with harness.repository.transaction():
+        harness.repository.update_well_layout(
+            PlateId("plate-growth"), [{"position": "A1", "custom_json": well_custom}]
+        )
+        harness.connection.execute(
+            "UPDATE well_conditions SET custom_json = ? WHERE well_id = ?",
+            (json.dumps(condition_custom), "well-a1"),
+        )
+    summary = harness.repository.search_runs({})[0]
+    assert dict(summary.custom_fields).get("Treatment 2") == (
+        (expected,) if expected is not None else None
+    )
+    for candidate in ("Hidden alias", "Visible", "Stale"):
+        assert bool(harness.repository.search_runs({"treatment": candidate})) == (
+            candidate == expected
+        )
+        assert bool(harness.repository.search_runs({"text": candidate})) == (candidate == expected)
+
+
 def test_growth_library_background_revision_readiness(harness: RepositoryHarness) -> None:
     repository = harness.repository
     seed_growth(repository)
@@ -934,6 +1119,69 @@ def test_analysis_revisions_and_derived_results(harness: RepositoryHarness) -> N
     assert harness.connection.execute(
         "SELECT revision_id, is_current FROM analysis_revisions ORDER BY revision_id"
     ).fetchall() == [("revision-1", 0), ("revision-2", 1)]
+
+
+def test_growth_library_changes_preserve_mic_summary_and_search_semantics(
+    harness: RepositoryHarness,
+) -> None:
+    repository = harness.repository
+    seed_growth(repository)
+    with repository.transaction():
+        repository.create_plate(
+            {
+                "plate_id": "plate-mic",
+                "experiment_id": "experiment-1",
+                "assay_type": "mic",
+                "plate_name": "MIC Plate",
+                "created_by": "user-1",
+            }
+        )
+        repository.insert_wells(
+            PlateId("plate-mic"),
+            [
+                {
+                    **well_values("mic-a1", "A1", 0, 0),
+                    "custom_json": {
+                        "treatment_1": "Legacy MIC metadata",
+                        "conc_1": 9,
+                        "unit_1": "mM",
+                        "treatment_2": "Custom MIC metadata",
+                        "Cultivation": "Custom identity",
+                        "_lab_note": "visible",
+                        "raw_label": "custom label",
+                    },
+                },
+                well_values("mic-a2", "A2", 0, 1),
+            ],
+        )
+        repository.insert_conditions(
+            [
+                {"well_id": "mic-a1", "custom_json": {"Treatment 3": "Condition MIC metadata"}},
+                {
+                    "well_id": "mic-a2",
+                    "treatment": "MIC compound",
+                    "concentration": 1,
+                    "concentration_unit": "ug/mL",
+                },
+            ]
+        )
+    summary = repository.search_runs({"assay_type": "mic"})[0]
+    assert summary.treatments == ("MIC compound",)
+    assert summary.concentration_ranges == (ConcentrationRange(1.0, 1.0, "ug/mL"),)
+    assert dict(summary.custom_fields) == {
+        "treatment_1": ("Legacy MIC metadata",),
+        "conc_1": ("9",),
+        "unit_1": ("mM",),
+        "treatment_2": ("Custom MIC metadata",),
+        "Cultivation": ("Custom identity",),
+        "_lab_note": ("visible",),
+        "raw_label": ("custom label",),
+    }
+    for text in ("Legacy MIC metadata", "Custom MIC metadata", "Condition MIC metadata"):
+        assert repository.search_runs({"text": text}) == ()
+        assert repository.search_runs({"treatment": text}) == ()
+    assert repository.search_runs({"text": "MIC compound"})[0].plate_id == "plate-mic"
+    assert repository.search_runs({"treatment": "MIC compound"})[0].plate_id == "plate-mic"
 
 
 def test_mic_repository_flow(harness: RepositoryHarness) -> None:

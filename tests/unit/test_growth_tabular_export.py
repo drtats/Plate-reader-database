@@ -5,16 +5,20 @@ import csv
 import io
 import json
 from dataclasses import replace
+from unittest.mock import Mock
 
 import pytest
 
-from plate_reader.application.contracts import AssayType, PlateId
+from plate_reader.application.contracts import Actor, AssayType, PlateId, Role, UserId
 from plate_reader.application.ports.repositories import PlateSnapshot
 from plate_reader.application.services.growth_tabular_export import (
     GROWTH_ADDITIONAL_LAYOUT_HEADERS,
+    GROWTH_COMPACT_METADATA_HEADERS,
     GROWTH_MATCHING_CONCENTRATION_HEADERS,
     GROWTH_MEASUREMENT_HEADERS,
     GROWTH_METADATA_HEADERS,
+    ExportGrowthTabularData,
+    ExportGrowthTabularDataService,
     GrowthTabularExportBundle,
     export_growth_tabular_data,
 )
@@ -107,7 +111,9 @@ def test_measurement_export_has_exact_recipient_order_and_metadata_retains_layou
         "Concentration",
         "Concentration unit",
     )
-    assert set(GROWTH_ADDITIONAL_LAYOUT_HEADERS) <= set(GROWTH_METADATA_HEADERS)
+    assert set(GROWTH_ADDITIONAL_LAYOUT_HEADERS) - {"Local replicate"} <= set(
+        GROWTH_METADATA_HEADERS
+    )
     assert set(GROWTH_MATCHING_CONCENTRATION_HEADERS) <= set(GROWTH_METADATA_HEADERS)
     assert "Culture Age H" not in GROWTH_METADATA_HEADERS
 
@@ -154,7 +160,7 @@ def test_missing_background_keeps_raw_od_and_warns() -> None:
     assert any("no current background revision" in warning for warning in bundle.warnings)
 
 
-def test_custom_layout_columns_are_preserved_only_in_metadata() -> None:
+def test_populated_custom_layout_columns_are_shared_with_observations() -> None:
     view = _view()
     view.snapshot.wells[0]["custom_json"] = json.dumps(
         {
@@ -170,7 +176,9 @@ def test_custom_layout_columns_are_preserved_only_in_metadata() -> None:
     measurement_rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
 
-    assert tuple(measurement_rows[0]) == GROWTH_MEASUREMENT_HEADERS
+    assert tuple(measurement_rows[0]) == (*GROWTH_MEASUREMENT_HEADERS, "Oxygen")
+    assert measurement_rows[0]["Oxygen"] == "anaerobic"
+    assert measurement_rows[2]["Oxygen"] == ""
     assert tuple(metadata_rows[0]) == (*GROWTH_METADATA_HEADERS, "Oxygen", "Vessel")
     assert metadata_rows[0]["Oxygen"] == "anaerobic"
     assert metadata_rows[0]["Vessel"] == ""
@@ -378,18 +386,24 @@ def test_cultivation_metadata_links_every_observation_and_preserves_separate_val
     bundle = export_growth_tabular_data((view,))
     data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
-    by_id = {row["Cultivation"]: row for row in metadata}
+    by_id = {row["Cultivation ID"]: row for row in metadata}
     assert len(by_id) == 2
     assert not bundle.warnings
-    assert len(data[0]) == len(GROWTH_MEASUREMENT_HEADERS)
+    assert tuple(data[0]) == (
+        *GROWTH_MEASUREMENT_HEADERS,
+        "Treatment 2",
+        "Concentration 2",
+        "Concentration unit 2",
+    )
     assert len(metadata[0]) == len(GROWTH_METADATA_HEADERS)
     for row in data:
         assert row["Cultivation ID"] in by_id
         assert row["Strain"] == by_id[row["Cultivation ID"]]["Strain"] == "MG1655"
         assert "Cultivation_Registry_Link/Condition" not in row
         assert row["Raw OD"] and row["Background Mean OD"] and row["Background Subtracted OD"]
-        assert "Treatment 2" not in row
-        assert "Concentration 2" not in row
+        assert row["Treatment 2"] == "Na-sulfadiazine"
+        assert row["Concentration 2"] == "1000"
+        assert row["Concentration unit 2"] == "mg/L"
     assert float(data[0]["Culture_Age_h"]) == pytest.approx(12.2 / 60)
     assert metadata[0]["Local_Cultivation_ID"] == "Experiment 1 A01"
     assert metadata[0]["Vessel_Alphabetical_ID"] == "A"
@@ -428,17 +442,13 @@ def test_pattern_ids_export_join_with_per_well_strains_and_persisted_numbers() -
     bundle = export_growth_tabular_data((view,))
     data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
-    by_id = {row["Cultivation"]: row for row in metadata}
+    by_id = {row["Cultivation ID"]: row for row in metadata}
     assert set(by_id) == {"PN-EXP-MG1655-001-A01-R1", "PN-EXP-11_J3-001-A02-R2"}
     for row in data:
         saved = by_id[row["Cultivation ID"]]
         assert row["Strain"] == saved["Strain"]
-        assert saved["Cultivation experiment code"] == saved["CultivationExperimentCode"] == "001"
-        assert (
-            saved["Cultivation ID pattern"]
-            == saved["CultivationIDPattern"]
-            == DEFAULT_CULTIVATION_PATTERN
-        )
+        assert saved["CultivationExperimentCode"] == "001"
+        assert saved["CultivationIDPattern"] == DEFAULT_CULTIVATION_PATTERN
         assert row["Raw OD"] and row["Background Subtracted OD"]
     view.snapshot.wells[0]["replicate"] = 2
     with pytest.raises(ValueError, match="no longer matches"):
@@ -479,13 +489,9 @@ def test_condition_replicate_exports_global_number_and_keeps_local_label() -> No
         metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
         assert data[0]["Cultivation ID"] == "PN-EXP-MG1655-001-A01-R3"
         assert data[0]["Replicate"] == metadata[0]["Replicate"] == "3"
-        assert (
-            metadata[0]["Local replicate"]
-            == metadata[0]["LocalReplicate"]
-            == ("" if local is None else str(local))
-        )
+        assert metadata[0]["LocalReplicate"] == ("" if local is None else str(local))
         assert metadata[0]["CultivationConditionFields"] == '["oxygen"]'
-        assert metadata[0]["Cultivation replicate scope"] == "study-a"
+        assert metadata[0]["CultivationReplicateScope"] == "study-a"
     well["concentration"] = 99
     with pytest.raises(ValueError, match="conditions changed"):
         export_growth_tabular_data((view,))
@@ -550,16 +556,16 @@ def test_selection_export_assigns_r_within_only_selected_runs_and_preserves_save
         "late": "PN-EXP-NCM3722-002-A01-R1",
     }
     by_run = {row["Run ID"]: row for row in pair_meta if row["Well"] == "A1"}
-    assert {run_id: row["Cultivation"] for run_id, row in by_run.items()} == expected
+    assert {run_id: row["Cultivation ID"] for run_id, row in by_run.items()} == expected
     assert {
-        row["Run ID"]: row["Cultivation"] for row in reverse_meta if row["Well"] == "A1"
+        row["Run ID"]: row["Cultivation ID"] for row in reverse_meta if row["Well"] == "A1"
     } == expected
-    assert next(row for row in single_meta if row["Well"] == "A1")["Cultivation"] == (
+    assert next(row for row in single_meta if row["Well"] == "A1")["Cultivation ID"] == (
         "PN-EXP-NCM3722-002-A01-R1"
     )
     assert by_run["late"]["SavedCultivation"] == "PN-EXP-NCM3722-002-A01-R9"
     assert by_run["late"]["LocalReplicate"] == "1"
-    assert by_run["late"]["Replicate"] == by_run["late"]["CultivationReplicate"] == "1"
+    assert by_run["late"]["Replicate"] == "1"
     assert by_run["late"]["CultivationReplicateMode"] == "export_run"
     assert by_run["late"]["CultivationConditionFields"] == '["oxygen"]'
     assert pair.effective_condition_fields == ("oxygen",)
@@ -570,12 +576,12 @@ def test_selection_export_assigns_r_within_only_selected_runs_and_preserves_save
         (reverse_data, reverse_meta),
         (single_data, single_meta),
     ):
-        by_id = {row["Cultivation"]: row for row in metadata if row["Cultivation"]}
+        by_id = {row["Cultivation ID"]: row for row in metadata if row["Cultivation ID"]}
         for row in rows:
             if (row["Well Row"], row["Well Column"]) == ("A", "1"):
                 assert row["Cultivation ID"] in by_id
                 assert row["Replicate"] == by_id[row["Cultivation ID"]]["Replicate"]
-                assert by_id[row["Cultivation ID"]]["Local replicate"] == "1"
+                assert by_id[row["Cultivation ID"]]["LocalReplicate"] == "1"
                 assert row["Raw OD"] in {"0.088", "0.1"}
     assert (repr(early.snapshot), repr(late.snapshot)) == originals
 
@@ -605,8 +611,8 @@ def test_selection_export_keeps_od_when_id_settings_missing_and_rejects_bad_patt
     bundle = export_growth_tabular_data((view,), assign_selected_replicates=True)
     data, metadata = _csv_rows(bundle)
     a1 = next(row for row in metadata if row["Well"] == "A1")
-    assert a1["Cultivation"] == ""
-    assert a1["CultivationReplicate"] == "1"
+    assert a1["Cultivation ID"] == ""
+    assert a1["Replicate"] == "1"
     assert any("missing team" in warning for warning in bundle.warnings)
     assert any(row["Raw OD"] for row in data if (row["Well Row"], row["Well Column"]) == ("A", "1"))
 
@@ -627,8 +633,8 @@ def test_selection_export_requires_strain_even_when_custom_pattern_omits_it() ->
     bundle = export_growth_tabular_data((view,), assign_selected_replicates=True)
     data, metadata = _csv_rows(bundle)
     a1 = next(row for row in metadata if row["Well"] == "A1")
-    assert a1["Cultivation"] == ""
-    assert a1["CultivationReplicate"] == "1"
+    assert a1["Cultivation ID"] == ""
+    assert a1["Replicate"] == "1"
     assert a1["CultivationReplicateMode"] == "export_run"
     assert any("missing strain" in warning for warning in bundle.warnings)
     assert any(row["Raw OD"] for row in data if (row["Well Row"], row["Well Column"]) == ("A", "1"))
@@ -652,7 +658,7 @@ def test_registry_export_does_not_invent_missing_ids_or_experiment_descriptions(
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     assert all(row["Cultivation ID"] == "" for row in data)
     assert all(
-        row["Cultivation"] == row["Objective"] == row["CultivationExperiment"] == ""
+        row["Cultivation ID"] == row["Objective"] == row["CultivationExperiment"] == ""
         for row in metadata
     )
     assert any("1 wells have no cultivation ID" in warning for warning in bundle.warnings)
@@ -697,8 +703,8 @@ def test_export_generator_works_without_saved_ids_and_normalizes_units() -> None
     for i, view in enumerate(views, 1):
         run = str(view.snapshot.plate_id)
         meta = next(row for row in metadata if row["Run ID"] == run and row["Well"] == "A1")
-        assert meta["Cultivation"] == f"PN-EXP-NCM3722-{i:03d}-A01-R1"
-        assert meta["Replicate"] == meta["CultivationReplicate"] == "1"
+        assert meta["Cultivation ID"] == f"PN-EXP-NCM3722-{i:03d}-A01-R1"
+        assert meta["Replicate"] == "1"
         assert meta["LocalReplicate"] == "1"
         assert meta["SavedCultivation"] == ""
         assert json.loads(meta["Well Metadata JSON"])["unit_2"] in (
@@ -711,7 +717,7 @@ def test_export_generator_works_without_saved_ids_and_normalizes_units() -> None
         assert meta["Concentration unit 3"] == "ug/mL"
         assert meta["Inoculum unit"] == "uL"
         assert meta["Replicate"] == "1"
-        samples = [row for row in data if row["Cultivation ID"] == meta["Cultivation"]]
+        samples = [row for row in data if row["Cultivation ID"] == meta["Cultivation ID"]]
         assert len(samples) == 2
         for row in samples:
             assert row["Concentration unit"] == "ug/mL"
@@ -786,12 +792,12 @@ def test_rounded_dilutions_export_matching_doses_with_independent_run_replicates
     for row in data:
         if (row["Well Row"], row["Well Column"]) != ("A", "1"):
             continue
-        meta = next(item for item in metadata if item["Cultivation"] == row["Cultivation ID"])
+        meta = next(item for item in metadata if item["Cultivation ID"] == row["Cultivation ID"])
         assert row["Replicate"] == "1"
         if slot == 1:
             assert row["Concentration"] == meta["Concentration"]
         else:
-            assert "Concentration" + suffix not in row
+            assert row["Concentration" + suffix] == meta["Concentration" + suffix]
     assert (
         "0.1875"
         in next(row for row in rounded.replicate_preview if row["Run ID"] == "early")[
@@ -842,7 +848,7 @@ def test_decimal_matching_keeps_entered_doses_and_whole_number_scale() -> None:
         assert meta["Matching concentration"] == matching
         assert meta["Concentration matching decimal places"] == "2"
         assert meta["Concentration matching significant figures"] == ""
-        samples = [row for row in data if row["Cultivation ID"] == meta["Cultivation"]]
+        samples = [row for row in data if row["Cultivation ID"] == meta["Cultivation ID"]]
         assert len(samples) == 2
         assert {row["Concentration"] for row in samples} == {entered}
         assert all("Matching concentration" not in row for row in samples)
@@ -899,7 +905,7 @@ def test_each_run_restarts_replicates_and_rounding_still_groups_wells_within_a_r
         ("plate-1", "A1"): "1",
         ("plate-1", "A2"): "2",
     }
-    meta_by_id = {row["Cultivation"]: row for row in metadata}
+    meta_by_id = {row["Cultivation ID"]: row for row in metadata}
     for row in data:
         assert row["Replicate"] == meta_by_id[row["Cultivation ID"]]["Replicate"]
         assert meta_by_id[row["Cultivation ID"]]["Matching concentration"] == "0.19"
@@ -1042,9 +1048,230 @@ def test_structured_custom_metadata_with_commas_and_newlines_round_trips() -> No
     view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
     bundle = export_growth_tabular_data((view,), custom_columns=("Unused",))
     data, metadata = _csv_rows(bundle)
-    assert tuple(data[0]) == GROWTH_MEASUREMENT_HEADERS
+    assert tuple(data[0]) == (*GROWTH_MEASUREMENT_HEADERS, "Extra list", "Extra object")
+    assert json.loads(data[0]["Extra object"]) == custom["Extra object"]
+    assert json.loads(data[0]["Extra list"]) == custom["Extra list"]
+    assert "Unused" not in data[0]
     first = next(row for row in metadata if row["Well"] == "A1")
     assert json.loads(first["Extra object"]) == custom["Extra object"]
     assert json.loads(first["Extra list"]) == custom["Extra list"]
     assert first["Unused"] == ""
     assert all(None not in row for row in data + metadata)
+
+
+def test_observations_export_each_wells_additional_treatments_and_custom_drug_columns() -> None:
+    view = _view()
+    first, second = view.snapshot.wells
+    first["custom_json"] = json.dumps(
+        {
+            "Treatment 2": "Unknown drug, alpha\nvariant",
+            "Concentration 2": 0,
+            "Concentration unit 2": "µg/mL",
+            "treatment_3": "Custom mixture",
+            "conc_3": 0.1875,
+            "unit_3": "mg/L",
+            "  ZX-unknown-drug  ": "dose A",
+            "Boolean flag": False,
+            "Empty custom": "   ",
+        }
+    )
+    second["condition_custom_json"] = json.dumps(
+        {"treatment_2": "Other drug", "conc_2": 12, "unit_2": "mM", "zx-unknown-drug": "dose B"}
+    )
+    before = copy.deepcopy(view)
+
+    data, metadata = _csv_rows(
+        export_growth_tabular_data((view,), custom_columns=("ZX-unknown-drug", "Unused custom"))
+    )
+
+    assert tuple(data[0]) == (
+        *GROWTH_MEASUREMENT_HEADERS,
+        "Treatment 2",
+        "Concentration 2",
+        "Concentration unit 2",
+        "Treatment 3",
+        "Concentration 3",
+        "Concentration unit 3",
+        "Boolean flag",
+        "ZX-unknown-drug",
+    )
+    for row in (*data[:2], metadata[0]):
+        assert row["Treatment 2"] == "Unknown drug, alpha\nvariant"
+        assert row["Concentration 2"] == "0"
+        assert row["Concentration unit 2"] == "ug/mL"
+        assert row["Treatment 3"] == "Custom mixture"
+        assert row["Concentration 3"] == "0.1875"
+        assert row["Concentration unit 3"] == "mg/L"
+        assert row["ZX-unknown-drug"] == "dose A"
+        assert row["Boolean flag"] == "False"
+    for row in (data[2], metadata[1]):
+        assert row["Treatment 2"] == "Other drug"
+        assert row["Concentration 2"] == "12"
+        assert row["Concentration unit 2"] == "mM"
+        assert row["ZX-unknown-drug"] == "dose B"
+        assert row["Treatment 3"] == row["Concentration 3"] == ""
+    assert metadata[0]["Unused custom"] == ""
+    assert "Empty custom" not in data[0] and "Unused custom" not in data[0]
+    assert "treatment_2" not in metadata[0] and "conc_3" not in data[0]
+    assert view == before
+
+
+def test_metadata_uses_one_header_per_alias_and_reserves_internal_custom_keys() -> None:
+    view = _view()
+    custom = json.loads(str(view.snapshot.wells[0]["custom_json"]))
+    custom.update(
+        {
+            "PreviousCultivationIDs": ["retired"],
+            "RetiredCultivationConditionNumbers": ["01"],
+            "primary_condition_overrides": ["treatment"],
+            "CultivationPlateNumber": "05",
+        }
+    )
+    view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
+
+    data, metadata = _csv_rows(export_growth_tabular_data((view,)))
+
+    assert len(metadata[0]) == len(GROWTH_METADATA_HEADERS)
+    assert len(metadata[0]) == len(set(metadata[0]))
+    for removed in (
+        "Cultivation",
+        "Saved cultivation ID",
+        "Internal cultivation ID",
+        "Local cultivation ID",
+        "Cultivation experiment code",
+        "Cultivation ID pattern",
+        "Cultivation replicate",
+        "CultivationReplicate",
+        "Local replicate",
+        "BG Group",
+        "Well Row",
+        "Well Column",
+        "CultivationConcentrationSignificantFigures",
+        "CultivationConcentrationDecimalPlaces",
+        "PreviousCultivationIDs",
+        "RetiredCultivationConditionNumbers",
+        "primary_condition_overrides",
+        "CultivationPlateNumber",
+    ):
+        assert removed not in metadata[0]
+        assert removed not in data[0] or removed in GROWTH_MEASUREMENT_HEADERS
+    assert metadata[0]["InternalCultivationID"] == "well-a1"
+    assert metadata[0]["Local_Cultivation_ID"]
+    assert metadata[0]["Cultivation ID"] == metadata[0]["SavedCultivation"] == ""
+    assert json.loads(metadata[0]["Well Metadata JSON"])["PreviousCultivationIDs"] == ["retired"]
+
+
+def test_dynamic_observation_columns_are_selected_across_all_runs() -> None:
+    early = _view()
+    late = _selection_view("late", "2026-08-02", "002")
+    late.snapshot.wells[1]["custom_json"] = json.dumps(
+        {"Treatment 3": "late-only", "Concentration 3": 1, "New custom drug": "present"}
+    )
+
+    data, metadata = _csv_rows(export_growth_tabular_data((early, late)))
+
+    assert tuple(data[0])[:21] == GROWTH_MEASUREMENT_HEADERS
+    assert "Treatment 2" not in data[0]
+    assert data[0]["Treatment 3"] == data[0]["New custom drug"] == ""
+    assert any(row["Treatment 3"] == "late-only" for row in metadata)
+    assert "New custom drug" in data[0]
+
+
+def test_compact_metadata_preserves_identity_science_and_populated_custom_values() -> None:
+    view = _view()
+    custom = json.loads(str(view.snapshot.wells[0]["custom_json"]))
+    custom.update({"Drug 2": "New agent", "Dose 2": 0, "Unit 2": "µg/mL", "New custom": False})
+    view.snapshot.wells[0]["custom_json"] = json.dumps(custom)
+    before = copy.deepcopy(view)
+
+    compact = export_growth_tabular_data(
+        (view,), compact_metadata=True, custom_columns=("Empty registered",)
+    )
+    full = export_growth_tabular_data((view,), custom_columns=("Empty registered",))
+    data, metadata = _csv_rows(compact)
+    _, full_metadata = _csv_rows(full)
+
+    assert tuple(metadata[0])[:15] == GROWTH_COMPACT_METADATA_HEADERS
+    assert len(metadata[0]) < 35
+    assert metadata[0]["Treatment 2"] == "New agent"
+    assert metadata[0]["Concentration 2"] == "0"
+    assert metadata[0]["Concentration unit 2"] == "ug/mL"
+    assert metadata[0]["New custom"] == "False"
+    assert metadata[1]["InternalCultivationID"] == "well-a2"
+    assert metadata[1]["Cultivation ID"] == ""
+    assert metadata[1]["Blank"] == "True"
+    assert metadata[0]["Culture Volume uL"] == "200"
+    assert metadata[0]["Temperature"] == "37.0"
+    assert metadata[0]["Notes"] == "note"
+    assert metadata[0]["T0 added (min)"] == "0.0"
+    assert metadata[0]["EquipmentMakeModel"] == "Synergy H1"
+    for omitted in (
+        "SavedCultivation",
+        "Local_Cultivation_ID",
+        "LocalReplicate",
+        "CultivationIDPattern",
+        "Condition 1 State",
+        "Matching concentration",
+        "Concentration matching decimal places",
+        "CultivationNumberingScheme",
+        "TechnicalReplicate",
+        "Well Metadata JSON",
+        "Source Folder",
+        "Plot",
+        "Comment",
+        "Objective",
+        "Treatment 3",
+        "Empty registered",
+    ):
+        assert omitted not in metadata[0]
+        assert omitted in full_metadata[0]
+    assert compact.measurements == full.measurements
+    assert compact.warnings == full.warnings
+    assert data[0]["Treatment 2"] == metadata[0]["Treatment 2"]
+    assert view == before
+
+
+def test_compact_optional_headers_cover_all_runs_and_omit_unused_treatment_slots() -> None:
+    first = _view()
+    second = _selection_view("later", "2026-08-02", "002")
+    for view in (first, second):
+        for well in view.snapshot.wells:
+            well["treatment"] = well["concentration"] = well["concentration_unit"] = None
+            well["custom_json"] = "{}"
+    second.snapshot.wells[1]["custom_json"] = json.dumps(
+        {"Treatment 3": "Late drug", "Objective": "Later objective", "Comment": "Distinct note"}
+    )
+
+    _, metadata = _csv_rows(export_growth_tabular_data((first, second), compact_metadata=True))
+
+    assert "Treatment" not in metadata[0] and "Treatment 2" not in metadata[0]
+    assert all(
+        name in metadata[0] for name in ("Treatment 3", "Concentration 3", "Concentration unit 3")
+    )
+    assert metadata[0]["Objective"] == ""
+    assert metadata[0]["Comment"] == metadata[0]["Notes"] == "note"
+    assert metadata[-1]["Objective"] == "Later objective"
+    assert metadata[-1]["Treatment 3"] == "Late drug"
+    assert metadata[-1]["Comment"] == "Distinct note"
+
+
+def test_compact_metadata_service_option_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = Mock()
+    repository.list_saved_options.return_value = ()
+    monkeypatch.setattr(
+        "plate_reader.application.services.growth_tabular_export.LoadGrowthRunService.load_for_tabular_export",
+        lambda self, actor, plate_ids: (_view(),),
+    )
+    actor = Actor(UserId("viewer"), "viewer@example.test", Role.VIEWER)
+    service = ExportGrowthTabularDataService(repository)
+
+    compact = service.execute(
+        ExportGrowthTabularData(actor, (PlateId("plate-1"),), compact_metadata=True)
+    )
+    full = service.execute(ExportGrowthTabularData(actor, (PlateId("plate-1"),)))
+
+    _, compact_rows = _csv_rows(compact)
+    _, full_rows = _csv_rows(full)
+    assert "Well Metadata JSON" not in compact_rows[0]
+    assert tuple(full_rows[0]) == GROWTH_METADATA_HEADERS
+    assert compact.measurements == full.measurements

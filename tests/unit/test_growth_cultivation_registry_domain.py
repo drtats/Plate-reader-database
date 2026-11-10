@@ -477,3 +477,67 @@ def test_invalid_strain_error_identifies_experiment_well_and_label() -> None:
     with pytest.raises(DomainValidationError, match=r"experiment 01, well A1") as error:
         _plan([_row("p1", "A1", strain="acrB\x00MG")], "p1")
     assert "acrB" in str(error.value) and "nonprinting" in str(error.value)
+
+
+def test_checkerboard_aliases_and_zero_are_in_condition_identity() -> None:
+    rows = [
+        _row("p1", "A1", custom_json='{"Drug 2":"B","Drug 2 concentration":0,"unit_2":"µM"}'),
+        _row("p1", "A2", condition_custom_json='{"treatment_2":"B","conc_2":0,"unit_2":"uM"}'),
+        _row("p1", "B1", custom_json='{"Treatment 2":"B","Concentration 2":1,"unit_2":"uM"}'),
+        _row("p1", "B2", custom_json='{"Treatment 2":"B","Concentration 2":2,"unit_2":"uM"}'),
+    ]
+    (plan,) = _plan(rows, "p1")
+    assert [a["CultivationConditionNumber"] for a in plan.assignments] == ["01", "01", "02", "03"]
+    assert [a["CultivationReplicate"] for a in plan.assignments] == [1, 2, 1, 1]
+    for assignment in plan.assignments:
+        assert len(json.loads(str(assignment["CultivationConditionKey"]))["treatments"]) == 2
+
+
+def test_previously_unrecognized_drug_requires_preview_before_export() -> None:
+    rows = [_row("p1", "A1"), _row("p1", "A2")]
+    (old,) = _plan(rows, "p1")
+    _persist(rows, (old,))
+    for row in rows:
+        custom = json.loads(str(row["custom_json"]))
+        row["custom_json"] = json.dumps({**custom, "2nd drug": "B", "Concentration 2": 0})
+    with pytest.raises(DomainValidationError, match="Preview and save"):
+        saved_plate_condition_identity(rows[0], rows[0])
+    (unchanged_ids,) = _plan(rows, "p1")
+    assert [a["Cultivation"] for a in unchanged_ids.assignments] == [
+        a["Cultivation"] for a in old.assignments
+    ]
+    changed = json.loads(str(rows[1]["custom_json"]))
+    rows[1]["custom_json"] = json.dumps({**changed, "Concentration 2": 2})
+    with pytest.raises(DomainValidationError, match="changes saved condition groups"):
+        _plan(rows, "p1")
+    settings = RegistrySettings("ST", "MP96A", reassign_changed_conditions=True)
+    (reviewed,) = plan_plate_condition_cultivations(rows, ("p1",), settings=settings)
+    assert reviewed.assignments[1]["PreviousCultivationIDs"] == [old.assignments[1]["Cultivation"]]
+    _persist(rows, (reviewed,))
+    assert (
+        saved_plate_condition_identity(rows[1], rows[1])["Cultivation"]
+        == reviewed.assignments[1]["Cultivation"]
+    )
+    rows[1]["medium"] = "changed medium"
+    with pytest.raises(DomainValidationError, match="fingerprint changed"):
+        plan_plate_condition_cultivations(rows, ("p1",), settings=settings)
+
+
+@pytest.mark.parametrize("dose_header", ["Concentration 2", "conc_2"])
+def test_partial_legacy_second_drug_fingerprint_can_gain_a_previously_missing_dose(
+    dose_header: str,
+) -> None:
+    row = _row("p1", "A1", custom_json='{"treatment_2":"drug B","unit_2":"uM"}')
+    (old,) = _plan([row], "p1")
+    _persist([row], (old,))
+    custom = json.loads(str(row["custom_json"]))
+    row["custom_json"] = json.dumps({**custom, dose_header: 0})
+    (updated,) = _plan([row], "p1")
+    assert updated.assignments[0]["Cultivation"] == old.assignments[0]["Cultivation"]
+    _persist([row], (updated,))
+    saved_plate_condition_identity(row, row)
+    stored = json.loads(str(row["custom_json"]))
+    for changed in ({dose_header: 10}, {"treatment_2": "changed agent"}):
+        row["custom_json"] = json.dumps({**stored, **changed})
+        with pytest.raises(DomainValidationError, match="fingerprint changed"):
+            _plan([row], "p1")

@@ -21,6 +21,7 @@ from plate_reader.application.services import (
     preview_growth_display_name_csv,
 )
 from plate_reader.domain.common.plate import PLATE_96
+from plate_reader.domain.growth.treatments import ADDITIONAL_TREATMENT_COLUMNS
 from plate_reader.ui.plate_editor import (
     GROWTH_COLUMNS,
     normalize_layout_frame,
@@ -34,6 +35,7 @@ _WELL_FIELDS = (
     ("treatment", "Treatment"),
     ("concentration", "Concentration"),
     ("concentration_unit", "Concentration unit"),
+    *((key, label) for label, key in ADDITIONAL_TREATMENT_COLUMNS.items()),
     ("medium", "Media"),
     ("grouping_label", "Group"),
     ("inoculum_size", "Inoculum size"),
@@ -140,6 +142,10 @@ def growth_display_name_wells(frame: pd.DataFrame) -> tuple[dict[str, object], .
                 "treatment": _clean_value(row.get("Treatment")),
                 "concentration": _clean_value(row.get("Concentration")),
                 "concentration_unit": _clean_value(row.get("Concentration unit")),
+                **{
+                    key: _clean_value(row.get(label))
+                    for label, key in ADDITIONAL_TREATMENT_COLUMNS.items()
+                },
                 "medium": _clean_value(row.get("Media")),
                 "grouping_label": _clean_value(row.get("Group")),
                 "inoculum_size": _clean_value(row.get("Inoculum size")),

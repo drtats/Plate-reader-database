@@ -43,3 +43,4 @@ ADRs record decisions that constrain multiple modules or phases.
 - [ADR-0031](0031-separate-experiment-and-well-export-rows.md): homogeneous experiment metadata export
 - [ADR-0032](0032-name-single-run-growth-exports.md): experiment/hash single-run filenames
 - [ADR-0033](0033-export-all-growth-layout-columns.md): complete Growth layout export columns
+- [ADR-0046](0046-growth-checkerboard-layout-and-exports.md) covers Growth checkerboard layouts and exports.

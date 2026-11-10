@@ -30,6 +30,19 @@ flowchart LR
    groups, and plot defaults. Nothing is saved yet.
 5. Review and commit. The database write is atomic; raw readings are immutable.
 
+## Enter a checkerboard layout
+
+In **Layout**, enter the first drug in **Treatment** with its concentration and unit.
+Use **Treatment 2**, **Concentration 2**, and **Concentration unit 2** for the
+other axis of the checkerboard. Enter a numeric zero for a zero-dose control.
+The same fields are available for a third treatment. Use the grid or the full
+well table to assign doses, then choose **Save full layout** on an existing run.
+
+Older numbered custom columns such as `Drug 2`, `Treatment 2`, or `treatment_2`
+are read into the corresponding slot. Other custom names appear under their
+original headings. To include an arbitrarily named field in cultivation
+grouping, list its name in **Additional condition fields** when assigning IDs.
+
 ## Browse the Run Library
 
 Readiness columns show background subtraction status and calculation time, background
@@ -49,7 +62,7 @@ what is stored; the export still validates its IDs against the current condition
 Press **Search** to refresh these statuses after making changes.
 
 
-The Run Library includes each universal Growth custom-layout column. Since a run
+The Run Library shows populated treatment slots and stored custom fields, as well as universal Growth columns. Searching for either drug finds the run. Since a run
 can assign different values to different wells, its Library cell shows the
 distinct values as a comma-separated summary; an em dash means that run has no
 saved value. These summaries are metadata-only and do not load growth curves.
@@ -110,14 +123,14 @@ selected runs**. Its selection table shows the same strain, media, treatment,
 concentration, inoculum, and universal custom-column summaries as the Run Library.
 Searching and checking rows do not load measurements. Preparation creates two files:
 
-- `growth_runs.csv`: every OD observation with separate **Raw OD**, **Background
-  Mean OD**, and **Background Subtracted OD** columns, plus background SD, blank
-  count, group, and QC status. **Cultivation ID** links each observation to its
-  metadata row. Every canonical Growth layout field and universal custom column
-  is retained, with separate treatment/concentration/unit fields for combinations;
-- `growth_runs_metadata.csv`: one row per well/cultivation, with **Cultivation**
-  matching the data file ID. It includes the experiment context, objective, protocols,
-  inoculation time, strain, medium, biological replicate, well location and custom metadata.
+- `growth_runs.csv` contains one row per OD observation with raw OD, background
+  mean and SD, corrected OD, and the dose and unit of each active drug.
+  Populated custom fields accompany the corresponding well at every timepoint.
+- `growth_runs_metadata.csv` contains one row per well. **Cultivation ID** joins
+  the files for wells with an assigned external ID. Compact metadata includes
+  experiment details, well position, conditions and populated custom fields.
+  Select **Include full metadata** before preparing the files to include the
+  original JSON, matching doses, registry details and unused custom columns.
 
 When exactly one run is selected, both download names use the normalized experiment
 name plus its stable eight-character run hash, for example
@@ -126,10 +139,8 @@ name plus its stable eight-character run hash, for example
 names shown above.
 
 Custom columns added under **Manage custom columns** are shared by every Growth
-experiment. Their values remain specific to each well and experiment, so they are
-appended to `growth_runs.csv`, including universally registered columns whose
-values are blank in the selected runs. They are also retained in the companion
-metadata file, together with full well, plate and experiment custom JSON.
+experiment. Their values are specific to each well. Refresh the Library search
+after saving a layout to see the updated summaries.
 
 To add shared cultivation information to several experiments, select their entries
 in **Growth Run Library** and press **Edit cultivation metadata**. The editor shows
@@ -181,14 +192,11 @@ condition numbers also retained. `CultivationExperiment` contains the correspond
 range, such as `ST-EXP-MG1655-MP96A[0101-0103]`. Multiple strains receive separate
 ranges, listing gaps explicitly where necessary.
 
-Two identities are available in both files: the stable **Internal cultivation ID**
-(the database well ID), and the external **Cultivation ID** above. A readable local
-label such as `EXP01-A01` is also saved. All wells receive internal/local IDs; blanks
-and wells without a strain do not receive fabricated external IDs. Missing strain
-is flagged for completion. **Biological replicate group** identifies the experiment's
-condition group (`0101`); **Technical replicate** is the within-group R number. The
-registry's required **Replicate** column carries that same R value. Original Layout
-labels remain separately available as **Local replicate** / **LocalReplicate**.
+**Cultivation ID** is the external ID used in both files. The metadata file also
+has a stable database well ID, **InternalCultivationID**, including for blank
+controls and wells without a strain. Full metadata includes **Local_Cultivation_ID**
+(e.g. `EXP01-A01`), **BiologicalReplicateGroup**, **TechnicalReplicate**, and the
+original Layout replicate in **LocalReplicate**.
 
 Each experiment is one physical plate and owns its unique, persistent number.
 The first part of the code is exported as `CultivationExperimentNumber`.
@@ -202,8 +210,8 @@ not produce missing-cultivation-ID warnings.
 
 Matching uses strain, medium, treatment doses and units (including combinations),
 inoculum, temperature, culture volume and chosen additional condition fields.
-**Concentration matching** defaults to **2 significant figures**: `0.1875` and `0.19`
-match as `0.19`. Exact, 3 and 4 figure options are available before first assignment.
+**Concentration matching** defaults to **2 decimal places**. Doses of `0.1875` and `0.19`
+match as `0.19`. The menu also offers exact and significant-figure rules.
 Micro-unit spellings (`µ`, `μ`, `u`, and known encoding artifacts such as `Œº`) match
 as ASCII `u`; unit scales are not converted. Original concentration columns stay
 unchanged, with **Matching concentration** columns and the precision rule alongside.
@@ -213,7 +221,10 @@ well. Changing the selected plates does not regenerate IDs. Saved matching rules
 are used for later exports. Changed identity-defining conditions are reported rather
 than silently changing an assigned ID. Correct the metadata discrepancy before
 exporting; ordinary local replicate-label edits do not change the cultivation ID.
-Replaced older-format IDs remain in **PreviousCultivationIDs** and provenance.
+For a previously saved single-treatment group, preview and save to include a newly
+recognized drug. If wells split into different dose groups, choose **Reassign
+condition IDs when groups change**, preview the proposed IDs, and save after review.
+Full metadata includes previous IDs in the original well JSON.
 
 The **Legacy export patterns** option retains older export-only naming controls.
 Persistent plate/condition IDs remain authoritative even there. The workspace's legacy
@@ -231,8 +242,7 @@ runs and IDs that no longer match their saved identity or condition metadata pre
 export until corrected. Exports keep both the cultivation replicate and local label.
 
 If a background revision is missing or stale, raw OD is still exported while the
-background and corrected cells remain blank and the QC reason identifies the
-problem. Recompute the background revision before preparing the files when
+background and corrected cells remain blank. The export page displays a warning. Recompute the background revision before preparing the files when
 complete corrected data is required.
 
 ## Edit safely and read Activity log

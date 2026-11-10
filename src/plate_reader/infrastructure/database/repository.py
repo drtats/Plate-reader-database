@@ -25,6 +25,12 @@ from plate_reader.domain.growth.readiness import (
     BACKGROUND_ASSIGNMENT_HASH_KEY,
     background_assignment_hash,
 )
+from plate_reader.domain.growth.treatments import (
+    ADDITIONAL_TREATMENT_COLUMNS,
+    additional_treatment_aliases,
+    additional_treatment_key,
+    additional_treatment_value,
+)
 from plate_reader.infrastructure.database.dbapi import Connection, Cursor
 from plate_reader.infrastructure.database.growth_series import (
     GrowthSeriesCodecError,
@@ -93,7 +99,11 @@ class _RunSummaryMetadata:
         position: object,
         background_group: object,
         well_id: object,
+        condition_custom_json: object,
     ) -> None:
+        is_growth = self.assay_type == AssayType.GROWTH
+        condition_custom = dict(_json_object_items(condition_custom_json)) if is_growth else {}
+        custom = {**condition_custom, **dict(_json_object_items(custom_json))}
         if position is not None and self.assay_type == AssayType.GROWTH:
             self.background_wells.append(
                 {
@@ -112,11 +122,38 @@ class _RunSummaryMetadata:
                     self.cultivation_saved += 1
         if not bool(is_blank):
             _add_normalized_text(self.strains, strain)
-            _add_normalized_text(self.treatments, treatment)
+            overrides = condition_custom.get("primary_condition_overrides", [])
+            if not isinstance(overrides, list):
+                overrides = []
+            primary_values = {
+                name: value
+                if not is_growth or value is not None or name in overrides
+                else custom.get(legacy)
+                for name, value, legacy in (
+                    ("treatment", treatment, "treatment_1"),
+                    ("concentration", concentration, "conc_1"),
+                    ("concentration_unit", concentration_unit, "unit_1"),
+                )
+            }
+            _add_normalized_text(self.treatments, primary_values["treatment"])
             _add_normalized_text(self.media, medium)
-            _add_summary_range(self.concentration_bounds, concentration, concentration_unit)
+            _add_summary_range(
+                self.concentration_bounds,
+                primary_values["concentration"],
+                primary_values["concentration_unit"],
+            )
             _add_summary_range(self.inoculum_bounds, inoculum_size, inoculum_unit)
-        for name, value in _json_object_items(custom_json):
+            if is_growth:
+                for label, key in ADDITIONAL_TREATMENT_COLUMNS.items():
+                    value = additional_treatment_value(custom, key)
+                    _add_summary_custom_value(self.custom_fields, label, value)
+                    if key.startswith("treatment_"):
+                        _add_normalized_text(self.treatments, value)
+        for name, value in custom.items():
+            if is_growth and (
+                additional_treatment_key(name) is not None or _library_bookkeeping_field(name)
+            ):
+                continue
             _add_summary_custom_value(self.custom_fields, name, value)
 
     def as_summary(self) -> RunSummary:
@@ -977,12 +1014,13 @@ class SqlPlateReaderRepository:
         if text:
             where.append(
                 "(e.name LIKE ? OR p.plate_name LIKE ? OR e.project LIKE ? OR EXISTS ("
-                "SELECT 1 FROM wells tw JOIN well_conditions twc ON twc.well_id = tw.well_id "
+                "SELECT 1 FROM wells tw LEFT JOIN well_conditions twc ON twc.well_id = tw.well_id "
                 "WHERE tw.plate_id = p.plate_id AND tw.is_blank = 0 AND "
-                "(twc.strain LIKE ? OR twc.treatment LIKE ? OR twc.medium LIKE ?)))"
+                f"(twc.strain LIKE ? OR {_library_treatment_predicate('tw', 'twc', 'LIKE')} "
+                "OR twc.medium LIKE ?)))"
             )
             pattern = f"%{text}%"
-            parameters.extend((pattern, pattern, pattern, pattern, pattern, pattern))
+            parameters.extend((pattern,) * 8)
         for key, column in (
             ("assay_type", "p.assay_type"),
             ("project", "e.project"),
@@ -1005,11 +1043,15 @@ class SqlPlateReaderRepository:
         if active_condition_filters:
             predicates = ["fw.plate_id = p.plate_id", "fw.is_blank = 0"]
             for key, value in active_condition_filters:
-                predicates.append(f"fwc.{key} = ?")
-                parameters.append(value)
+                if key == "treatment":
+                    predicates.append(_library_treatment_predicate("fw", "fwc", "="))
+                    parameters.extend((value,) * 3)
+                else:
+                    predicates.append(f"fwc.{key} = ?")
+                    parameters.append(value)
             where.append(
                 "EXISTS (SELECT 1 FROM wells fw "
-                "JOIN well_conditions fwc ON fwc.well_id = fw.well_id WHERE "
+                "LEFT JOIN well_conditions fwc ON fwc.well_id = fw.well_id WHERE "
                 f"{' AND '.join(predicates)})"
             )
         if not bool(filters.get("include_deleted", False)):
@@ -1047,7 +1089,7 @@ class SqlPlateReaderRepository:
             "wc.medium, wc.inoculum_size, wc.inoculum_unit, w.is_blank, w.custom_json, "
             "w.position, w.background_group, w.well_id, cr.plate_custom_json, "
             "COALESCE(bh.revision_count, 0), ar.created_at, ar.parameters_json, "
-            "COALESCE(br.result_count, 0), COALESCE(br.qc_flags, 0) "
+            "COALESCE(br.result_count, 0), COALESCE(br.qc_flags, 0), wc.custom_json "
             "FROM candidate_runs cr "
             "LEFT JOIN wells w ON w.plate_id = cr.plate_id "
             "LEFT JOIN well_conditions wc ON wc.well_id = w.well_id "
@@ -1094,6 +1136,7 @@ class SqlPlateReaderRepository:
                 row[17],
                 row[18],
                 row[19],
+                row[26],
             )
         return tuple(metadata.as_summary() for metadata in summaries.values())
 
@@ -1811,6 +1854,93 @@ def _add_normalized_text(values: dict[str, str], value: object) -> None:
     previous = values.get(key)
     if previous is None or normalized < previous:
         values[key] = normalized
+
+
+def _library_bookkeeping_field(name: str) -> bool:
+    """Hide persisted identity/layout internals when discovering user-defined columns."""
+
+    normalized = name.strip().casefold()
+    return normalized in {
+        "_legacy_custom_json_raw",
+        "primary_condition_overrides",
+        "raw_label",
+        "plot",
+        "group",
+        "replicate",
+        "notes",
+        "treatment_1",
+        "conc_1",
+        "unit_1",
+        "cultivation",
+        "cultivationreplicate",
+        "cultivationconditionkey",
+        "cultivationconditionfields",
+        "cultivationreplicatescope",
+        "cultivationreplicatemode",
+        "cultivationidpattern",
+        "cultivationexperimentcode",
+        "cultivationexperiment",
+        "cultivationrun",
+        "cultivationnumberingscheme",
+        "cultivationplatenumber",
+        "cultivationexperimentnumber",
+        "cultivationconditionnumber",
+        "cultivationconcentrationsignificantfigures",
+        "cultivationconcentrationdecimalplaces",
+        "retiredcultivationconditionnumbers",
+        "internalcultivationid",
+        "local_cultivation_id",
+        "technicalreplicate",
+        "biologicalreplicategroup",
+        "previouscultivationids",
+        "team_code",
+        "cultivationsystemcode",
+        "localreplicate",
+        "well_id",
+        "plate_id",
+    }
+
+
+def _library_custom_value(well: str, condition: str, key: str, aliases: tuple[str, ...]) -> str:
+    """Read a treatment alias with canonical-key and same-key well JSON precedence.
+
+    All identifiers and aliases come from internal constants; values supplied by
+    callers remain bound parameters in the outer search predicate.
+    """
+
+    names = ", ".join("'" + alias.replace("'", "''") + "'" for alias in aliases)
+    normalized_key = "LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '_', ''), '-', ''))"
+    return (
+        "(SELECT value FROM ("
+        f"SELECT key, value, 0 AS source_priority FROM json_each({well}.custom_json) "
+        "UNION ALL "
+        f"SELECT cj.key, cj.value, 1 AS source_priority FROM json_each({condition}.custom_json) cj "
+        f"WHERE NOT EXISTS (SELECT 1 FROM json_each({well}.custom_json) wj "
+        "WHERE wj.key = cj.key)"
+        f") WHERE {normalized_key} IN ({names}) "
+        f"AND (key = '{key}' OR (value IS NOT NULL AND value <> '')) "
+        f"ORDER BY CASE WHEN key = '{key}' THEN 0 ELSE 1 END, key, source_priority LIMIT 1)"
+    )
+
+
+def _library_treatment_predicate(well: str, condition: str, operator: str) -> str:
+    legacy = (
+        f"CASE WHEN json_type({well}.custom_json, '$.treatment_1') IS NOT NULL "
+        f"THEN json_extract({well}.custom_json, '$.treatment_1') "
+        f"ELSE json_extract({condition}.custom_json, '$.treatment_1') END"
+    )
+    primary = (
+        f"CASE WHEN p.assay_type <> 'growth' OR {condition}.treatment IS NOT NULL "
+        f"THEN {condition}.treatment "
+        f"WHEN EXISTS (SELECT 1 FROM json_each(json_extract({condition}.custom_json, "
+        "'$.primary_condition_overrides')) WHERE value = 'treatment') THEN NULL "
+        f"ELSE {legacy} END"
+    )
+    predicates = [f"({primary}) {operator} ?"]
+    for key in ("treatment_2", "treatment_3"):
+        value = _library_custom_value(well, condition, key, additional_treatment_aliases(key))
+        predicates.append(f"(p.assay_type = 'growth' AND ({value}) {operator} ?)")
+    return "(" + " OR ".join(predicates) + ")"
 
 
 def _add_summary_custom_value(

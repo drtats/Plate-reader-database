@@ -14,6 +14,7 @@ from plate_reader.domain.common import DomainIssue, DomainValidationError, Issue
 from plate_reader.domain.growth.cultivation_conditions import (
     condition_json_object,
     cultivation_condition_key,
+    extends_secondary_treatments,
     normalize_cultivation_condition_fields,
     validate_concentration_decimal_places,
     validate_concentration_matching,
@@ -97,6 +98,7 @@ def plan_plate_condition_cultivations(
     saved_ids: dict[str, str] = {}
     historical_ids: dict[str, set[str]] = defaultdict(set)
     active_other_ids: dict[str, str] = {}
+    added_treatment_plates: set[str] = set()
     group_reservations: dict[str, dict[int, str]] = defaultdict(dict)
     replicate_reservations: dict[tuple[str, int], dict[int, str]] = defaultdict(dict)
     for plate_id, plate_rows in by_plate.items():
@@ -119,7 +121,11 @@ def plan_plate_condition_cultivations(
                 if old_id:
                     active_other_ids[old_id] = well_id
                 continue
-            identity = _saved_identity(row, row, validate_current=plate_id in selected)
+            identity, added_treatments = _saved_identity(
+                row, row, validate_current=plate_id in selected, preview=True
+            )
+            if added_treatments:
+                added_treatment_plates.add(plate_id)
             reserved_number = _plate_number(identity["CultivationPlateNumber"])
             if plate_id in saved_numbers and saved_numbers[plate_id] != reserved_number:
                 raise _error("Saved plate and well cultivation numbers disagree", plate_id=plate_id)
@@ -164,14 +170,14 @@ def plan_plate_condition_cultivations(
         saved_decimal, saved_significant = (
             _stored_precision(old_registry) if existing else (None, None)
         )
-        upgrading = (
+        precision_upgrade = (
             existing
             and "CultivationConcentrationDecimalPlaces" not in old_registry
             and requested_significant is None
         )
         decimal, significant = (
             (requested_decimal, requested_significant)
-            if upgrading or not existing
+            if precision_upgrade or not existing
             else (saved_decimal, saved_significant)
         )
         fields = (
@@ -187,7 +193,7 @@ def plan_plate_condition_cultivations(
         precision_metadata = (
             {"CultivationConcentrationSignificantFigures": significant}
             if existing
-            and not upgrading
+            and not precision_upgrade
             and "CultivationConcentrationDecimalPlaces" not in old_registry
             else _precision_metadata(decimal, significant)
         )
@@ -223,8 +229,14 @@ def plan_plate_condition_cultivations(
                 "Retired cultivation condition number is still assigned", plate_id=plate_id
             )
         reassigning = False
+        treatment_upgrade = plate_id in added_treatment_plates
+        upgrading = precision_upgrade or treatment_upgrade
         if upgrading:
-            target_rule = "exact" if settings.concentration_exact else "decimal-place"
+            target_rule = (
+                "additional treatment"
+                if treatment_upgrade
+                else ("exact" if settings.concentration_exact else "decimal-place")
+            )
             # Permit an explicit reviewed metadata migration only when each saved
             # group maps bijectively to one group under the requested rule.
             old_to_new: dict[int, str] = {}
@@ -250,7 +262,7 @@ def plan_plate_condition_cultivations(
                         raise _error(
                             f"{target_rule.capitalize()} matching changes saved condition groups; "
                             "select "
-                            "'Reassign condition IDs if rounding changes groups', then preview "
+                            "'Reassign condition IDs when groups change', then preview "
                             "and save the reviewed IDs",
                             plate_id=plate_id,
                         )
@@ -306,7 +318,12 @@ def plan_plate_condition_cultivations(
         warnings: list[str] = []
         missing_strain_positions: list[str] = []
         notices: list[str] = []
-        if upgrading and not reassigning:
+        if treatment_upgrade and not reassigning:
+            notices.append(
+                "Saving will include the additional treatments in the condition "
+                "fingerprints. Existing cultivation IDs are preserved."
+            )
+        elif precision_upgrade and not reassigning:
             notices.append(
                 f"Saved significant-figure fingerprints will be updated to {target_rule} "
                 "matching; experiment, condition, replicate, and external IDs remain unchanged."
@@ -506,12 +523,17 @@ def saved_plate_condition_identity(
 ) -> dict[str, object]:
     """Validate the saved ID and fingerprint against the current physical well."""
 
-    return _saved_identity(well, metadata, validate_current=True)
+    identity, _ = _saved_identity(well, metadata, validate_current=True)
+    return identity
 
 
 def _saved_identity(
-    well: Mapping[str, object], metadata: Mapping[str, object], *, validate_current: bool
-) -> dict[str, object]:
+    well: Mapping[str, object],
+    metadata: Mapping[str, object],
+    *,
+    validate_current: bool,
+    preview: bool = False,
+) -> tuple[dict[str, object], bool]:
     """Reservation reads validate components even when an inactive well was edited."""
 
     custom = condition_json_object(well.get("custom_json"))
@@ -574,16 +596,31 @@ def _saved_identity(
     key = custom.get("CultivationConditionKey")
     if not isinstance(key, str) or not key:
         raise _error("Saved cultivation condition fingerprint is missing")
-    if validate_current and key != cultivation_condition_key(
-        well,
-        metadata,
-        scope,
-        fields,
-        normalize_units=True,
-        concentration_significant_figures=significant,
-        concentration_decimal_places=decimal,
-    ):
-        raise _error("Saved cultivation condition fingerprint changed")
+    added_treatments = False
+    if validate_current:
+        current_key = cultivation_condition_key(
+            well,
+            metadata,
+            scope,
+            fields,
+            normalize_units=True,
+            concentration_significant_figures=significant,
+            concentration_decimal_places=decimal,
+        )
+        if current_key != key:
+            # A legacy fingerprint may describe just the primary agent. Permit
+            # the preview/save workflow to include a newly recognized slot only
+            # if all previously recorded conditions still match.
+            added_treatments = extends_secondary_treatments(
+                well, key, current_key, significant_figures=significant, decimal_places=decimal
+            )
+            if not added_treatments:
+                raise _error("Saved cultivation condition fingerprint changed")
+            if not preview:
+                raise _error(
+                    "Additional treatments change the saved cultivation condition. "
+                    "Preview and save cultivation IDs before exporting."
+                )
     if validate_current and registry.get("scheme") == SCHEME:
         shared = {
             "CultivationPlateNumber": number,
@@ -607,7 +644,7 @@ def _saved_identity(
         **_precision_metadata(decimal, significant),
         "CultivationReplicateScope": scope,
         "CultivationExperiment": custom.get("CultivationExperiment", ""),
-    }
+    }, added_treatments
 
 
 def _assigned_strain(assignment: Mapping[str, object]) -> str:

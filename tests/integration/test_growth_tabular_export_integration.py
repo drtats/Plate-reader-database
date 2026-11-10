@@ -110,6 +110,12 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
                 WellLayoutChange(
                     "B1",
                     treatment="Mecillinam",
+                    custom_fields={
+                        "2nd drug": "Rifampicin",
+                        "Concentration 2": index,
+                        "unit_2": "µg/mL",
+                        "Exposure": f"batch-{index}",
+                    },
                     concentration=3.0,
                     concentration_unit="ug/mL",
                     replicate=1,
@@ -158,7 +164,30 @@ def test_multi_run_export_reconciles_rows_and_does_not_write(
         csv.DictReader(io.StringIO(bundle.measurements.content.decode("utf-8")))
     )
     metadata_rows = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode("utf-8"))))
-    assert tuple(measurement_rows[0]) == GROWTH_MEASUREMENT_HEADERS
+    assert tuple(measurement_rows[0]) == (
+        *GROWTH_MEASUREMENT_HEADERS,
+        "Treatment 2",
+        "Concentration 2",
+        "Concentration unit 2",
+        "Exposure",
+    )
+    for i in range(2):
+        meta = next(
+            row
+            for row in metadata_rows
+            if row["Well"] == "B1" and row["Run ID"] == str(plate_ids[i])
+        )
+        samples = [row for row in measurement_rows if row["Exposure"] == f"batch-{i}"]
+        assert samples
+        for header, expected in (
+            ("Treatment 2", "Rifampicin"),
+            ("Concentration 2", str(i)),
+            ("Concentration unit 2", "ug/mL"),
+        ):
+            assert meta[header] == expected
+            assert all(row[header] == expected for row in samples)
+        assert meta["Exposure"] == f"batch-{i}"
+    assert all(not row["Exposure"] for row in measurement_rows if row["Well Row"] == "A")
     assert "Vessel" in metadata_rows[0]
     assert all(row["Vessel"] == "" for row in metadata_rows)
     assert len(measurement_rows) == 768
@@ -313,7 +342,7 @@ def test_selected_run_replicates_are_stable_and_read_only(
     for bundle in (pair, forward):
         metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
         assert {
-            row["Run ID"]: row["Cultivation"] for row in metadata if row["Well"] == "B1"
+            row["Run ID"]: row["Cultivation ID"] for row in metadata if row["Well"] == "B1"
         } == expected
         data = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
         for i, plate_id in enumerate(plate_ids, 1):
@@ -322,18 +351,18 @@ def test_selected_run_replicates_are_stable_and_read_only(
             assert {row["Replicate"] for row in samples} == {"1"}
             assert {row["Concentration unit"] for row in samples} == {"ug/mL"}
             assert {row["Concentration"] for row in samples} == {("0.1875", "0.19")[i - 1]}
-            meta = next(row for row in metadata if row["Cultivation"] == cultivation)
-            assert meta["Local replicate"] == "1"
+            meta = next(row for row in metadata if row["Cultivation ID"] == cultivation)
+            assert meta["LocalReplicate"] == "1"
             assert meta["Matching concentration"] == "0.19"
             assert meta["Concentration matching significant figures"] == "2"
         assert bundle.measurements.row_count == 768
         assert bundle.metadata.row_count == 192
         assert all(row["Saved cultivation ID"] == "" for row in bundle.replicate_preview)
     late_data, late_meta = b1_rows(late_only)
-    assert late_meta["Cultivation"] == "PN-EXP-J3-002-B01-R1"
-    assert late_meta["CultivationReplicate"] == "1"
+    assert late_meta["Cultivation ID"] == "PN-EXP-J3-002-B01-R1"
+    assert late_meta["Replicate"] == "1"
     assert late_meta["LocalReplicate"] == "1"
-    assert late_data["Cultivation ID"] == late_meta["Cultivation"]
+    assert late_data["Cultivation ID"] == late_meta["Cultivation ID"]
     assert late_data["Replicate"] == "1"
     assert late_data["Raw OD"] and late_data["Background Subtracted OD"]
     assert json.loads(late_meta["Well Metadata JSON"]).get("Cultivation") is None
@@ -457,22 +486,24 @@ def test_persistent_plate_condition_ids_join_every_observation_and_survive_legac
         assert "Cultivation plate number" not in data[0]
         assert all(row["InternalCultivationID"] for row in metadata)
         assert len({row["InternalCultivationID"] for row in metadata}) == 192
-        meta_by_cultivation = {row["Cultivation"]: row for row in metadata if row["Cultivation"]}
+        meta_by_cultivation = {
+            row["Cultivation ID"]: row for row in metadata if row["Cultivation ID"]
+        }
         for row in data:
             if not row["Cultivation ID"]:
                 continue
             meta = meta_by_cultivation[row["Cultivation ID"]]
-            assert row["Well Row"] == meta["Well Row"]
-            assert row["Well Column"] == meta["Well Column"]
+            assert row["Well Row"] == meta["Vessel_Alphabetical_ID"]
+            assert row["Well Column"] == meta["Vessel_Numeric_ID"]
             assert row["Replicate"] == meta["Replicate"]
             assert row["Raw OD"]
         for index, plate_id in enumerate(plate_ids, 1):
             by_well = {row["Well"]: row for row in metadata if row["Run ID"] == str(plate_id)}
             prefix = f"ST-EXP-MG1655-MP96A{index:02d}"
-            assert by_well["B1"]["Cultivation"] == f"{prefix}01R1"
-            assert by_well["B2"]["Cultivation"] == f"{prefix}01R2"
-            assert by_well["B3"]["Cultivation"] == f"{prefix}02R1"
-            assert by_well["B4"]["Cultivation"] == f"ST-EXP-J3-MP96A{index:02d}03R1"
+            assert by_well["B1"]["Cultivation ID"] == f"{prefix}01R1"
+            assert by_well["B2"]["Cultivation ID"] == f"{prefix}01R2"
+            assert by_well["B3"]["Cultivation ID"] == f"{prefix}02R1"
+            assert by_well["B4"]["Cultivation ID"] == f"ST-EXP-J3-MP96A{index:02d}03R1"
             assert (
                 by_well["B1"]["CultivationExperiment"]
                 == f"ST-EXP-MG1655-MP96A[{index:02d}01-{index:02d}02]"

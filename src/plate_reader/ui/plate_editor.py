@@ -14,6 +14,11 @@ import streamlit as st
 from plate_reader.application.contracts import MicWellLayoutChange, WellLayoutChange
 from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.domain.common.plate import PLATE_96
+from plate_reader.domain.growth.treatments import (
+    ADDITIONAL_TREATMENT_COLUMNS,
+    additional_treatment_key,
+    additional_treatment_value,
+)
 from plate_reader.domain.mic import MicWell
 
 WELL = "Well"
@@ -35,6 +40,7 @@ GROWTH_COLUMNS = (
     "Treatment",
     "Concentration",
     "Concentration unit",
+    *ADDITIONAL_TREATMENT_COLUMNS,
     "T0 added (min)",
 )
 
@@ -53,8 +59,16 @@ MIC_COLUMNS = (
 )
 
 BOOLEAN_COLUMNS = {"Blank", "Plot"}
-NUMERIC_COLUMNS = {"Raw OD", "Inoculum size", "Replicate", "Concentration", "T0 added (min)"}
+NUMERIC_COLUMNS = {
+    "Raw OD",
+    "Inoculum size",
+    "Replicate",
+    "Concentration",
+    "T0 added (min)",
+}
+ADDITIONAL_CONCENTRATION_COLUMNS = {"Concentration 2", "Concentration 3"}
 PROTECTED_COLUMNS = {WELL, "Raw label"}
+_TREATMENT_ALIASES_ATTR = "growth_treatment_aliases"
 
 
 def growth_layout_frame(labels: Mapping[str, str] | None = None) -> pd.DataFrame:
@@ -80,6 +94,7 @@ def growth_layout_frame(labels: Mapping[str, str] | None = None) -> pd.DataFrame
                 "Treatment": "",
                 "Concentration": None,
                 "Concentration unit": "",
+                **_growth_treatment_cells({}),
                 "T0 added (min)": None,
             }
         )
@@ -93,12 +108,23 @@ def growth_layout_frame_from_wells(wells: Sequence[dict[str, object]]) -> pd.Dat
     custom_by_position = {
         position: _json_object(well.get("custom_json")) for position, well in by_position.items()
     }
+    treatment_by_position = {
+        position: {
+            **{
+                name: value
+                for name, value in _json_object(well.get("condition_custom_json")).items()
+                if additional_treatment_key(name) is not None
+            },
+            **custom_by_position[position],
+        }
+        for position, well in by_position.items()
+    }
     custom_names = sorted(
         {
             name
             for custom in custom_by_position.values()
             for name in custom
-            if name != "t0_added_min"
+            if name != "t0_added_min" and additional_treatment_key(name) is None
         }
     )
     defaults = growth_layout_frame().set_index(WELL)
@@ -127,11 +153,17 @@ def growth_layout_frame_from_wells(wells: Sequence[dict[str, object]]) -> pd.Dat
                 "Treatment": well.get("treatment") or "",
                 "Concentration": well.get("concentration"),
                 "Concentration unit": well.get("concentration_unit") or "",
+                **_growth_treatment_cells(treatment_by_position[position.label]),
                 "T0 added (min)": custom.get("t0_added_min"),
             }
             row.update({name: custom.get(name, "") for name in custom_names})
         rows.append(row)
-    return pd.DataFrame(rows, columns=(*GROWTH_COLUMNS, *custom_names))
+    frame = pd.DataFrame(rows, columns=(*GROWTH_COLUMNS, *custom_names))
+    frame.attrs[_TREATMENT_ALIASES_ATTR] = {
+        position: _conflicting_treatment_aliases(custom)
+        for position, custom in treatment_by_position.items()
+    }
+    return frame
 
 
 def mic_layout_frame(wells: Sequence[MicWell]) -> pd.DataFrame:
@@ -235,11 +267,22 @@ def fill_layout(
 
 
 def growth_layout_changes(frame: pd.DataFrame) -> tuple[WellLayoutChange, ...]:
-    normalized = normalize_layout_frame(frame)
+    normalized = _normalize_growth_treatment_columns(frame)
     custom_columns = [column for column in normalized.columns if column not in GROWTH_COLUMNS]
     result = []
     for row in normalized.to_dict(orient="records"):
-        custom_fields = _custom_values(row, custom_columns)
+        custom_fields = {
+            **normalized.attrs.get(_TREATMENT_ALIASES_ATTR, {}).get(str(row[WELL]), {}),
+            **_custom_values(row, custom_columns),
+        }
+        # Explicit empty canonical values mask retained aliases/condition metadata.
+        # Omitting a cleared key would revive a legacy fallback on the next read.
+        custom_fields.update(
+            {
+                key: None if _optional_text(row[label]) is None else row[label]
+                for label, key in ADDITIONAL_TREATMENT_COLUMNS.items()
+            }
+        )
         t0 = _optional_float(row["T0 added (min)"])
         if t0 is not None:
             custom_fields["t0_added_min"] = t0
@@ -321,7 +364,7 @@ def apply_growth_template(
             name
             for row in by_position.values()
             for name in _mapping(row.get("custom_fields"))
-            if name != "t0_added_min"
+            if name != "t0_added_min" and additional_treatment_key(name) is None
         }
     )
     rows: list[dict[str, object]] = []
@@ -345,11 +388,17 @@ def apply_growth_template(
             "Treatment": saved.get("treatment") or "",
             "Concentration": saved.get("concentration"),
             "Concentration unit": saved.get("concentration_unit") or "",
+            **_growth_treatment_cells(custom),
             "T0 added (min)": custom.get("t0_added_min"),
         }
         row.update({name: custom.get(name, "") for name in custom_names})
         rows.append(row)
-    return pd.DataFrame(rows, columns=(*GROWTH_COLUMNS, *custom_names))
+    frame = pd.DataFrame(rows, columns=(*GROWTH_COLUMNS, *custom_names))
+    frame.attrs[_TREATMENT_ALIASES_ATTR] = {
+        position: _conflicting_treatment_aliases(_mapping(saved.get("custom_fields")))
+        for position, saved in by_position.items()
+    }
+    return frame
 
 
 def apply_mic_template(frame: pd.DataFrame, layout: Sequence[Mapping[str, object]]) -> pd.DataFrame:
@@ -395,13 +444,21 @@ def normalize_layout_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized.sort_values("__order").drop(columns="__order").reset_index(drop=True)
 
 
-def include_layout_columns(frame: pd.DataFrame, column_names: Sequence[str]) -> pd.DataFrame:
+def include_layout_columns(
+    frame: pd.DataFrame, column_names: Sequence[str], *, is_growth: bool | None = None
+) -> pd.DataFrame:
     """Add missing universal columns without changing existing plate values."""
 
-    updated = normalize_layout_frame(frame)
+    if is_growth is None:
+        is_growth = "Raw label" in frame and "Raw OD" not in frame
+    updated = (
+        _normalize_growth_treatment_columns(frame) if is_growth else normalize_layout_frame(frame)
+    )
     known = {str(column).casefold() for column in updated.columns}
     for raw_name in column_names:
         name = str(raw_name).strip()
+        if is_growth and additional_treatment_key(name) is not None:
+            continue
         if name and name.casefold() not in known:
             updated[name] = ""
             known.add(name.casefold())
@@ -431,12 +488,15 @@ def render_plate_editor(
 
     configure_arrow_memory_pool()
     revision_key = f"{state_key}_revision"
+    is_growth = assay == "growth"
     if state_key not in st.session_state:
         st.session_state[state_key] = include_layout_columns(
-            initial_frame, universal_custom_columns
+            initial_frame, universal_custom_columns, is_growth=is_growth
         )
         st.session_state[revision_key] = 0
-    frame = include_layout_columns(st.session_state[state_key], universal_custom_columns)
+    frame = include_layout_columns(
+        st.session_state[state_key], universal_custom_columns, is_growth=is_growth
+    )
     st.session_state[state_key] = frame
     revision = int(st.session_state[revision_key])
 
@@ -499,7 +559,7 @@ def render_plate_editor(
     with table_tab:
         with st.form(f"{state_key}_table_form_{revision}"):
             edited_table = st.data_editor(
-                _editor_safe_frame(frame),
+                _editor_safe_frame(frame, is_growth=is_growth),
                 height=600,
                 width="stretch",
                 hide_index=True,
@@ -508,12 +568,16 @@ def render_plate_editor(
                     *(["Raw label"] if "Raw label" in frame else []),
                     *immutable_columns,
                 ],
-                column_config=_column_config(frame),
+                column_config=_column_config(frame, is_growth=is_growth),
                 key=f"{state_key}_table_{revision}",
             )
             apply_table = st.form_submit_button("Apply full table changes", type="primary")
         if apply_table:
-            _replace_frame(state_key, revision_key, normalize_layout_frame(edited_table))
+            _replace_frame(
+                state_key,
+                revision_key,
+                _restore_structured_values(edited_table, frame),
+            )
 
     if assay == "growth":
         with st.expander("Paste selection for plotting"):
@@ -552,7 +616,9 @@ def _render_custom_columns(  # pragma: no cover - Streamlit widget composition
             clean_name = new_name.strip()
             if not clean_name:
                 st.error("Enter a custom column name.")
-            elif clean_name.casefold() in {str(column).casefold() for column in frame.columns}:
+            elif clean_name.casefold() in {str(column).casefold() for column in frame.columns} or (
+                assay == "growth" and additional_treatment_key(clean_name) is not None
+            ):
                 st.error(f"{clean_name} already exists.")
             else:
                 try:
@@ -564,9 +630,8 @@ def _render_custom_columns(  # pragma: no cover - Streamlit widget composition
                     updated = frame.copy(deep=True)
                     updated[clean_name] = ""
                     _replace_frame(state_key, revision_key, updated)
-        removable = [
-            column for column in frame.columns if column not in (*GROWTH_COLUMNS, *MIC_COLUMNS)
-        ]
+        fixed_columns = GROWTH_COLUMNS if assay == "growth" else MIC_COLUMNS
+        removable = [column for column in frame.columns if column not in fixed_columns]
         if removable:
             remove_name, remove_button = st.columns((3, 1))
             selected = remove_name.selectbox(
@@ -630,7 +695,9 @@ def _fill_value_widget(  # pragma: no cover - Streamlit widget composition
         return st.checkbox("Fill value", key=key)
     if column == "Replicate":
         return st.number_input("Fill value", min_value=1, value=1, step=1, key=key)
-    if column in NUMERIC_COLUMNS:
+    if column in NUMERIC_COLUMNS or (
+        assay == "growth" and column in ADDITIONAL_CONCENTRATION_COLUMNS
+    ):
         return st.number_input("Fill value", value=0.0, key=key)
     default = "LB" if column == "Media" and assay == "growth" else ""
     saved = tuple(dict.fromkeys(suggestions.get(column, ())))
@@ -656,6 +723,8 @@ def _replace_frame(  # pragma: no cover - Streamlit widget composition
 
 def _column_config(  # pragma: no cover - Streamlit widget composition
     frame: pd.DataFrame,
+    *,
+    is_growth: bool,
 ) -> dict[str, Any]:
     config: dict[str, Any] = {
         WELL: st.column_config.TextColumn("Well", disabled=True),
@@ -665,12 +734,21 @@ def _column_config(  # pragma: no cover - Streamlit widget composition
         "Raw OD": st.column_config.NumberColumn("Raw OD", format="%.4f"),
         "Inoculum size": st.column_config.NumberColumn("Inoculum size", format="%.4f"),
         "Concentration": st.column_config.NumberColumn("Concentration", format="%.4g"),
+        **{
+            label: (
+                st.column_config.TextColumn(label)
+                if _has_legacy_concentration_text(frame[label])
+                else st.column_config.NumberColumn(label, format="%.4g")
+            )
+            for label in ADDITIONAL_CONCENTRATION_COLUMNS
+            if is_growth and label in frame
+        },
         "T0 added (min)": st.column_config.NumberColumn("T0 added (min)", format="%.2f"),
     }
     return {key: value for key, value in config.items() if key in frame}
 
 
-def _editor_safe_frame(frame: pd.DataFrame) -> pd.DataFrame:
+def _editor_safe_frame(frame: pd.DataFrame, *, is_growth: bool = True) -> pd.DataFrame:
     """Give Arrow-backed widgets one stable dtype per column."""
 
     safe = frame.copy(deep=True)
@@ -679,11 +757,94 @@ def _editor_safe_frame(frame: pd.DataFrame) -> pd.DataFrame:
             safe[column] = safe[column].astype("boolean")
         elif column == "Replicate":
             safe[column] = pd.to_numeric(safe[column], errors="coerce").astype("Int64")
-        elif column in NUMERIC_COLUMNS:
+        elif column in NUMERIC_COLUMNS or (
+            is_growth
+            and column in ADDITIONAL_CONCENTRATION_COLUMNS
+            and not _has_legacy_concentration_text(safe[column])
+        ):
             safe[column] = pd.to_numeric(safe[column], errors="coerce").astype("Float64")
         else:
             safe[column] = safe[column].fillna("").astype("string")
     return safe
+
+
+def _growth_treatment_cells(custom: Mapping[str, object]) -> dict[str, object]:
+    return {
+        label: additional_treatment_value(custom, key)
+        for label, key in ADDITIONAL_TREATMENT_COLUMNS.items()
+    }
+
+
+def _normalize_growth_treatment_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Upgrade staged/legacy editor columns; displayed fields own explicit clears."""
+
+    updated = normalize_layout_frame(frame)
+    for label, key in ADDITIONAL_TREATMENT_COLUMNS.items():
+        if label not in updated:
+            updated[label] = [
+                additional_treatment_value(row, key) for row in updated.to_dict(orient="records")
+            ]
+    aliases_by_position = dict(updated.attrs.get(_TREATMENT_ALIASES_ATTR, {}))
+    for row in updated.to_dict(orient="records"):
+        position = str(row[WELL])
+        existing = aliases_by_position.get(position, {})
+        custom = {
+            **row,
+            **{key: row[label] for label, key in ADDITIONAL_TREATMENT_COLUMNS.items()},
+        }
+        aliases_by_position[position] = {**existing, **_conflicting_treatment_aliases(custom)}
+    updated.attrs[_TREATMENT_ALIASES_ATTR] = aliases_by_position
+    alias_columns = [
+        column
+        for column in updated.columns
+        if additional_treatment_key(str(column)) is not None
+        and column not in ADDITIONAL_TREATMENT_COLUMNS
+    ]
+    return updated.drop(columns=alias_columns)
+
+
+def _conflicting_treatment_aliases(custom: Mapping[str, object]) -> dict[str, object]:
+    """Retain disagreeing legacy spellings for audit/export without duplicate editors."""
+
+    return {
+        name: value
+        for name, value in custom.items()
+        if (key := additional_treatment_key(name)) is not None
+        and name != key
+        and value is not None
+        and not _is_missing(value)
+        and value != ""
+        and not _metadata_values_equal(value, additional_treatment_value(custom, key))
+    }
+
+
+def _restore_structured_values(edited: pd.DataFrame, original: pd.DataFrame) -> pd.DataFrame:
+    """Preserve JSON containers when the table only displays their text unchanged."""
+
+    restored = normalize_layout_frame(edited)
+    previous = normalize_layout_frame(original)
+    restored.attrs.update(previous.attrs)
+    for column in previous.columns.intersection(restored.columns):
+        for index, value in previous[column].items():
+            displayed = restored.at[index, column]
+            if (
+                isinstance(value, (dict, list))
+                and isinstance(displayed, str)
+                and displayed == str(value)
+            ):
+                restored[column] = restored[column].astype(object)
+                restored.at[index, column] = value
+    return restored
+
+
+def _metadata_values_equal(first: object, second: object) -> bool:
+    equal = first == second
+    return bool(equal) if isinstance(equal, bool) else False
+
+
+def _has_legacy_concentration_text(values: pd.Series) -> bool:
+    populated = values.map(lambda value: _optional_text(value) is not None)
+    return bool(pd.to_numeric(values[populated], errors="coerce").isna().any())
 
 
 def _custom_values(row: Mapping[str, object], columns: Sequence[str]) -> dict[str, object]:

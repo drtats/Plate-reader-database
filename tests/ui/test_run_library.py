@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from plate_reader.application.ports.repositories import GrowthRunReadiness
 from plate_reader.ui.run_summary_table import run_summary_rows, run_summary_table
 
@@ -157,3 +159,44 @@ def test_custom_columns_cannot_replace_readiness_or_other_fixed_columns() -> Non
     assert row["Experiment number"] == "07"
     assert row["Oxygen"] == "aerobic"
     assert "EXPERIMENT" not in row
+
+
+@pytest.mark.parametrize("registered_alias", ("2nd drug", "treatment_2", "Treatment 2"))
+def test_run_library_discovers_saved_custom_columns_without_registration(
+    registered_alias: str,
+) -> None:
+    run = SimpleNamespace(
+        plate_id="plate-custom",
+        experiment_name="Experiment",
+        plate_name="Plate",
+        experiment_date="2026-11-10",
+        project=None,
+        strains=(),
+        media=(),
+        treatments=("Drug B",),
+        concentration_ranges=(),
+        inoculum_ranges=(),
+        updated_at="2026-11-10",
+        custom_fields=(
+            ("Treatment 2", ("Drug B",)),
+            ("Concentration 2", ("0.5", "2")),
+            ("Concentration unit 2", ("mM",)),
+            ("Oxygen", ("aerobic",)),
+            ("_lab_note", ("visible",)),
+        ),
+    )
+    empty = SimpleNamespace(**{**vars(run), "plate_id": "plate-empty", "custom_fields": ()})
+
+    table = run_summary_table((run, empty), ("oxygen", "Vessel", registered_alias, "_lab_note"))
+
+    assert table.loc["plate-custom", "Treatment 2"] == "Drug B"
+    assert table.loc["plate-custom", "Concentration 2"] == "0.5, 2"
+    assert table.loc["plate-custom", "Concentration unit 2"] == "mM"
+    assert table.loc["plate-custom", "oxygen"] == "aerobic"
+    assert table.loc["plate-custom", "_lab_note"] == "visible"
+    assert list(table.columns).count("Treatment 2") == 1
+    assert "2nd drug" not in table.columns
+    assert "treatment_2" not in table.columns
+    assert "Oxygen" not in table.columns
+    assert table.loc["plate-empty", "Treatment 2"] == "—"
+    assert table.loc["plate-empty", "oxygen"] == "—"

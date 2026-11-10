@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterator
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -10,23 +13,28 @@ from plate_reader.application.contracts import (
     AssayType,
     DeleteOption,
     DeletePlateTemplate,
+    ImportGrowthRun,
     Role,
     SaveOption,
     SavePlateTemplate,
+    UpdateWellLayout,
     UserId,
 )
 from plate_reader.application.services import (
     DeleteLayoutColumnService,
     DeleteOptionService,
     DeletePlateTemplateService,
+    ImportGrowthRunService,
     ListLayoutColumnsService,
     ListPlateTemplatesService,
     ListSavedOptionsService,
     SaveLayoutColumnService,
     SaveOptionService,
     SavePlateTemplateService,
+    UpdateGrowthLayoutService,
 )
 from plate_reader.domain.common.plate import PLATE_96
+from plate_reader.domain.growth import GROWTH_NORMALIZATION_VERSION
 from plate_reader.infrastructure.database import (
     DatabaseBackend,
     DatabaseConfig,
@@ -39,6 +47,10 @@ from plate_reader.infrastructure.database.repository import (
 )
 from plate_reader.ui.context import AppContext
 from plate_reader.ui.option_controls import saved_option_suggestions
+from plate_reader.ui.plate_editor import (
+    growth_layout_changes,
+    growth_layout_frame_from_wells,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "migrations"
@@ -164,6 +176,9 @@ def test_layout_columns_are_assay_wide_editor_managed_and_audited(
     ) == ("Oxygen",)
     with pytest.raises(ValueError, match="reserved"):
         SaveLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, "Run ID")
+    for name in ("Treatment 2", "treatment_2", "Concentration 2", "conc_2", "unit_3"):
+        with pytest.raises(ValueError, match="reserved"):
+            SaveLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, name)
     with pytest.raises(PermissionError):
         SaveLayoutColumnService(repository).execute(VIEWER, AssayType.GROWTH, "Vessel")
 
@@ -196,3 +211,84 @@ def layout(strain: str) -> tuple[dict[str, object], ...]:
         {"position": position.label, "strain": strain if position.label == "A1" else ""}
         for position in PLATE_96.positions()
     )
+
+
+def test_growth_additional_treatments_persist_reload_and_clear_without_changing_raw_data(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    csv_text = (ROOT / "tests/fixtures/growth/with_time.csv").read_text(encoding="utf-8")
+    imported = ImportGrowthRunService(repository).execute(
+        ImportGrowthRun(
+            EDITOR,
+            "checkerboard.csv",
+            hashlib.sha256(csv_text.encode()).hexdigest(),
+            GROWTH_NORMALIZATION_VERSION,
+            "Checkerboard",
+            "Growth",
+            date(2026, 1, 2),
+        ),
+        csv_text,
+    )
+    before = repository.load_plate(imported.plate_id)
+    assert before is not None
+    first_well_id = str(before.wells[0]["well_id"])
+    condition_custom = {"Drug 2": "legacy second", "conc_2": "unknown", "unit_2": "uM"}
+    identity = {"CultivationIdentity": {"number": "01", "history": ["00"]}}
+    with repository.transaction():
+        repository.connection.execute(
+            "UPDATE well_conditions SET custom_json = ? WHERE well_id = ?",
+            (json.dumps(condition_custom), first_well_id),
+        )
+        repository.update_well_layout(
+            imported.plate_id,
+            [{"position": "A1", "custom_json": identity}],
+        )
+    legacy = repository.load_plate(imported.plate_id)
+    assert legacy is not None
+    frame = growth_layout_frame_from_wells(legacy.wells)
+    assert frame.loc[0, "Treatment 2"] == "legacy second"
+    assert frame.loc[0, "Concentration 2"] == "unknown"
+    frame.loc[0, "Treatment 3"] = "third agent"
+    frame.loc[0, "Concentration 3"] = 0.0
+    frame.loc[0, "Concentration unit 3"] = "mg/mL"
+    saved = UpdateGrowthLayoutService(repository).execute(
+        UpdateWellLayout(
+            EDITOR,
+            imported.plate_id,
+            str(legacy.metadata["updated_at"]),
+            growth_layout_changes(frame),
+        ),
+    )
+    reloaded = growth_layout_frame_from_wells(saved.wells)
+    assert reloaded.loc[0, "Treatment 2"] == "legacy second"
+    assert reloaded.loc[0, "Treatment 3"] == "third agent"
+    assert reloaded.loc[0, "Concentration 3"] == 0.0
+    custom = json.loads(str(saved.wells[0]["custom_json"]))
+    assert custom["CultivationIdentity"] == identity["CultivationIdentity"]
+    assert saved.raw_observations == before.raw_observations
+    for slot in (2, 3):
+        for label in ("Treatment", "Concentration", "Concentration unit"):
+            reloaded.loc[0, f"{label} {slot}"] = None
+    cleared = UpdateGrowthLayoutService(repository).execute(
+        UpdateWellLayout(
+            EDITOR,
+            imported.plate_id,
+            str(saved.metadata["updated_at"]),
+            growth_layout_changes(reloaded),
+        ),
+    )
+    reopened = growth_layout_frame_from_wells(cleared.wells)
+    assert reopened.loc[0, "Treatment 2"] is None
+    assert reopened.loc[0, "Treatment 3"] is None
+    assert cleared.raw_observations == before.raw_observations
+
+
+def test_growth_saved_suggestions_are_shared_with_all_three_treatments(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    SaveOptionService(repository).execute(SaveOption(ADMIN, "treatment", "Drug A"))
+    SaveOptionService(repository).execute(SaveOption(ADMIN, "concentration_unit", "uM"))
+    suggestions = saved_option_suggestions(AppContext(repository, VIEWER), AssayType.GROWTH)
+    for slot in (2, 3):
+        assert suggestions[f"Treatment {slot}"] == suggestions["Treatment"] == ("Drug A",)
+        assert suggestions[f"Concentration unit {slot}"] == ("uM",)

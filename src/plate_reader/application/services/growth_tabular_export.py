@@ -7,7 +7,7 @@ import hashlib
 import io
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from string import Formatter
@@ -44,6 +44,11 @@ from plate_reader.domain.growth.cultivation_conditions import (
 from plate_reader.domain.growth.cultivation_registry import (
     SCHEME,
     saved_plate_condition_identity,
+)
+from plate_reader.domain.growth.treatments import (
+    ADDITIONAL_TREATMENT_COLUMNS,
+    additional_treatment_key,
+    additional_treatment_value,
 )
 from plate_reader.domain.growth.units import normalize_growth_label, normalize_growth_unit
 
@@ -247,19 +252,70 @@ _MEASUREMENT_ONLY_HEADERS = frozenset(
         "Background SD OD",
     }
 )
-_MOVED_METADATA_HEADERS = tuple(
-    name
-    for name in _PREVIOUS_MEASUREMENT_HEADERS
-    if name not in _OMITTED_EXPORT_HEADERS | _MEASUREMENT_ONLY_HEADERS
-)
+# Keep one output name per field. Saved, exported, internal, and local IDs
+# remain separate because export-only generation can give them different values.
+_METADATA_ALIAS_HEADERS = frozenset(
+    {
+        *GROWTH_REGISTRY_MEASUREMENT_HEADERS,
+        "Cultivation",  # Both files join through the recipient's Cultivation ID.
+        "CultivationReplicate",  # Replicate is the effective exported R value.
+        "Local replicate",
+        "BG Group",
+        "Well Row",  # Metadata uses the registry's Vessel_* identifiers.
+        "Well Column",
+        "CultivationConcentrationSignificantFigures",
+        "CultivationConcentrationDecimalPlaces",
+    }
+) - {"Cultivation ID"}
 GROWTH_METADATA_HEADERS = tuple(
     dict.fromkeys(
-        (
-            *_MOVED_METADATA_HEADERS,
+        name
+        for name in (
+            "Cultivation ID",
+            *GROWTH_REGISTRY_METADATA_HEADERS,
+            *_PREVIOUS_MEASUREMENT_HEADERS,
             "Inoculum_condition",
             *_PREVIOUS_METADATA_HEADERS,
         )
+        if name not in _METADATA_ALIAS_HEADERS | _OMITTED_EXPORT_HEADERS | _MEASUREMENT_ONLY_HEADERS
     )
+)
+
+# Compact metadata remains usable for controls without an external cultivation ID.
+GROWTH_COMPACT_METADATA_HEADERS = (
+    "Cultivation ID",
+    "InternalCultivationID",
+    "Run ID",
+    "Experiment Name",
+    "Experiment Date",
+    "Project",
+    "Well",
+    "Strain",
+    "Media",
+    "Inoculum size",
+    "Inoculum unit",
+    "Inoculum_condition",
+    "Replicate",
+    "Blank",
+    "Display name",
+)
+_COMPACT_OPTIONAL_METADATA_HEADERS = (
+    "Strain/Strain_Aliases",
+    "Raw label",
+    "Signal Type",
+    "Culture Volume uL",
+    "Temperature",
+    "Background group",
+    "Group",
+    "T0 added (min)",
+    "Notes",
+    "Comment",
+    "Objective",
+    "Condition",
+    "InoculationDateTime",
+    "EquipmentMakeModel",
+    "CultivationProtocol",
+    "SampleAnalysisProtocol",
 )
 
 _EDITABLE_METADATA_KEYS = (
@@ -305,6 +361,7 @@ class ExportGrowthTabularData:
     concentration_significant_figures: int | None = None
     concentration_decimal_places: int | None = None
     require_saved_cultivation_ids: bool = False
+    compact_metadata: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,6 +441,7 @@ class ExportGrowthTabularDataService:
             concentration_significant_figures=command.concentration_significant_figures,
             concentration_decimal_places=command.concentration_decimal_places,
             require_saved_cultivation_ids=command.require_saved_cultivation_ids,
+            compact_metadata=command.compact_metadata,
         )
 
 
@@ -398,8 +456,13 @@ def export_growth_tabular_data(
     concentration_significant_figures: int | None = None,
     concentration_decimal_places: int | None = None,
     require_saved_cultivation_ids: bool = False,
+    compact_metadata: bool = False,
 ) -> GrowthTabularExportBundle:
-    """Build deterministic multi-run measurement and metadata CSV files."""
+    """Build deterministic multi-run CSVs without changing saved metadata.
+
+    Compact metadata keeps core identities and populated scientific/custom fields;
+    the default full format also retains audit and provenance detail.
+    """
 
     _validate_matching_mode(
         assign_selected_replicates, concentration_significant_figures, concentration_decimal_places
@@ -438,25 +501,75 @@ def export_growth_tabular_data(
             )
         )
     exported_custom_columns = _custom_column_names(views, custom_columns)
+    metadata_fields = tuple(
+        tuple(
+            _well_export_fields(context, well, exported_custom_columns)
+            for well in context.view.snapshot.wells
+        )
+        for context in contexts
+    )
+    populated = {
+        name
+        for fields in metadata_fields
+        for row in fields
+        for name, value in row.items()
+        if _has_export_value(value)
+    }
+    populated_custom_columns = tuple(name for name in exported_custom_columns if name in populated)
+    treatment_groups = (
+        ("Treatment", "Concentration", "Concentration unit"),
+        *(
+            tuple(name for name in ADDITIONAL_TREATMENT_COLUMNS if name.endswith(f" {slot}"))
+            for slot in (2, 3)
+        ),
+    )
+    active_groups = tuple(group for group in treatment_groups if populated.intersection(group))
+    measurement_headers = (
+        *GROWTH_MEASUREMENT_HEADERS,
+        *(name for group in active_groups if group != treatment_groups[0] for name in group),
+        *populated_custom_columns,
+    )
+    if compact_metadata:
+        optional = tuple(
+            name
+            for name in _COMPACT_OPTIONAL_METADATA_HEADERS
+            if name in populated
+            and (
+                name != "Comment"
+                or any(
+                    row["Comment"] != row["Notes"]
+                    for fields in metadata_fields
+                    for row in fields
+                    if _has_export_value(row["Comment"])
+                )
+            )
+        )
+        metadata_headers = (
+            *GROWTH_COMPACT_METADATA_HEADERS,
+            *(name for group in active_groups for name in group),
+            *optional,
+            *populated_custom_columns,
+        )
+    else:
+        metadata_headers = (*GROWTH_METADATA_HEADERS, *exported_custom_columns)
     single_run_name = _single_run_filename_stem(contexts)
 
     measurement_stream = io.StringIO(newline="")
     metadata_stream = io.StringIO(newline="")
     measurement_writer = csv.writer(measurement_stream, lineterminator="\n")
     metadata_writer = csv.writer(metadata_stream, lineterminator="\n")
-    measurement_writer.writerow(GROWTH_MEASUREMENT_HEADERS)
-    metadata_writer.writerow((*GROWTH_METADATA_HEADERS, *exported_custom_columns))
+    measurement_writer.writerow(measurement_headers)
+    metadata_writer.writerow(metadata_headers)
 
     measurement_count = 0
     metadata_count = 0
     warnings: list[str] = list(selection_warnings)
     seen_cultivations: set[str] = set()
-    for context in contexts:
+    for context, fields in zip(contexts, metadata_fields, strict=True):
         warnings.extend(_run_warnings(context))
         missing_id_positions: list[str] = []
-        for well in context.view.snapshot.wells:
-            registry = _cultivation_metadata(context, well)
-            cultivation = str(registry["Cultivation"])
+        for well, values in zip(context.view.snapshot.wells, fields, strict=True):
+            cultivation = str(values["Cultivation ID"])
             if cultivation:
                 if cultivation in seen_cultivations:
                     raise _cultivation_error(
@@ -465,13 +578,8 @@ def export_growth_tabular_data(
                 seen_cultivations.add(cultivation)
             elif not bool(well.get("is_blank", False)):
                 missing_id_positions.append(str(well.get("position", "")))
-            values = _well_export_fields(context, well, registry)
             metadata_writer.writerow(
-                tuple(_custom_cell(values.get(header)) for header in GROWTH_METADATA_HEADERS)
-                + tuple(
-                    _custom_cell(_custom_value(_well_custom(well), column))
-                    for column in exported_custom_columns
-                )
+                _custom_cell(values.get(header)) for header in metadata_headers
             )
             metadata_count += 1
         if missing_id_positions:
@@ -481,7 +589,7 @@ def export_growth_tabular_data(
                 "preview/save cultivation IDs. "
                 "Their measurements and metadata internal IDs are retained."
             )
-        for row in _measurement_rows(context):
+        for row in _measurement_rows(context, measurement_headers, fields):
             measurement_writer.writerow(row)
             measurement_count += 1
 
@@ -688,7 +796,6 @@ def _selection_contexts(
                         "Run ID": plate_id,
                         "Well": position,
                         "Strain": _first_text(well.get("strain")),
-                        "Local replicate": well.get("replicate"),
                         "Export replicate": identity["CultivationReplicate"],
                         "Concentration matching": _matching_description(
                             preview_precision := (
@@ -1042,31 +1149,16 @@ def _run_metadata_row(context: _RunContext) -> tuple[object, ...]:
 
 
 def _well_export_fields(
-    context: _RunContext, well: Mapping[str, object], registry: Mapping[str, object]
+    context: _RunContext, well: Mapping[str, object], custom_columns: Sequence[str]
 ) -> dict[str, object]:
     """Share fixed per-well values between the compact observations and metadata."""
     custom = _well_custom(well)
     position = _required_text(well.get("position"), "Growth export well position")
     conditions = _separate_conditions(well)
     units = (conditions[2], conditions[5], conditions[8], well.get("inoculum_unit"))
-    identity_headers = tuple(h for h in GROWTH_REGISTRY_MEASUREMENT_HEADERS if h != "Culture_Age_h")
-    identity_keys = (
-        "Cultivation",
-        "SavedCultivation",
-        "CultivationExperimentCode",
-        "CultivationIDPattern",
-        "CultivationReplicate",
-        "CultivationReplicateScope",
-        "CultivationConditionKey",
-        "InternalCultivationID",
-        "Local_Cultivation_ID",
-        "CultivationExperimentNumber",
-        "CultivationConditionNumber",
-        "TechnicalReplicate",
-        "BiologicalReplicateGroup",
-    )
-    values: dict[str, object] = dict(registry)
-    values.update(zip(identity_headers, (registry[key] for key in identity_keys), strict=True))
+    registry = _cultivation_metadata(context, well)
+    values = {**registry, "Cultivation ID": registry["Cultivation"]}
+    values.update((name, _custom_value(custom, name)) for name in custom_columns)
     values.update(
         zip(
             _PREVIOUS_METADATA_HEADERS[len(GROWTH_REGISTRY_METADATA_HEADERS) :][:10],
@@ -1086,9 +1178,7 @@ def _well_export_fields(
             "Well": position,
             "Signal Type": context.channels_by_well.get(str(well.get("well_id")), ""),
             "Blank": bool(well.get("is_blank", False)),
-            "BG Group": _background_group(well),
             "Notes": well.get("notes"),
-            "Local replicate": well.get("replicate"),
             "Raw label": well.get("raw_label"),
             "Display name": normalize_growth_label(well.get("display_name"), units=units),
             "Background group": _background_group(well),
@@ -1137,7 +1227,9 @@ def _well_export_fields(
     return values
 
 
-def _measurement_rows(context: _RunContext) -> tuple[tuple[object, ...], ...]:
+def _measurement_rows(
+    context: _RunContext, headers: tuple[str, ...], fields: Sequence[Mapping[str, object]]
+) -> Iterator[tuple[object, ...]]:
     wells_by_id = {
         _required_text(well.get("well_id"), "Growth export well ID"): well
         for well in context.view.snapshot.wells
@@ -1164,14 +1256,7 @@ def _measurement_rows(context: _RunContext) -> tuple[tuple[object, ...], ...]:
         ): row
         for row in context.view.backgrounds
     }
-    result: list[tuple[object, ...]] = []
-    registry_by_id = {
-        well_id: _cultivation_metadata(context, well) for well_id, well in wells_by_id.items()
-    }
-    fixed_by_id = {
-        well_id: _well_export_fields(context, well, registry_by_id[well_id])
-        for well_id, well in wells_by_id.items()
-    }
+    fixed_by_id = dict(zip(wells_by_id, fields, strict=True))
     for observation in observations:
         well_id = _required_text(observation.get("well_id"), "Growth observation well ID")
         if well_id not in wells_by_id:
@@ -1194,16 +1279,13 @@ def _measurement_rows(context: _RunContext) -> tuple[tuple[object, ...], ...]:
         values = {
             **fixed_by_id[well_id],
             "Time Min": elapsed / 60_000_000,
-            "Culture_Age_h": _culture_age(context, registry_by_id[well_id], elapsed),
+            "Culture_Age_h": _culture_age(context, fixed_by_id[well_id], elapsed),
             "Raw OD": raw_od,
             "Background Mean OD": background_mean,
             "Background SD OD": background_sd,
             "Background Subtracted OD": corrected_od,
         }
-        result.append(
-            tuple(_custom_cell(values.get(header)) for header in GROWTH_MEASUREMENT_HEADERS)
-        )
-    return tuple(result)
+        yield tuple(_custom_cell(values.get(header)) for header in headers)
 
 
 def _separate_conditions(well: Mapping[str, object]) -> tuple[object, ...]:
@@ -1215,9 +1297,9 @@ def _separate_conditions(well: Mapping[str, object]) -> tuple[object, ...]:
             primary_condition_value(well, custom, "concentration_unit", "unit_1")
         ),
         *(
-            normalize_growth_unit(custom.get(f"{field}_{index}"))
+            normalize_growth_unit(additional_treatment_value(custom, f"{field}_{index}"))
             if field == "unit"
-            else custom.get(f"{field}_{index}")
+            else additional_treatment_value(custom, f"{field}_{index}")
             for index in (2, 3)
             for field in ("treatment", "conc", "unit")
         ),
@@ -1407,9 +1489,9 @@ def _parse_datetime(value: str) -> datetime | None:
 
 
 def _condition_state(well: Mapping[str, object], custom: Mapping[str, object], index: int) -> str:
-    treatment = custom.get(f"treatment_{index}")
-    concentration = custom.get(f"conc_{index}")
-    unit = custom.get(f"unit_{index}")
+    treatment = additional_treatment_value(custom, f"treatment_{index}")
+    concentration = additional_treatment_value(custom, f"conc_{index}")
+    unit = additional_treatment_value(custom, f"unit_{index}")
     if index == 1:
         treatment = primary_condition_value(well, custom, "treatment", "treatment_1")
         concentration = primary_condition_value(well, custom, "concentration", "conc_1")
@@ -1442,6 +1524,16 @@ def _custom_column_names(
                     names.setdefault(name.casefold(), name)
     unavailable = {
         "cultivationplatenumber",  # Exported as CultivationExperimentNumber.
+        "primary_condition_overrides",
+        "previouscultivationids",
+        "retiredcultivationconditionnumbers",
+        "well_id",
+        "plate_id",
+        "position",
+        "created_at",
+        "experiment_date",
+        *(header.casefold() for header in _PREVIOUS_MEASUREMENT_HEADERS),
+        *(header.casefold() for header in _PREVIOUS_METADATA_HEADERS),
         *(header.casefold() for header in _OMITTED_EXPORT_HEADERS),
         *(header.casefold() for header in GROWTH_MEASUREMENT_HEADERS),
         *(header.casefold() for header in GROWTH_METADATA_HEADERS),
@@ -1449,7 +1541,11 @@ def _custom_column_names(
     }
     return tuple(
         sorted(
-            (name for folded, name in names.items() if folded not in unavailable),
+            (
+                name
+                for folded, name in names.items()
+                if folded not in unavailable and additional_treatment_key(name) is None
+            ),
             key=str.casefold,
         )
     )
@@ -1464,8 +1560,22 @@ def _custom_cell(value: object) -> object:
 
 
 def _custom_value(custom: Mapping[str, object], column: str) -> object | None:
-    expected = column.casefold()
-    return next((value for name, value in custom.items() if name.casefold() == expected), None)
+    expected = column.strip().casefold()
+    return next(
+        (value for name, value in custom.items() if name.strip().casefold() == expected), None
+    )
+
+
+def _has_export_value(value: object) -> bool:
+    """Zero and False are populated custom values; empty containers are not."""
+
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (Mapping, list, tuple)):
+        return bool(value)
+    return not isinstance(value, float) or math.isfinite(value)
 
 
 def _background_group(well: Mapping[str, object]) -> str:

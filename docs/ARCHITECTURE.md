@@ -248,7 +248,7 @@ not through conditionals scattered across repositories or UI code.
 ### Growth tabular registry export
 
 The CSV path is separate from portable database backup. The current contract is
-[`GROWTH_TABULAR_EXPORT_V4.md`](contracts/GROWTH_TABULAR_EXPORT_V4.md). The default
+[`GROWTH_TABULAR_EXPORT_V5.md`](contracts/GROWTH_TABULAR_EXPORT_V5.md). The default
 Growth Data Export workflow previews and explicitly persists plate/condition IDs
 (ADR 0043). Each experiment is one plate; the UI and CSV call its unique number
 the experiment number. A pure domain planner combines this minimum-two-digit number and
@@ -267,9 +267,11 @@ The default saved-ID export requires committed per-well assignments; previewing 
 cannot produce a registry download with missing assignments. An explicit combined UI
 action saves the preview before preparing CSVs. The exporter reads saved identities,
 validates current conditions against the stored rules, and joins both CSVs through
-the same per-well cultivation ID. Internal well
-identity is also present for every observation and metadata row, including controls
-without an external ID. Both original and matching concentration values are exported.
+the same per-well Cultivation ID for assigned wells. Metadata includes internal well
+identity for every well, including controls. A checkerboard layout supports three
+drug/dose/unit triplets. The Library and both CSVs resolve numbered custom fields
+from existing wells. The default compact metadata file carries original doses.
+Full metadata also includes matching doses, registry fields and original JSON (ADR 0046).
 Two-decimal-place matching and micro-unit spelling normalization apply to new group
 assignments; legacy saved rules remain explicit until a reviewed preview/save upgrade.
 No concentration scales are converted. Required registry Replicate and

@@ -66,7 +66,16 @@ def saved_option_suggestions(
         column = column_by_type.get(option.option_type)
         if column is not None:
             values[column].append(option.value)
-    return {column: tuple(items) for column, items in values.items() if items}
+    suggestions = {column: tuple(items) for column, items in values.items() if items}
+    if assay_type is AssayType.GROWTH:
+        for slot in (2, 3):
+            for primary, additional in (
+                ("Treatment", f"Treatment {slot}"),
+                ("Concentration unit", f"Concentration unit {slot}"),
+            ):
+                if primary in suggestions:
+                    suggestions[additional] = suggestions[primary]
+    return suggestions
 
 
 def layout_custom_column_names(context: AppContext, assay_type: AssayType) -> tuple[str, ...]:

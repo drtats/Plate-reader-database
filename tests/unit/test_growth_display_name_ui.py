@@ -3,11 +3,15 @@ from __future__ import annotations
 from datetime import date
 
 from plate_reader.application.services import (
+    BuildGrowthDisplayNamesService,
     GrowthDisplayNameAction,
     GrowthDisplayNameChange,
+    GrowthDisplayNameOptions,
     GrowthDisplayNamePreview,
 )
+from plate_reader.domain.growth.treatments import ADDITIONAL_TREATMENT_COLUMNS
 from plate_reader.ui.growth_display_names import (
+    _token_choices,
     apply_growth_display_name_preview,
     growth_display_name_metadata,
     growth_display_name_wells,
@@ -34,6 +38,7 @@ def test_editor_adapter_preserves_first_class_and_custom_name_tokens() -> None:
         "treatment": None,
         "concentration": 0.125,
         "concentration_unit": None,
+        **dict.fromkeys(ADDITIONAL_TREATMENT_COLUMNS.values()),
         "medium": "LB",
         "grouping_label": None,
         "inoculum_size": None,
@@ -82,3 +87,30 @@ def test_plate_metadata_adapter_accepts_wizard_and_persisted_names() -> None:
     assert wizard["experiment_date"] == date(2026, 8, 1)
     assert persisted["experiment_name"] == "Saved name"
     assert persisted["tags"] == ("saved",)
+
+
+def test_additional_treatments_are_available_for_display_name_composition_with_units() -> None:
+    frame = growth_layout_frame()
+    frame.loc[0, "Treatment 2"] = "drug B"
+    frame.loc[0, "Concentration 2"] = 0.125
+    frame.loc[0, "Concentration unit 2"] = "μM"
+    frame.loc[0, "Treatment 3"] = "drug C"
+    frame.loc[0, "Concentration 3"] = 0.0
+    frame.loc[0, "Concentration unit 3"] = "µg/mL"
+    choices = {choice.label: choice.token for choice in _token_choices(frame)}
+    labels = tuple(f"Well · {label}" for label in ADDITIONAL_TREATMENT_COLUMNS)
+    assert all(label in choices for label in labels)
+    wells = growth_display_name_wells(frame)
+    assert wells[0]["treatment_2"] == "drug B"
+    assert wells[0]["conc_2"] == 0.125
+    assert wells[0]["unit_2"] == "μM"
+    preview = BuildGrowthDisplayNamesService().execute(
+        wells,
+        {},
+        ("A1",),
+        GrowthDisplayNameOptions(
+            tuple(choices[label] for label in labels),
+            separator=" ",
+        ),
+    )
+    assert preview.changes[0].proposed_name == "drug B 0.125 uM drug C 0 ug/mL"

@@ -234,7 +234,7 @@ def _compose_display_name(
             if token.scope is GrowthDisplayNameScope.WELL
             else plate_metadata.get(token.field)
         )
-        if token.field.endswith("_unit"):
+        if token.field.endswith("_unit") or token.field in {"unit_2", "unit_3"}:
             value = normalize_growth_unit(value)
         text = _format_value(value, options.number_format)
         if text or not options.omit_empty:

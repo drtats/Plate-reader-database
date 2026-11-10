@@ -7,21 +7,15 @@ schema, portable-format, and scientific compatibility impact.
 
 - Prevented Growth tabular download clicks from rerunning the Streamlit page and
   invalidating its in-memory CSV URL before the browser retrieves the file.
-- Extended `growth_runs.csv` beyond its unchanged legacy-compatible column block
-  with every canonical Growth layout field, followed by every universal or stored
-  custom layout column, so newer experiment fields are not dropped during export.
+- Added Growth checkerboard treatments to layout entry, Library search and both
+  CSVs. Observations include populated custom fields. The metadata download
+  defaults to compact per-well rows with a full-detail option and a common
+  `Cultivation ID` join header. See [the v5 contract](docs/contracts/GROWTH_TABULAR_EXPORT_V5.md).
 - Named single-run Growth CSV downloads from the normalized experiment name and
   stable eight-character run hash, matching the established laboratory filename
   pattern; multi-run downloads retain their generic names.
-- Changed `growth_runs_metadata.csv` to contain exactly one homogeneous
-  experiment-metadata row per selected Growth run. Well/layout data remains in
-  `growth_runs.csv`; the companion file no longer interleaves `run` and `well` rows.
-- Made custom layout-column definitions universal within each assay, including a
-  migration that registers columns saved before this feature, while keeping their
-  well values experiment-specific. `growth_runs.csv` appends custom columns even
-  when all selected values are blank, and the Run Library and Growth Data Export
-  selector show each custom field as a per-run distinct-value summary alongside
-  strain, media, treatment, concentration, and inoculum metadata.
+- Made custom layout definitions universal within each assay. Their values
+  remain specific to individual wells and the Library summarizes them by run.
 - Excluded PyArrow 25.0.0, whose bundled allocator can crash Streamlit across
   script reruns, and moved hosted/local deployments to the fixed 25.0.1 patch.
 - Added a separate multi-run Growth Data Export page that creates the established

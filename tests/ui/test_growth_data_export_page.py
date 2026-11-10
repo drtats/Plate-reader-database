@@ -166,6 +166,7 @@ def test_resaving_unchanged_preview_does_not_write_again() -> None:
 
 def test_editor_save_is_explicit_once_and_viewer_exports_saved_new_ids() -> None:
     app = _export_page_app(legacy=False, registry=True, role="editor").run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
     next(b for b in app.button if b.label == "Preview cultivation IDs").click().run()
     assert not app.exception and not app.error
     save = next(b for b in app.button if b.label == "Save cultivation IDs")
@@ -208,13 +209,14 @@ def test_editor_save_is_explicit_once_and_viewer_exports_saved_new_ids() -> None
         "ST-EXP-MG1655-MP96A0201R1",
     ]
     assert [row["Replicate"] for row in rows] == ["1", "2", "1", "1"]
-    assert [row["Local cultivation ID"] for row in metadata] == [
+    assert [row["Local_Cultivation_ID"] for row in metadata] == [
         "EXP01-A01",
         "EXP01-A02",
         "EXP01-A03",
         "EXP02-A01",
     ]
-    assert metadata[0]["Internal cultivation ID"] == metadata[0]["InternalCultivationID"]
+    assert metadata[0]["InternalCultivationID"]
+    assert "Internal cultivation ID" not in metadata[0]
     assert json.loads(metadata[0]["Well Metadata JSON"])["PreviousCultivationIDs"] == ["OLD-CULT-1"]
     assert app.get("download_button")
     assert app.session_state["registry_plate_writes"] == 2
@@ -284,6 +286,7 @@ def test_registry_preview_error_leaves_save_disabled_and_does_not_load_raw_data(
 
 def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -> None:
     app = _export_page_app().run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
 
     assert not app.exception
     assert app.header[0].value == "Growth Data Export"
@@ -331,10 +334,10 @@ def test_export_search_is_metadata_only_until_prepare_then_offers_both_files() -
     assert len(bundle.replicate_preview) == 2
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
-    assert [row["Cultivation replicate"] for row in metadata] == ["1", "1"]
+    assert [row["Replicate"] for row in metadata] == ["1", "1"]
     assert [row["Replicate"] for row in rows] == ["1", "1"]
     assert rows[1]["Cultivation ID"].endswith("-R1")
-    assert metadata[1]["Saved cultivation ID"].endswith("-R1")
+    assert metadata[1]["SavedCultivation"].endswith("-R1")
     assert all(preview["Matching wells"] == 1 for preview in bundle.replicate_preview)
     download_buttons = app.get("download_button")
     assert {item.label for item in download_buttons} == {
@@ -374,6 +377,7 @@ def test_repeated_export_warnings_are_collapsed_with_details_available() -> None
 
 def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloads() -> None:
     app = _export_page_app().run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
 
     _prepare_button(app).click().run()
     assert not app.exception and not app.error
@@ -396,7 +400,7 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     bundle = app.session_state["growth_tabular_export_bundle"]
     rows = list(csv.DictReader(io.StringIO(bundle.measurements.content.decode())))
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
-    assert metadata[0]["Cultivation replicate"] == "1"
+    assert metadata[0]["Replicate"] == "1"
     assert rows[0]["Cultivation ID"] == plate_one_id
     assert app.session_state["raw_load_calls"] == 3
 
@@ -423,8 +427,25 @@ def test_export_replicates_reset_for_subset_and_changed_options_hide_old_downloa
     assert not saved_bundle.replicate_preview
     saved_rows = list(csv.DictReader(io.StringIO(saved_bundle.measurements.content.decode())))
     saved_metadata = list(csv.DictReader(io.StringIO(saved_bundle.metadata.content.decode())))
-    assert saved_rows[0]["Cultivation ID"] == saved_metadata[0]["Saved cultivation ID"]
+    assert saved_rows[0]["Cultivation ID"] == saved_metadata[0]["SavedCultivation"]
     assert saved_rows[0]["Replicate"] == "1"
+
+
+def test_default_compact_metadata_switch_requires_fresh_download() -> None:
+    app = _export_page_app().run()
+    assert not app.checkbox(key="growth_export_full_metadata").value
+    _prepare_button(app).click().run()
+    compact = app.session_state["growth_tabular_export_bundle"]
+    rows = list(csv.DictReader(io.StringIO(compact.metadata.content.decode())))
+    assert "Well Metadata JSON" not in rows[0]
+    assert rows[0]["Cultivation ID"]
+    app.checkbox(key="growth_export_full_metadata").check().run()
+    assert not app.get("download_button")
+    _prepare_button(app).click().run()
+    full = app.session_state["growth_tabular_export_bundle"]
+    expanded = list(csv.DictReader(io.StringIO(full.metadata.content.decode())))
+    assert "Well Metadata JSON" in expanded[0] and len(expanded[0]) > len(rows[0])
+    assert full.measurements == compact.measurements
 
 
 def test_prepared_artifacts_from_previous_numbering_rule_are_hidden() -> None:
@@ -432,7 +453,7 @@ def test_prepared_artifacts_from_previous_numbering_rule_are_hidden() -> None:
     _prepare_button(app).click().run()
     assert not app.exception and app.get("download_button")
     signature = app.session_state["growth_tabular_export_signature"]
-    assert signature[0] == "export_run_v2"
+    assert signature[0] == "export_run_v3"
     app.session_state["growth_tabular_export_signature"] = signature[1:]
     app.run()
     assert not app.get("download_button")
@@ -443,6 +464,7 @@ def test_generation_from_empty_saved_metadata_uses_entered_team_and_chronologica
     app = _export_page_app()
     app.session_state["empty_cultivation_metadata"] = True
     app.run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
     assert not app.exception
     assert "raw_load_calls" not in app.session_state
     next(w for w in app.text_input if w.label == "Team code for this export (optional)").set_value(
@@ -460,10 +482,10 @@ def test_generation_from_empty_saved_metadata_uses_entered_team_and_chronologica
         "PN-EXP-PAO1-001-A01-R1",
         "PN-EXP-PAO1-002-A01-R1",
     ]
-    assert [row["Cultivation experiment code"] for row in metadata] == ["001", "002"]
+    assert [row["CultivationExperimentCode"] for row in metadata] == ["001", "002"]
     assert [row["Replicate"] for row in rows] == ["1", "1"]
     assert [row["LocalReplicate"] for row in metadata] == ["1", "1"]
-    assert [row["Saved cultivation ID"] for row in metadata] == ["", ""]
+    assert [row["SavedCultivation"] for row in metadata] == ["", ""]
     assert [row["Replicate"] for row in metadata] == ["1", "1"]
     assert any(
         item.value == "Cultivation IDs and replicates for this export" for item in app.subheader
@@ -528,6 +550,7 @@ def test_saved_pattern_mode_preserves_saved_pattern_choice() -> None:
     app = _export_page_app()
     app.session_state["saved_legacy_pattern"] = True
     app.run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
     next(w for w in app.selectbox if w.label == "Cultivation ID pattern").select(
         "Use saved patterns"
     ).run()
@@ -538,13 +561,14 @@ def test_saved_pattern_mode_preserves_saved_pattern_choice() -> None:
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     assert rows[0]["Cultivation ID"] == "PN-EXP-PAO1-MP96A001R1"
     assert rows[1]["Cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
-    assert metadata[1]["Saved cultivation ID"] == "PN-EXP-PAO1-MP96A002R1"
+    assert metadata[1]["SavedCultivation"] == "PN-EXP-PAO1-MP96A002R1"
 
 
 def test_replicates_number_matching_wells_within_each_run_and_reset_on_next_run() -> None:
     app = _export_page_app()
     app.session_state["multi_wells_per_run"] = True
     app.run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
     assert "raw_load_calls" not in app.session_state
     _prepare_button(app).click().run()
     assert not app.exception and not app.error
@@ -590,6 +614,7 @@ def test_concentration_matching_defaults_to_two_decimal_places_and_can_be_exact(
     app.session_state["multi_wells_per_run"] = True
     app.session_state["selected_ids"] = ("plate-0",)
     app.run()
+    app.checkbox(key="growth_export_full_metadata").check().run()
     matching = next(w for w in app.selectbox if w.label == "Concentration matching")
     assert matching.value == "2 decimal places (recommended)"
     assert "raw_load_calls" not in app.session_state

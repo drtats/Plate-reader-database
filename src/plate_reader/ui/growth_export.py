@@ -35,8 +35,8 @@ _RECOMMENDED_PATTERN = "Experiment number + well (recommended)"
 _LABORATORY_PATTERN = "Original laboratory format"
 _CUSTOM_PATTERN = "Custom pattern"
 _SAVED_PATTERNS = "Use saved patterns"
-_EXPORT_IDENTITY_VERSION = "export_run_v2"
-_REGISTRY_IDENTITY_VERSION = "plate_condition_v3"
+_EXPORT_IDENTITY_VERSION = "export_run_v3"
+_REGISTRY_IDENTITY_VERSION = "plate_condition_v4"
 _SAVED_WORKFLOW = "Saved experiment + condition IDs (recommended)"
 _LEGACY_WORKFLOW = "Legacy export patterns"
 _CONCENTRATION_OPTIONS = (
@@ -61,7 +61,7 @@ def render_growth_data_export(context: AppContext) -> None:
     st.header("Growth Data Export")
     st.markdown(
         "Export complete Growth runs in two files: one row per OD observation and a "
-        "companion cultivation metadata table linked by **Cultivation ID** / **Cultivation**. "
+        "companion cultivation metadata table linked by **Cultivation ID**. "
         "Experiment and condition IDs can be previewed and saved before export. "
         "Each well has a stable internal ID and a readable local ID; the external ID "
         "identifies its experiment, condition group, and technical replicate. "
@@ -123,6 +123,14 @@ def render_growth_data_export(context: AppContext) -> None:
         f"Selected Growth runs: {len(selected)}. "
         "Raw observations load only when the preparation button is pressed."
     )
+    compact_metadata = not st.checkbox(
+        "Include full metadata",
+        key="growth_export_full_metadata",
+        help=(
+            "Adds registry details, matching rules, original JSON and unused layout columns "
+            "to the metadata CSV."
+        ),
+    )
     workflow = st.selectbox(
         "Cultivation workflow",
         (_SAVED_WORKFLOW, _LEGACY_WORKFLOW),
@@ -137,6 +145,7 @@ def render_growth_data_export(context: AppContext) -> None:
             context,
             selected,
             {str(result.plate_id): result.experiment_name for result in results},
+            compact_metadata,
         )
         return
     _clear_registry_preview()
@@ -219,15 +228,15 @@ def render_growth_data_export(context: AppContext) -> None:
             "Matching wells receive R1, R2, … in well order within each run. Each run "
             "starts at R1; its experiment number distinguishes it from other runs. "
             "The primary CSV's Replicate column is this within-run R number; "
-            "Local replicate keeps the original Layout value. Saved IDs and metadata "
-            "remain unchanged. Saved study/group settings still separate condition groups. "
+            "full metadata includes the original Layout value in LocalReplicate. "
+            "Saved study/group settings still separate condition groups. "
             "Concentration units are normalized to u (for example, ug/mL)."
         )
         st.caption(
             "Only concentration doses use the selected matching precision: 0.185, "
             "0.1875, and 0.19 match as 0.19 at 2 decimal places. Other condition fields "
             "must still match. Original concentrations remain unchanged in the export; "
-            "Matching concentration columns show the grouping values."
+            "Full metadata includes matching concentrations."
         )
     settings = (
         ExportCultivationSettings(
@@ -240,6 +249,7 @@ def render_growth_data_export(context: AppContext) -> None:
     )
     signature = (
         _EXPORT_IDENTITY_VERSION,
+        compact_metadata,
         tuple(map(str, selected)),
         assign_replicates,
         condition_fields,
@@ -265,6 +275,7 @@ def render_growth_data_export(context: AppContext) -> None:
                     concentration_significant_figures=concentration_significant_figures,
                     concentration_decimal_places=concentration_decimal_places,
                     cultivation_settings=settings,
+                    compact_metadata=compact_metadata,
                 )
             )
         except Exception as error:
@@ -284,7 +295,10 @@ def render_growth_data_export(context: AppContext) -> None:
 
 
 def _render_saved_registry_workflow(
-    context: AppContext, selected: tuple[PlateId, ...], experiment_names: Mapping[str, str]
+    context: AppContext,
+    selected: tuple[PlateId, ...],
+    experiment_names: Mapping[str, str],
+    compact_metadata: bool,
 ) -> None:
     """Preview and explicitly save persistent IDs before exporting saved identities."""
 
@@ -325,10 +339,13 @@ def _render_saved_registry_workflow(
         help="Only condition-group doses use this precision; saved doses stay intact.",
     )
     reassign_changed_conditions = st.checkbox(
-        "Reassign condition IDs if rounding changes groups",
+        "Reassign condition IDs when groups change",
         value=False,
         key="growth_registry_reassign_changed_conditions",
-        help="Preview changed condition and R numbers; saving retains previous IDs in history.",
+        help=(
+            "Review new IDs when rounding or additional treatments split a group. "
+            "Saving retains previous IDs in history."
+        ),
     )
     extra_fields_text = st.text_input(
         "Additional condition fields (comma-separated)",
@@ -348,6 +365,7 @@ def _render_saved_registry_workflow(
         condition_fields=condition_fields,
     )
     signature = (_REGISTRY_IDENTITY_VERSION, tuple(map(str, selected)), settings)
+    download_signature = (*signature, compact_metadata)
     if (
         "growth_registry_signature" in st.session_state
         and st.session_state.growth_registry_signature != signature
@@ -355,7 +373,7 @@ def _render_saved_registry_workflow(
         _clear_registry_preview()
     if (
         "growth_tabular_export_signature" in st.session_state
-        and st.session_state.growth_tabular_export_signature != signature
+        and st.session_state.growth_tabular_export_signature != download_signature
     ):
         _clear_artifact()
     st.caption(
@@ -414,7 +432,10 @@ def _render_saved_registry_workflow(
                 try:
                     bundle = ExportGrowthTabularDataService(context.repository).execute(
                         ExportGrowthTabularData(
-                            context.actor, selected, require_saved_cultivation_ids=True
+                            context.actor,
+                            selected,
+                            require_saved_cultivation_ids=True,
+                            compact_metadata=compact_metadata,
                         )
                     )
                 except Exception as error:
@@ -425,7 +446,7 @@ def _render_saved_registry_workflow(
                 else:
                     st.session_state.growth_tabular_export_bundle = bundle
                     st.session_state.growth_tabular_export_plate_ids = tuple(map(str, selected))
-                    st.session_state.growth_tabular_export_signature = signature
+                    st.session_state.growth_tabular_export_signature = download_signature
                     st.success(f"Saved cultivation IDs and prepared {len(selected)} run(s).")
                     _render_prepared_bundle(
                         bundle, selected, legacy=False, experiment_names=experiment_names
@@ -443,7 +464,12 @@ def _render_saved_registry_workflow(
         _clear_artifact()
         try:
             bundle = ExportGrowthTabularDataService(context.repository).execute(
-                ExportGrowthTabularData(context.actor, selected, require_saved_cultivation_ids=True)
+                ExportGrowthTabularData(
+                    context.actor,
+                    selected,
+                    require_saved_cultivation_ids=True,
+                    compact_metadata=compact_metadata,
+                )
             )
         except Exception as error:
             _clear_artifact()
@@ -451,8 +477,8 @@ def _render_saved_registry_workflow(
         else:
             st.session_state.growth_tabular_export_bundle = bundle
             st.session_state.growth_tabular_export_plate_ids = tuple(map(str, selected))
-            st.session_state.growth_tabular_export_signature = signature
-    if st.session_state.get("growth_tabular_export_signature") != signature:
+            st.session_state.growth_tabular_export_signature = download_signature
+    if st.session_state.get("growth_tabular_export_signature") != download_signature:
         return
     saved = st.session_state.get("growth_tabular_export_bundle")
     if saved is not None:

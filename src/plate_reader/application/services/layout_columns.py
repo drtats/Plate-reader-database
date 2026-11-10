@@ -9,6 +9,7 @@ from typing import Protocol
 
 from plate_reader.application.contracts import Actor, AssayType, Role
 from plate_reader.application.services.authorization import require_role
+from plate_reader.domain.growth.treatments import additional_treatment_key
 
 _OPTION_TYPE_PREFIX = "layout_column:"
 
@@ -197,6 +198,8 @@ def _validated_name(assay_type: AssayType, name: str) -> str:
     if any(character in normalized for character in ("\n", "\r", "\t")):
         raise ValueError("Custom layout column name cannot contain control characters")
     reserved = _GROWTH_RESERVED_NAMES if assay_type is AssayType.GROWTH else _MIC_RESERVED_NAMES
-    if normalized.casefold() in {item.casefold() for item in reserved}:
+    if normalized.casefold() in {item.casefold() for item in reserved} or (
+        assay_type is AssayType.GROWTH and additional_treatment_key(normalized) is not None
+    ):
         raise ValueError(f"{normalized} is a reserved layout or export column name")
     return normalized

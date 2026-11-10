@@ -15,8 +15,13 @@ from decimal import (
     DecimalException,
     InvalidOperation,
 )
+from itertools import permutations
 
 from plate_reader.domain.common import DomainIssue, DomainValidationError, IssueCode
+from plate_reader.domain.growth.treatments import (
+    additional_treatment_key,
+    additional_treatment_value,
+)
 from plate_reader.domain.growth.units import normalize_growth_unit
 
 _NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
@@ -123,7 +128,14 @@ def cultivation_condition_key(
             concentration_significant_figures=concentration_significant_figures,
             concentration_decimal_places=concentration_decimal_places,
         ),
-        "extra": {name: _json_normal(custom.get(name)) for name in additional},
+        "extra": {
+            name: _json_normal(
+                additional_treatment_value(custom, key)
+                if (key := additional_treatment_key(name))
+                else custom.get(name)
+            )
+            for name in additional
+        },
     }
     if not strain or not medium:
         well_id = _text(well.get("well_id"))
@@ -248,16 +260,18 @@ def _treatments(
     normalize_units: bool,
     concentration_significant_figures: int | None,
     concentration_decimal_places: int | None,
+    slots: tuple[int, ...] = (1, 2, 3),
 ) -> list[list[str]]:
     triples: list[list[str]] = []
-    for index in range(1, 4):
-        treatment = custom.get(f"treatment_{index}")
-        concentration = custom.get(f"conc_{index}")
-        unit = custom.get(f"unit_{index}")
+    for index in slots:
         if index == 1:
             treatment = primary_condition_value(well, custom, "treatment", "treatment_1")
             concentration = primary_condition_value(well, custom, "concentration", "conc_1")
             unit = primary_condition_value(well, custom, "concentration_unit", "unit_1")
+        else:
+            treatment = additional_treatment_value(custom, f"treatment_{index}")
+            concentration = additional_treatment_value(custom, f"conc_{index}")
+            unit = additional_treatment_value(custom, f"unit_{index}")
         numeric = (
             _numeric(concentration)
             if concentration_significant_figures is None and concentration_decimal_places is None
@@ -271,6 +285,61 @@ def _treatments(
         if any(triple):
             triples.append(triple)
     return sorted(triples)
+
+
+def extends_secondary_treatments(
+    well: Mapping[str, object],
+    saved: str,
+    current: str,
+    *,
+    significant_figures: int | None,
+    decimal_places: int | None,
+) -> bool:
+    """Allow a reviewed upgrade when legacy slots omitted a drug, dose, or unit.
+
+    Fingerprints sort the treatment triples. After matching the primary exactly,
+    every prior secondary triple must match a different current slot in every
+    component that was originally populated. At most two secondary slots remain.
+    """
+    before = _json_object(saved)
+    after = _json_object(current)
+    previous = before.pop("treatments", None)
+    updated = after.pop("treatments", None)
+    if (
+        before != after
+        or not isinstance(previous, list)
+        or not isinstance(updated, list)
+        or previous == updated
+    ):
+        return False
+    custom = {
+        **_json_object(well.get("condition_custom_json")),
+        **_json_object(well.get("custom_json")),
+    }
+    primary = _treatments(
+        well,
+        custom,
+        normalize_units=True,
+        concentration_significant_figures=significant_figures,
+        concentration_decimal_places=decimal_places,
+        slots=(1,),
+    )
+    if primary:
+        if primary[0] not in previous:
+            return False
+        previous.remove(primary[0])
+        updated.remove(primary[0])
+    if len(previous) > len(updated) or any(
+        not isinstance(slot, list) or len(slot) != 3 or not any(slot) for slot in previous
+    ):
+        return False
+    return any(
+        all(
+            all(old == "" or old == new for old, new in zip(old_slot, new_slot, strict=True))
+            for old_slot, new_slot in zip(previous, candidate, strict=True)
+        )
+        for candidate in permutations(updated, len(previous))
+    )
 
 
 def normalize_cultivation_condition_fields(fields: tuple[str, ...]) -> tuple[str, ...]:

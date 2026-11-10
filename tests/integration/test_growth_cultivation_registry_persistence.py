@@ -516,12 +516,12 @@ def test_normalized_strain_ids_save_and_export_original_metadata(
     for position, replicate in (("A1", 1), ("A2", 2)):
         row = next(row for row in metadata if row["Well"] == position)
         assert row["Strain"] == original
-        assert row["Cultivation"] == f"ST-EXP-dacrB_MG_1_2-MP96A0101R{replicate}"
+        assert row["Cultivation ID"] == f"ST-EXP-dacrB_MG_1_2-MP96A0101R{replicate}"
         assert row["CultivationExperiment"] == "ST-EXP-dacrB_MG_1_2-MP96A[0101]"
-        observations = [item for item in data if item["Cultivation ID"] == row["Cultivation"]]
+        observations = [item for item in data if item["Cultivation ID"] == row["Cultivation ID"]]
         assert observations
         assert all(item["Strain"] == original for item in observations)
-        assert all(item["Cultivation ID"] == row["Cultivation"] for item in observations)
+        assert all(item["Cultivation ID"] == row["Cultivation ID"] for item in observations)
     assert repr(repository.load_plate(plate_id)) == repr(saved)
 
 
@@ -553,11 +553,11 @@ def test_saved_export_requires_commit_and_detects_new_unassigned_wells(
     metadata = list(csv.DictReader(io.StringIO(bundle.metadata.content.decode())))
     for well in ("A1", "A2"):
         registered = next(row for row in metadata if row["Well"] == well)
-        assert registered["Cultivation"]
+        assert registered["Cultivation ID"]
         assert all(
-            row["Cultivation ID"] == registered["Cultivation"]
+            row["Cultivation ID"] == registered["Cultivation ID"]
             for row in rows
-            if row["Cultivation ID"] == registered["Cultivation"]
+            if row["Cultivation ID"] == registered["Cultivation ID"]
         )
     assert repr(repository.load_plate(plate_id)) == saved
     # A formerly unspecified well becomes an eligible culture: save its assignment before export.
