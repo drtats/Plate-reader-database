@@ -563,6 +563,9 @@ def render_plate_editor(
                 height=600,
                 width="stretch",
                 hide_index=True,
+                column_order=_growth_table_order(frame, universal_custom_columns)
+                if is_growth
+                else None,
                 disabled=[
                     WELL,
                     *(["Raw label"] if "Raw label" in frame else []),
@@ -593,6 +596,22 @@ def render_plate_editor(
                 _replace_frame(state_key, revision_key, updated)
 
     return normalize_layout_frame(st.session_state[state_key])
+
+
+def _growth_table_order(frame: pd.DataFrame, shared_columns: Sequence[str]) -> tuple[str, ...]:
+    """Keep treatment doses and shared fields together, ahead of registry metadata."""
+    by_name = {str(column).casefold(): str(column) for column in frame}
+    first = (
+        WELL,
+        "Display name",
+        "Strain",
+        "Treatment",
+        "Concentration",
+        "Concentration unit",
+        *ADDITIONAL_TREATMENT_COLUMNS,
+        *(by_name[name.casefold()] for name in shared_columns if name.casefold() in by_name),
+    )
+    return tuple(dict.fromkeys((*first, *frame.columns)))
 
 
 def _render_custom_columns(  # pragma: no cover - Streamlit widget composition

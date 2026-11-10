@@ -50,6 +50,7 @@ from plate_reader.ui.option_controls import saved_option_suggestions
 from plate_reader.ui.plate_editor import (
     growth_layout_changes,
     growth_layout_frame_from_wells,
+    include_layout_columns,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -211,6 +212,51 @@ def layout(strain: str) -> tuple[dict[str, object], ...]:
         {"position": position.label, "strain": strain if position.label == "A1" else ""}
         for position in PLATE_96.positions()
     )
+
+
+def test_imported_and_registered_fields_are_available_across_growth_layouts(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    text = (ROOT / "tests/fixtures/growth/with_time.csv").read_text()
+    plates = []
+    for name in ("Checkerboard", "Single drug"):
+        text += "\n"
+        result = ImportGrowthRunService(repository).execute(
+            ImportGrowthRun(
+                EDITOR,
+                name + ".csv",
+                hashlib.sha256(text.encode()).hexdigest(),
+                GROWTH_NORMALIZATION_VERSION,
+                name,
+                name,
+                date(2026, 1, 2),
+            ),
+            text,
+        )
+        plates.append(result.plate_id)
+    legacy = {"Drug 2": "B", "conc_2": 0, "Oxygen": "low", "CultivationConditionKey": "internal"}
+    with repository.transaction():
+        repository.update_well_layout(plates[0], [{"position": "A1", "custom_json": legacy}])
+    SaveLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, "Unfilled")
+    SaveLayoutColumnService(repository).execute(EDITOR, AssayType.MIC, "MIC only")
+    catalog = ListLayoutColumnsService(repository)
+    names = catalog.growth_editor_names(VIEWER)
+    assert names == ("Oxygen", "Unfilled")
+    snapshots = [repository.load_plate(plate) for plate in plates]
+    first, second = [
+        include_layout_columns(growth_layout_frame_from_wells(snap.wells), names)
+        for snap in snapshots
+    ]
+    assert first.loc[0, ["Treatment 2", "Concentration 2", "Oxygen"]].tolist() == ["B", 0, "low"]
+    assert second["Treatment 2"].isna().all() and second["Concentration 2"].isna().all()
+    assert (second[["Oxygen", "Unfilled"]] == "").all().all()
+    assert [repository.load_plate(plate) for plate in plates] == snapshots
+
+    DeleteLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, "oxygen")
+    assert catalog.growth_editor_names(VIEWER) == ("Unfilled",)
+    assert json.loads(repository.load_plate(plates[0]).wells[0]["custom_json"]) == legacy
+    SaveLayoutColumnService(repository).execute(EDITOR, AssayType.GROWTH, "OXYGEN")
+    assert catalog.growth_editor_names(VIEWER) == ("OXYGEN", "Unfilled")
 
 
 def test_growth_additional_treatments_persist_reload_and_clear_without_changing_raw_data(

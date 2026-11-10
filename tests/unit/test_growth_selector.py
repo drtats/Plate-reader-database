@@ -56,6 +56,25 @@ def test_reference_plate_offers_present_layout_and_custom_fields() -> None:
     assert "medium" not in fields
 
 
+def test_reference_plate_shows_shared_empty_columns_and_resolves_checkerboard_aliases() -> None:
+    wells = [dict(well) for well in growth_wells()]
+    wells[0]["condition_custom_json"] = {"Drug 2": "drug B", "Concentration 2": 4}
+    wells[0]["custom_json"] = {"conc_2": 0, "oxygen": "low"}
+    wells[1]["custom_json"] = {"treatment_2": None, "Drug 2": "cleared"}
+    shared = ("Oxygen", "Drug 2", "Unused field")
+    fields = dict(reference_plate_fields(wells, shared))
+    assert fields["treatment_2"] == "Treatment 2" and fields["conc_2"] == "Concentration 2"
+    assert not {"custom:Drug 2", "custom:conc_2", "custom:oxygen"} & fields.keys()
+
+    def grid(key: str) -> pd.DataFrame:
+        return growth_selection_reference(wells, field_key=key, shared_columns=shared)
+
+    assert grid("treatment_2").loc["A", ["1", "2"]].tolist() == ["drug B", "—"]
+    assert grid("conc_2").loc["A", "1"] == "0"
+    assert grid("custom:Oxygen").loc["A", "1"] == "low"
+    assert (grid("custom:Unused field") == "—").all().all()
+
+
 def test_reference_plate_html_owns_its_horizontal_scroll() -> None:
     html = growth_selection_reference_html(
         growth_selection_reference(growth_wells(), field_key="display_name")

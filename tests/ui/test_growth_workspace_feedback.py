@@ -39,7 +39,9 @@ def test_real_growth_selector_component_renders(monkeypatch: pytest.MonkeyPatch)
         "Reference plate",
     ]
     reference_field = next(item for item in app.selectbox if item.label == "Show in 96-well layout")
-    assert {"Display name", "Strain", "Concentration"}.issubset(reference_field.options)
+    assert {"Display name", "Strain", "Concentration", "Treatment 2", "Unfilled (custom)"}.issubset(
+        reference_field.options
+    )
     reference_field.set_value("Strain").run()
     assert any("strain-a" in item.value for item in app.markdown)
     assert _button_labels(app).issuperset({"Select all", "Clear all", "Invert"})

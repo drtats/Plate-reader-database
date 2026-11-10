@@ -96,6 +96,8 @@ _MIC_RESERVED_NAMES = {
 
 
 class LayoutColumnReadRepository(Protocol):
+    def historical_growth_layout_names(self) -> tuple[str, ...]: ...
+
     def user_by_email(self, email: str) -> Mapping[str, object] | None: ...
 
     def list_saved_options(
@@ -137,6 +139,18 @@ class ListLayoutColumnsService:
             for row in self.repository.list_saved_options(_option_type(assay_type))
         )
 
+    def growth_editor_names(self, actor: Actor) -> tuple[str, ...]:
+        """Combine registered names with user fields from older or imported layouts."""
+        declared = self.execute(actor, AssayType.GROWTH)
+        names = {column.name.casefold(): column.name for column in declared}
+        for name in self.repository.historical_growth_layout_names():
+            try:
+                name = _validated_name(AssayType.GROWTH, name)
+            except ValueError:
+                continue  # Fixed editor/export fields are already represented.
+            names.setdefault(name.casefold(), name)
+        return tuple(names[key] for key in sorted(names))
+
 
 class SaveLayoutColumnService:
     def __init__(self, repository: LayoutColumnRepository) -> None:
@@ -174,7 +188,16 @@ class DeleteLayoutColumnService:
         actor_id = require_role(self.repository, actor, {Role.EDITOR, Role.ADMIN})
         normalized = _validated_name(assay_type, name)
         with self.repository.transaction():
-            self.repository.delete_saved_option(_option_type(assay_type), normalized)
+            # Imported fields may have values but no explicit definition to delete.
+            if assay_type is not AssayType.GROWTH or any(
+                str(row["value"]).casefold() == normalized.casefold()
+                for row in self.repository.list_saved_options(_option_type(assay_type))
+            ):
+                self.repository.delete_saved_option(_option_type(assay_type), normalized)
+            elif normalized.casefold() not in {
+                name.casefold() for name in self.repository.historical_growth_layout_names()
+            }:
+                raise LookupError(f"Layout column not found: {normalized}")
             self.repository.append_provenance(
                 {
                     "actor_id": actor_id,

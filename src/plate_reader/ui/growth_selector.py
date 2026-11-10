@@ -19,6 +19,12 @@ from plate_reader.application.services import (
 )
 from plate_reader.arrow_runtime import configure_arrow_memory_pool
 from plate_reader.domain.common.plate import PLATE_96, WellPosition
+from plate_reader.domain.growth.cultivation_conditions import condition_json_object
+from plate_reader.domain.growth.treatments import (
+    ADDITIONAL_TREATMENT_COLUMNS,
+    additional_treatment_key,
+    additional_treatment_value,
+)
 
 _OPERATION_LABELS = {
     GrowthSelectionOperation.REPLACE: "Replace selection",
@@ -51,6 +57,7 @@ def render_growth_well_selector[FormResultT](
     *,
     state_key: str,
     form_key: str,
+    shared_columns: Sequence[str] = (),
     render_form_controls: Callable[[tuple[str, ...]], FormResultT],
     selection_submitted: Callable[[FormResultT], bool],
 ) -> tuple[tuple[str, ...], FormResultT]:  # pragma: no cover - Streamlit composition
@@ -109,7 +116,7 @@ def render_growth_well_selector[FormResultT](
                 combine_growth_selection(selected, matches, shortcut_operation),
             )
 
-    reference_fields = reference_plate_fields(wells)
+    reference_fields = reference_plate_fields(wells, shared_columns)
     reference_keys_by_label = {label: key for key, label in reference_fields}
     reference_key = f"{state_key}_reference_field"
     default_label = next(
@@ -134,6 +141,7 @@ def render_growth_well_selector[FormResultT](
                 growth_selection_reference(
                     wells,
                     field_key=reference_keys_by_label[reference_label],
+                    shared_columns=shared_columns,
                 )
             ),
             unsafe_allow_html=True,
@@ -300,6 +308,7 @@ def growth_selection_from_list(frame: pd.DataFrame) -> tuple[str, ...]:
 
 def reference_plate_fields(
     wells: Sequence[Mapping[str, object]],
+    shared_columns: Sequence[str] = (),
 ) -> tuple[tuple[str, str], ...]:
     """Return meaningful layout fields that can label a reference plate."""
 
@@ -311,11 +320,15 @@ def reference_plate_fields(
         if key == "position"
         or any(_reference_text(_reference_value(well, key)) != "—" for well in ordered_wells)
     ]
-    available.extend(
-        (field.key, field.label)
-        for field in growth_selection_fields(wells)
-        if field.key.startswith("custom:")
-    )
+    available.extend((key, label) for label, key in ADDITIONAL_TREATMENT_COLUMNS.items())
+    names = {
+        name.casefold(): name for name in shared_columns if additional_treatment_key(name) is None
+    }
+    for well in ordered_wells:
+        for name, value in condition_json_object(well.get("custom_json")).items():
+            if additional_treatment_key(name) is None and _reference_text(value) != "—":
+                names.setdefault(name.casefold(), name)
+    available.extend((f"custom:{names[k]}", f"{names[k]} (custom)") for k in sorted(names))
     return tuple(available)
 
 
@@ -323,11 +336,12 @@ def growth_selection_reference(
     wells: Sequence[Mapping[str, object]],
     *,
     field_key: str = "display_name",
+    shared_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Build an 8x12 reference plate labeled by one layout field."""
 
     by_position = _wells_by_position(wells)
-    available_keys = {key for key, _label in reference_plate_fields(wells)}
+    available_keys = {key for key, _label in reference_plate_fields(wells, shared_columns)}
     if field_key not in available_keys:
         raise ValueError(f"Unknown or empty Growth reference field: {field_key}")
     return pd.DataFrame(
@@ -440,24 +454,19 @@ def _reference_value(
 ) -> object:
     if field_key == "position":
         return position or well.get("position")
+    if field_key in ADDITIONAL_TREATMENT_COLUMNS.values():
+        custom = {
+            **condition_json_object(well.get("condition_custom_json")),
+            **condition_json_object(well.get("custom_json")),
+        }
+        return additional_treatment_value(custom, field_key)
     if not field_key.startswith("custom:"):
         return well.get(field_key)
-    custom = well.get("custom_json")
-    if custom is None or custom == "":
-        return None
-    if isinstance(custom, Mapping):
-        values = custom
-    elif isinstance(custom, str):
-        try:
-            parsed = json.loads(custom)
-        except json.JSONDecodeError as error:
-            raise ValueError("Growth custom metadata must be valid JSON") from error
-        if not isinstance(parsed, dict):
-            raise ValueError("Growth custom metadata must be a JSON object")
-        values = parsed
-    else:
-        raise ValueError("Growth custom metadata must be a JSON object")
-    return values.get(field_key.removeprefix("custom:"))
+    name = field_key.removeprefix("custom:")
+    values = condition_json_object(well.get("custom_json"))
+    if name in values:
+        return values[name]
+    return next((v for k, v in values.items() if k.casefold() == name.casefold()), None)
 
 
 def _reference_text(value: object) -> str:

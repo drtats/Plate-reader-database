@@ -48,6 +48,7 @@ from plate_reader.application.services import (
     GrowthPlotLabelOptions,
     GrowthRunView,
     ImportGrowthRunService,
+    ListLayoutColumnsService,
     LoadGrowthRunService,
     PortableArtifact,
     PrepareGrowthPlotDataService,
@@ -496,7 +497,7 @@ def wizard_layout(context: AppContext) -> None:
         if label_text
         else {}
     )
-    custom_columns = layout_custom_column_names(context, AssayType.GROWTH)
+    custom_columns = ListLayoutColumnsService(context.repository).growth_editor_names(context.actor)
     frame = render_plate_editor(
         growth_layout_frame(labels),
         state_key="growth_layout_frame",
@@ -644,10 +645,11 @@ def render_workspace(context: AppContext, migrations: Path) -> None:
             _invalidate_growth_discovery()
             st.session_state.commit_message = "Cultivation metadata and IDs saved."
             st.rerun()
+    custom_columns = ListLayoutColumnsService(context.repository).growth_editor_names(context.actor)
     with tabs[2]:
-        render_layout_form(context, plate_id, view)
+        render_layout_form(context, plate_id, view, custom_columns)
     with tabs[3]:
-        render_plotting(context, plate_id, view)
+        render_plotting(context, plate_id, view, custom_columns)
     with tabs[4]:
         render_growth_background_history(
             view.snapshot.revisions,
@@ -912,7 +914,9 @@ def render_metadata_form(
             render_exception(error)
 
 
-def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
+def render_layout_form(
+    context: AppContext, plate_id: PlateId, view: GrowthRunView, custom_columns: tuple[str, ...]
+) -> None:
     st.warning("Well changes are staged until Save full layout is pressed.")
     state_key = f"workspace_growth_layout_{plate_id}"
     source_key = f"{state_key}_source_updated_at"
@@ -921,7 +925,6 @@ def render_layout_form(context: AppContext, plate_id: PlateId, view: GrowthRunVi
         st.session_state[state_key] = growth_layout_frame_from_wells(view.snapshot.wells)
         st.session_state[f"{state_key}_revision"] = 0
         st.session_state[source_key] = source_updated_at
-    custom_columns = layout_custom_column_names(context, AssayType.GROWTH)
     frame = render_plate_editor(
         growth_layout_frame_from_wells(view.snapshot.wells),
         state_key=state_key,
@@ -1122,7 +1125,9 @@ def _render_growth_plot_form(
     )
 
 
-def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView) -> None:
+def render_plotting(
+    context: AppContext, plate_id: PlateId, view: GrowthRunView, custom_columns: tuple[str, ...]
+) -> None:
     color_choices: dict[str, GrowthPlotColorOptions] = {
         "Rainbow · plate order": GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
         "Rainbow · plotted-series order": GrowthPlotColorOptions(
@@ -1146,6 +1151,7 @@ def render_plotting(context: AppContext, plate_id: PlateId, view: GrowthRunView)
         (),
         state_key=selection_state_key,
         form_key=f"growth-plot-options-{plate_id}",
+        shared_columns=custom_columns,
         render_form_controls=lambda form_selected: _render_growth_plot_form(
             form_selected,
             view=view,

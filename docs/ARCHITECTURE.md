@@ -330,6 +330,12 @@ acceptable; its configured role applies to every allowed viewer.
 
 The UI follows the experimental workflow instead of exposing storage mechanics.
 
+The Growth layout editor and plotting reference plate share one read-only catalog
+of registered names and user fields found in active Growth wells. Imported fields
+need no backfill. Explicit removals recorded in provenance suppress rediscovery,
+without erasing historical values. Numbered treatments use their canonical labels
+even on empty plates. Only field names cross plate boundaries.
+
 ### Run Library
 
 `RunSummary.growth_readiness` adds metadata-only availability for background

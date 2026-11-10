@@ -38,6 +38,13 @@ other axis of the checkerboard. Enter a numeric zero for a zero-dose control.
 The same fields are available for a third treatment. Use the grid or the full
 well table to assign doses, then choose **Save full layout** on an existing run.
 
+Add a field once under **Layout → Manage custom columns → Add column**. It is
+then available on existing and new Growth experiments in **Plate parameter**,
+the **Full well table**, and **Plotting → Show in 96-well layout**. Older custom
+fields stored in imported well layouts also appear. Only the column name is
+shared: other wells stay blank until you enter their own values. **Treatment 2**
+and its dose and unit are built in; you do not need to add them as custom columns.
+
 Older numbered custom columns such as `Drug 2`, `Treatment 2`, or `treatment_2`
 are read into the corresponding slot. Other custom names appear under their
 original headings. To include an arbitrarily named field in cultivation

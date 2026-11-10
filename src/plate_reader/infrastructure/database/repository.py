@@ -711,6 +711,30 @@ class SqlPlateReaderRepository:
             raise RecordNotFoundError(f"Template not found: {template_id}")
         raise ConcurrencyConflictError(f"Template changed since {expected_updated_at}")
 
+    def historical_growth_layout_names(self) -> tuple[str, ...]:
+        """Read only field names, honoring removals even if old wells still hold values."""
+        rows = self.connection.execute(
+            "SELECT DISTINCT j.key, 0 FROM plates p JOIN wells w ON w.plate_id = p.plate_id "
+            "JOIN json_each(CASE WHEN json_valid(w.custom_json) THEN w.custom_json "
+            "ELSE '{}' END) j WHERE p.assay_type = 'growth' AND p.deleted_at IS NULL "
+            "AND typeof(j.key) = 'text' "
+            "UNION ALL SELECT substr(entity_id, 8), 1 FROM provenance_events "
+            "WHERE entity_type = 'layout_column' AND event_type = 'layout_column_deleted' "
+            "AND entity_id LIKE 'growth:%'"
+        ).fetchall()
+        removed = {str(name).strip().casefold() for name, deleted in rows if deleted}
+        return tuple(
+            sorted(
+                {
+                    str(name).strip()
+                    for name, deleted in rows
+                    if not deleted
+                    and str(name).strip().casefold() not in removed
+                    and not _library_bookkeeping_field(str(name))
+                },
+            )
+        )
+
     def list_saved_options(self, option_type: str | None = None) -> tuple[dict[str, object], ...]:
         sql = "SELECT option_type, value, created_by, created_at FROM saved_options"
         parameters: tuple[object, ...] = ()
