@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from plate_reader.application.services.growth_plot_filename import growth_plot_filename_stem
 from plate_reader.application.services.growth_plot_styles import (
     GrowthPlotStyles,
     GrowthSeriesStyle,
@@ -48,7 +49,7 @@ def export_growth_plot_pdf(
     if not plot_data.points:
         raise ValueError("At least one Growth plot point is required for PDF export")
     commands = _pdf_plot_commands(plot_data, options, styles)
-    filename = f"{_safe_filename(filename_source) or 'growth-plot'}.pdf"
+    filename = f"{growth_plot_filename_stem(filename_source) or 'growth-plot'}.pdf"
     return GrowthPdfArtifact(filename, _assemble_pdf(commands))
 
 
@@ -216,13 +217,6 @@ def _pdf_text(x: float, y: float, value: str, size: int) -> str:
         .replace(")", "\\)")
     )
     return f"BT /F1 {size} Tf {x:.2f} {y:.2f} Td ({safe}) Tj ET"
-
-
-def _safe_filename(value: str) -> str:
-    normalized = "-".join(value.strip().lower().split())
-    return "".join(
-        character for character in normalized if character.isalnum() or character in "-_"
-    )
 
 
 def _symlog(value: float, *, linear_threshold: float = 0.01) -> float:

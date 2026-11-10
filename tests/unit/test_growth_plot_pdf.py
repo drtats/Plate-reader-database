@@ -29,10 +29,10 @@ def test_growth_pdf_is_valid_vector_artifact_with_safe_name_and_escaped_title() 
     artifact = export_growth_plot_pdf(
         data,
         GrowthPdfOptions(title=r"Growth (A) \\ test", x_max=60, y_min=-0.1, y_max=1.0),
-        "My Growth: 24 h / test",
+        "My Growth: 6.2ug / test",
     )
 
-    assert artifact.filename == "my-growth-24-h--test.pdf"
+    assert artifact.filename == "my-growth-6_2ug--test.pdf"
     assert artifact.content.startswith(b"%PDF-1.4")
     assert artifact.content.endswith(b"%%EOF\n")
     assert b"/Type /Page" in artifact.content

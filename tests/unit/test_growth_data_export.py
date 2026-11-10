@@ -78,11 +78,11 @@ def test_selected_plot_csv_preserves_points_metadata_and_excel_quoting() -> None
         plotted,
         wells,
         GrowthDataExportContext("plate-1", "Experiment, one", "Plate 1", "revision-7"),
-        "My Plot / 24 h",
+        "My Plot / 6.2ug",
     )
     rows = list(csv.DictReader(io.StringIO(artifact.content.decode("utf-8-sig"), newline="")))
 
-    assert artifact.filename == "my-plot--24-h-data.csv"
+    assert artifact.filename == "my-plot--6_2ug-data.csv"
     assert artifact.content.startswith(b"\xef\xbb\xbf")
     assert artifact.row_count == len(plotted.points) == 2
     assert {row["Well"] for row in rows} == {"A2"}
@@ -148,10 +148,10 @@ def test_wide_plot_csv_has_time_then_one_column_per_visible_series() -> None:
         GrowthPlotColorOptions(GrowthPlotColorMode.RAINBOW_PLATE_ORDER),
     )
 
-    artifact = export_growth_plot_wide_csv(plotted, styles, "My Growth Plot")
+    artifact = export_growth_plot_wide_csv(plotted, styles, "My Growth Plot 6.2ug")
     rows = list(csv.reader(io.StringIO(artifact.content.decode("utf-8-sig"))))
 
-    assert artifact.filename == "my-growth-plot-wide.csv"
+    assert artifact.filename == "my-growth-plot-6_2ug-wide.csv"
     assert artifact.row_count == 2
     assert rows == [
         ["Time (minutes)", "control", "sample"],

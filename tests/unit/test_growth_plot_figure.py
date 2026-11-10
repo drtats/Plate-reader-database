@@ -129,12 +129,12 @@ def test_growth_figure_uses_shared_styles_and_keeps_channels_separate() -> None:
 
 
 def test_plot_download_uses_safe_stable_png_filename() -> None:
-    config = plot_download_config("My Growth: 24 h / test", "plate-id")
+    config = plot_download_config("My Growth: 6.2ug / test", "plate-id")
 
     assert config["displaylogo"] is False
     assert config["toImageButtonOptions"] == {
         "format": "png",
-        "filename": "my-growth-24-h--test",
+        "filename": "my-growth-6_2ug--test",
         "width": None,
         "height": None,
         "scale": 2,
@@ -163,9 +163,9 @@ def test_plotly_pdf_export_uses_the_existing_figure(
 
     monkeypatch.setattr(go.Figure, "to_image", fake_to_image)
 
-    artifact = export_growth_plot_pdf(figure, "Growth: plot / A")
+    artifact = export_growth_plot_pdf(figure, "Growth: plot / 6.2ug")
 
-    assert artifact.filename == "growth-plot--a.pdf"
+    assert artifact.filename == "growth-plot--6_2ug.pdf"
     assert artifact.content == b"%PDF-1.4 plotly"
     assert captured["format"] == "pdf"
     assert captured["width"] == 1_000

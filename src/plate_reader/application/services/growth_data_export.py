@@ -8,6 +8,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from plate_reader.application.services.growth_plot_filename import growth_plot_filename_stem
 from plate_reader.application.services.growth_plot_styles import GrowthPlotStyles
 from plate_reader.application.services.growth_plotting import GrowthPlotData
 
@@ -103,7 +104,9 @@ def export_growth_plot_data_csv(
                 point.correction_applied,
             )
         )
-    safe_name = _safe_filename(filename_source) or _safe_filename(f"growth-plot-{context.plate_id}")
+    safe_name = growth_plot_filename_stem(filename_source) or growth_plot_filename_stem(
+        f"growth-plot-{context.plate_id}"
+    )
     return GrowthDataCsvArtifact(
         f"{safe_name}-data.csv",
         stream.getvalue().encode("utf-8-sig"),
@@ -138,7 +141,7 @@ def export_growth_plot_wide_csv(
     for time_key in sorted(values):
         row = values[time_key]
         writer.writerow((time_key[2], *(row.get(series_key) for series_key in series_keys)))
-    safe_name = _safe_filename(filename_source) or "growth-plot"
+    safe_name = growth_plot_filename_stem(filename_source) or "growth-plot"
     return GrowthDataCsvArtifact(
         f"{safe_name}-wide.csv",
         stream.getvalue().encode("utf-8-sig"),
@@ -188,10 +191,3 @@ def _display_name(well: Mapping[str, object], position: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return position
-
-
-def _safe_filename(value: str) -> str:
-    normalized = "-".join(value.strip().lower().split())
-    return "".join(
-        character for character in normalized if character.isalnum() or character in "-_"
-    )

@@ -128,6 +128,9 @@ reference tables, 96-well grids, and selection lists.
   column is one visible curve named like the legend. Use for Prism, Excel, R,
   Python, or recreating the displayed plot.
 
+In plot download filenames (PNG, PDF, and CSV), periods in the plot title become
+underscores: `6.2ug` becomes `6_2ug`. The title and data keep their original values.
+
 Both CSVs contain the selected prepared data. The long export preserves physical
 identity; the wide export prioritizes readable curve names.
 

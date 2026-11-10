@@ -20,6 +20,7 @@ from plate_reader.application.services import (
     GrowthPlotStyles,
     default_growth_plot_styles,
 )
+from plate_reader.application.services.growth_plot_filename import growth_plot_filename_stem
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,15 +231,11 @@ def plot_download_config(
     height: int | None = None,
 ) -> dict[str, object]:
     filename_source = title.strip() or f"growth-plot-{plate_id}"
-    filename = "-".join(filename_source.lower().split())
-    safe_filename = "".join(
-        character for character in filename if character.isalnum() or character in "-_"
-    )
     return {
         "displaylogo": False,
         "toImageButtonOptions": {
             "format": "png",
-            "filename": safe_filename or "growth-plot",
+            "filename": growth_plot_filename_stem(filename_source) or "growth-plot",
             "width": width,
             "height": height,
             "scale": 2,
@@ -254,18 +251,10 @@ def export_growth_plot_pdf(figure: go.Figure, filename_source: str) -> GrowthPdf
     typography and margins so browser-sized text remains readable on a page.
     """
 
-    filename = _safe_export_filename(filename_source)
+    filename = growth_plot_filename_stem(filename_source) or "growth-plot"
     pdf_figure = _print_sized_growth_figure(figure)
     content = pdf_figure.to_image(format="pdf", width=1_000, height=650)
     return GrowthPdfArtifact(filename=f"{filename}.pdf", content=content)
-
-
-def _safe_export_filename(filename_source: str) -> str:
-    filename = "-".join(filename_source.strip().lower().split())
-    safe_filename = "".join(
-        character for character in filename if character.isalnum() or character in "-_"
-    )
-    return safe_filename or "growth-plot"
 
 
 def _print_sized_growth_figure(figure: go.Figure) -> go.Figure:
