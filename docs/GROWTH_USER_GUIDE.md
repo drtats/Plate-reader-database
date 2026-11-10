@@ -43,6 +43,13 @@ are read into the corresponding slot. Other custom names appear under their
 original headings. To include an arbitrarily named field in cultivation
 grouping, list its name in **Additional condition fields** when assigning IDs.
 
+You can export single-drug and checkerboard runs together. If a saved cultivation
+ID predates the second drug, **Prepare selected runs** keeps the ID and exports
+both doses. A **Cultivation grouping note** flags the affected wells in both CSVs.
+For those wells, group measurements by the drugs, concentrations and units;
+the saved replicate number describes the original grouping. Preview and save new
+IDs only if you want the IDs themselves to reflect the checkerboard conditions.
+
 ## Browse the Run Library
 
 Readiness columns show background subtraction status and calculation time, background

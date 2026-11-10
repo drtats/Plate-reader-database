@@ -43,7 +43,7 @@ from plate_reader.domain.growth.cultivation_conditions import (
 )
 from plate_reader.domain.growth.cultivation_registry import (
     SCHEME,
-    saved_plate_condition_identity,
+    read_saved_cultivation_for_export,
 )
 from plate_reader.domain.growth.treatments import (
     ADDITIONAL_TREATMENT_COLUMNS,
@@ -51,6 +51,9 @@ from plate_reader.domain.growth.treatments import (
     additional_treatment_value,
 )
 from plate_reader.domain.growth.units import normalize_growth_label, normalize_growth_unit
+
+_GROUPING_NOTE = "Cultivation grouping note"
+_HISTORICAL_GROUPING = "Saved ID and replicate omit additional treatment details"
 
 GROWTH_REGISTRY_MEASUREMENT_HEADERS = (
     "Cultivation ID",
@@ -501,9 +504,13 @@ def export_growth_tabular_data(
             )
         )
     exported_custom_columns = _custom_column_names(views, custom_columns)
+    grouping_note = _GROUPING_NOTE
+    custom_names = {name.casefold() for name in exported_custom_columns}
+    while grouping_note.casefold() in custom_names:
+        grouping_note += " (registry)"
     metadata_fields = tuple(
         tuple(
-            _well_export_fields(context, well, exported_custom_columns)
+            _well_export_fields(context, well, exported_custom_columns, grouping_note)
             for well in context.view.snapshot.wells
         )
         for context in contexts
@@ -524,10 +531,12 @@ def export_growth_tabular_data(
         ),
     )
     active_groups = tuple(group for group in treatment_groups if populated.intersection(group))
+    grouping_headers = (grouping_note,) if grouping_note in populated else ()
     measurement_headers = (
         *GROWTH_MEASUREMENT_HEADERS,
         *(name for group in active_groups if group != treatment_groups[0] for name in group),
         *populated_custom_columns,
+        *grouping_headers,
     )
     if compact_metadata:
         optional = tuple(
@@ -552,6 +561,7 @@ def export_growth_tabular_data(
         )
     else:
         metadata_headers = (*GROWTH_METADATA_HEADERS, *exported_custom_columns)
+    metadata_headers = (*metadata_headers, *grouping_headers)
     single_run_name = _single_run_filename_stem(contexts)
 
     measurement_stream = io.StringIO(newline="")
@@ -567,6 +577,13 @@ def export_growth_tabular_data(
     seen_cultivations: set[str] = set()
     for context, fields in zip(contexts, metadata_fields, strict=True):
         warnings.extend(_run_warnings(context))
+        historical = sum(bool(row.get(grouping_note)) for row in fields)
+        if historical:
+            warnings.append(
+                f"{_run_label(context)}: {historical} wells have saved IDs and replicates "
+                "that omit additional treatment details. Both CSVs include the current doses. "
+                "Group these wells by their treatment names and doses for analysis."
+            )
         missing_id_positions: list[str] = []
         for well, values in zip(context.view.snapshot.wells, fields, strict=True):
             cultivation = str(values["Cultivation ID"])
@@ -613,7 +630,11 @@ def export_growth_tabular_data(
 def _persistent_identity(context: _RunContext, well: Mapping[str, object]) -> dict[str, object]:
     """Saved plate/condition assignments remain authoritative in every export mode."""
 
-    identity = dict(saved_plate_condition_identity(well, context.view.snapshot.metadata))
+    identity, added_treatments = read_saved_cultivation_for_export(
+        well, context.view.snapshot.metadata
+    )
+    if added_treatments:
+        identity[_GROUPING_NOTE] = _HISTORICAL_GROUPING
     identity["CultivationExperimentNumber"] = identity["CultivationPlateNumber"]
     position = str(well["position"])
     identity["Local_Cultivation_ID"] = (
@@ -1149,7 +1170,10 @@ def _run_metadata_row(context: _RunContext) -> tuple[object, ...]:
 
 
 def _well_export_fields(
-    context: _RunContext, well: Mapping[str, object], custom_columns: Sequence[str]
+    context: _RunContext,
+    well: Mapping[str, object],
+    custom_columns: Sequence[str],
+    grouping_note: str,
 ) -> dict[str, object]:
     """Share fixed per-well values between the compact observations and metadata."""
     custom = _well_custom(well)
@@ -1157,7 +1181,10 @@ def _well_export_fields(
     conditions = _separate_conditions(well)
     units = (conditions[2], conditions[5], conditions[8], well.get("inoculum_unit"))
     registry = _cultivation_metadata(context, well)
+    note = registry.pop(_GROUPING_NOTE, None)
     values = {**registry, "Cultivation ID": registry["Cultivation"]}
+    if note:
+        values[grouping_note] = note
     values.update((name, _custom_value(custom, name)) for name in custom_columns)
     values.update(
         zip(

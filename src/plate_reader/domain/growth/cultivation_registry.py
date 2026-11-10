@@ -122,7 +122,7 @@ def plan_plate_condition_cultivations(
                     active_other_ids[old_id] = well_id
                 continue
             identity, added_treatments = _saved_identity(
-                row, row, validate_current=plate_id in selected, preview=True
+                row, row, validate_current=plate_id in selected
             )
             if added_treatments:
                 added_treatment_plates.add(plate_id)
@@ -523,8 +523,21 @@ def saved_plate_condition_identity(
 ) -> dict[str, object]:
     """Validate the saved ID and fingerprint against the current physical well."""
 
-    identity, _ = _saved_identity(well, metadata, validate_current=True)
+    identity, added_treatments = read_saved_cultivation_for_export(well, metadata)
+    if added_treatments:
+        raise _error("Additional treatments are absent from the saved cultivation condition")
     return identity
+
+
+def read_saved_cultivation_for_export(
+    well: Mapping[str, object], metadata: Mapping[str, object]
+) -> tuple[dict[str, object], bool]:
+    """Return the saved identity and whether it omits current secondary treatment details.
+
+    Added details can be reported alongside a historical ID. Changes to any
+    previously recorded condition still invalidate that ID.
+    """
+    return _saved_identity(well, metadata, validate_current=True)
 
 
 def _saved_identity(
@@ -532,7 +545,6 @@ def _saved_identity(
     metadata: Mapping[str, object],
     *,
     validate_current: bool,
-    preview: bool = False,
 ) -> tuple[dict[str, object], bool]:
     """Reservation reads validate components even when an inactive well was edited."""
 
@@ -609,18 +621,13 @@ def _saved_identity(
         )
         if current_key != key:
             # A legacy fingerprint may describe just the primary agent. Permit
-            # the preview/save workflow to include a newly recognized slot only
+            # a newly recognized slot alongside that identity only
             # if all previously recorded conditions still match.
             added_treatments = extends_secondary_treatments(
                 well, key, current_key, significant_figures=significant, decimal_places=decimal
             )
             if not added_treatments:
                 raise _error("Saved cultivation condition fingerprint changed")
-            if not preview:
-                raise _error(
-                    "Additional treatments change the saved cultivation condition. "
-                    "Preview and save cultivation IDs before exporting."
-                )
     if validate_current and registry.get("scheme") == SCHEME:
         shared = {
             "CultivationPlateNumber": number,

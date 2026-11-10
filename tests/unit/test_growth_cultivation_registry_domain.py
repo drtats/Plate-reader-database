@@ -493,14 +493,14 @@ def test_checkerboard_aliases_and_zero_are_in_condition_identity() -> None:
         assert len(json.loads(str(assignment["CultivationConditionKey"]))["treatments"]) == 2
 
 
-def test_previously_unrecognized_drug_requires_preview_before_export() -> None:
+def test_previously_unrecognized_drug_requires_review_to_change_saved_groups() -> None:
     rows = [_row("p1", "A1"), _row("p1", "A2")]
     (old,) = _plan(rows, "p1")
     _persist(rows, (old,))
     for row in rows:
         custom = json.loads(str(row["custom_json"]))
         row["custom_json"] = json.dumps({**custom, "2nd drug": "B", "Concentration 2": 0})
-    with pytest.raises(DomainValidationError, match="Preview and save"):
+    with pytest.raises(DomainValidationError, match="absent from the saved"):
         saved_plate_condition_identity(rows[0], rows[0])
     (unchanged_ids,) = _plan(rows, "p1")
     assert [a["Cultivation"] for a in unchanged_ids.assignments] == [

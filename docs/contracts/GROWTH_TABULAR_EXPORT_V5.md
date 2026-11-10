@@ -61,7 +61,12 @@ for auditing.
 Numbered fields such as `Treatment 2`, `Drug 2`, `2nd drug`, and `treatment_2`
 identify the same slot. Numbered concentration and unit fields follow the same
 convention. The condition fingerprint includes each active drug, dose and unit.
-An older saved fingerprint may omit a newly recognized treatment. Preview and
+An older saved fingerprint may omit details of a newly recognized treatment.
+If all previously recorded conditions still match, export keeps the saved ID and
+replicate and reports the current treatment values. Both CSVs add a
+`Cultivation grouping note` column only when the selection includes such wells;
+unaffected rows have an empty note. This works for single and mixed selections.
+Changes to previously recorded conditions still fail validation. Preview and
 save can update it when the prior conditions still match. If the additional dose
 splits an assigned group, the UI requires a reviewed reassignment and keeps
 previous external IDs in history. Export preparation performs no migration.

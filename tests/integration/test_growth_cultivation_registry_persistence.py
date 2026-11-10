@@ -569,6 +569,93 @@ def test_saved_export_requires_commit_and_detects_new_unassigned_wells(
         exporter.execute(command)
 
 
+def test_checkerboard_exports_current_doses_with_historical_ids_alone_and_mixed(
+    repository: SqlPlateReaderRepository,
+) -> None:
+    import csv
+    import io
+
+    from plate_reader.application.services.growth_tabular_export import (
+        ExportGrowthTabularData,
+        ExportGrowthTabularDataService,
+    )
+
+    checkerboard = _import_plate(repository)
+    single = _import_plate(repository, "Single drug")
+    plates = (checkerboard, single)
+    preview = PreviewGrowthCultivationRegistryService(repository).execute(EDITOR, plates, SETTINGS)
+    SaveGrowthCultivationRegistryService(repository).execute(EDITOR, preview)
+    expected = {}
+    with repository.transaction():
+        for position, dose in (("A1", 0), ("A2", 4)):
+            custom = _well_custom(repository, checkerboard, position)
+            expected[custom["Cultivation"]] = (str(dose), str(custom["CultivationReplicate"]))
+            repository.update_well_layout(
+                checkerboard,
+                [
+                    {
+                        "position": position,
+                        "custom_json": {
+                            **custom,
+                            "2nd drug": "B",
+                            "Concentration 2": dose,
+                            "unit_2": "uM",
+                        },
+                    }
+                ],
+            )
+        # A pre-existing custom column must survive even when its name matches our note.
+        single_well = _well_custom(repository, single, "A1")
+        repository.update_well_layout(
+            single,
+            [
+                {
+                    "position": "A1",
+                    "custom_json": {**single_well, "Cultivation grouping note": "manual"},
+                }
+            ],
+        )
+    before = [_registry_state(repository, plate) for plate in plates]
+    exporter = ExportGrowthTabularDataService(repository)
+    for selection, compact in (((checkerboard,), True), (plates, True), (plates, False)):
+        bundle = exporter.execute(
+            ExportGrowthTabularData(
+                VIEWER,
+                selection,
+                compact_metadata=compact,
+                require_saved_cultivation_ids=True,
+            )
+        )
+        assert sum("2 wells have saved IDs" in warning for warning in bundle.warnings) == 1
+        for artifact in (bundle.metadata, bundle.measurements):
+            rows = list(csv.DictReader(io.StringIO(artifact.content.decode())))
+            note = "Cultivation grouping note"
+            if single in selection:
+                assert {
+                    row[note] for row in rows if row["Cultivation ID"] == single_well["Cultivation"]
+                } == {"manual"}
+                note += " (registry)"
+            assert {r["Cultivation ID"] for r in rows} >= expected.keys()
+            for row in rows:
+                if row["Cultivation ID"] in expected:
+                    dose, replicate = expected[row["Cultivation ID"]]
+                    assert (row["Treatment 2"], row["Concentration 2"]) == ("B", dose)
+                    assert row["Concentration unit 2"]
+                    assert row[note]
+                    if artifact is bundle.metadata:
+                        assert row["Replicate"] == replicate
+                else:
+                    assert row[note] == row["Treatment 2"] == ""
+    assert before == [_registry_state(repository, plate) for plate in plates]
+
+    with repository.transaction():
+        repository.update_well_layout(checkerboard, [{"position": "A1", "medium": "new medium"}])
+    with pytest.raises(DomainValidationError, match="fingerprint changed"):
+        exporter.execute(
+            ExportGrowthTabularData(VIEWER, plates, require_saved_cultivation_ids=True)
+        )
+
+
 def test_explicit_decimal_upgrade_preserves_saved_ids_and_raw_data(
     repository: SqlPlateReaderRepository,
 ) -> None:
